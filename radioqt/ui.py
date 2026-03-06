@@ -170,9 +170,9 @@ class MainWindow(QMainWindow):
         layout.setSpacing(12)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        home_path = str(Path.home())
+        root_path = "/"
         self._filesystem_model = QFileSystemModel(group)
-        self._filesystem_model.setRootPath(home_path)
+        self._filesystem_model.setRootPath(root_path)
 
         filesystem_group = QGroupBox("Filesystem", group)
         filesystem_layout = QVBoxLayout(filesystem_group)
@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
 
         self._filesystem_view = QTreeView(filesystem_group)
         self._filesystem_view.setModel(self._filesystem_model)
-        self._filesystem_view.setRootIndex(self._filesystem_model.index(home_path))
+        self._filesystem_view.setRootIndex(self._filesystem_model.index(root_path))
         self._filesystem_view.setSelectionMode(QAbstractItemView.SingleSelection)
         self._filesystem_view.setAlternatingRowColors(True)
         self._filesystem_view.setMinimumHeight(260)

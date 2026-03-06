@@ -1,5 +1,90 @@
 {
-  "media_items": [],
-  "schedule_entries": [],
-  "queue": []
+  "media_items": [
+    {
+      "id": "73888a9b-a2f2-4459-bf73-17888b994e64",
+      "title": "2026-03-06 12-27-15.mkv",
+      "source": "/home/iban/2026-03-06 12-27-15.mkv",
+      "created_at": "2026-03-06T15:02:09.775458+01:00"
+    },
+    {
+      "id": "f609235a-c525-4145-a740-5644391c949c",
+      "title": "https://server12.mediasector.es/listen/bizkaia_irratia/bizkaiairratia.mp3",
+      "source": "https://server12.mediasector.es/listen/bizkaia_irratia/bizkaiairratia.mp3",
+      "created_at": "2026-03-06T15:12:50.596056+01:00"
+    },
+    {
+      "id": "e313942b-5a9b-417b-b5ec-6e2de05a5eb8",
+      "title": "asd",
+      "source": "asd",
+      "created_at": "2026-03-06T15:21:31.797067+01:00"
+    },
+    {
+      "id": "7f30b69a-ea12-4ba0-a3c0-37ee671953ea",
+      "title": "asda",
+      "source": "asda",
+      "created_at": "2026-03-06T15:26:28.799930+01:00"
+    },
+    {
+      "id": "d9b985c2-af20-4b8a-979f-36f9178af71f",
+      "title": "adasasddas",
+      "source": "adasasddas",
+      "created_at": "2026-03-06T15:32:21.983800+01:00"
+    },
+    {
+      "id": "afea3708-c8e2-45e3-a171-61269c99facd",
+      "title": "https://irratia.itsuki.freemyip.com/itsuki.opus",
+      "source": "https://irratia.itsuki.freemyip.com/itsuki.opus",
+      "created_at": "2026-03-06T15:32:35.680890+01:00"
+    }
+  ],
+  "schedule_entries": [
+    {
+      "id": "f65c6729-e976-4afb-b76f-f862a39d1341",
+      "media_id": "73888a9b-a2f2-4459-bf73-17888b994e64",
+      "start_at": "2026-03-06T15:08:00+01:00",
+      "hard_sync": false,
+      "enabled": true,
+      "one_shot": true,
+      "fired": true
+    },
+    {
+      "id": "b94f28c3-44c4-455c-881b-795cc10ca8f0",
+      "media_id": "73888a9b-a2f2-4459-bf73-17888b994e64",
+      "start_at": "2026-03-06T15:09:00+01:00",
+      "hard_sync": true,
+      "enabled": true,
+      "one_shot": true,
+      "fired": true
+    },
+    {
+      "id": "e00bd58f-0fdd-4809-957e-74322d7a0ab9",
+      "media_id": "73888a9b-a2f2-4459-bf73-17888b994e64",
+      "start_at": "2026-03-06T15:14:00+01:00",
+      "hard_sync": true,
+      "enabled": true,
+      "one_shot": true,
+      "fired": true
+    },
+    {
+      "id": "28df9941-4b57-44b0-8d57-587cd62f3bce",
+      "media_id": "f609235a-c525-4145-a740-5644391c949c",
+      "start_at": "2026-03-06T15:14:05+01:00",
+      "hard_sync": true,
+      "enabled": true,
+      "one_shot": true,
+      "fired": true
+    },
+    {
+      "id": "1bcc025f-fcb5-4ed3-b28b-35ac96933e48",
+      "media_id": "afea3708-c8e2-45e3-a171-61269c99facd",
+      "start_at": "2026-03-06T15:34:00+01:00",
+      "hard_sync": true,
+      "enabled": true,
+      "one_shot": true,
+      "fired": true
+    }
+  ],
+  "queue": [
+    "afea3708-c8e2-45e3-a171-61269c99facd"
+  ]
 }
