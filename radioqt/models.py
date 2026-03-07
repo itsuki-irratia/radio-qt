@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
+from uuid import uuid4
+
+
+def _parse_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    return parsed
+
+
+@dataclass(slots=True)
+class MediaItem:
+    id: str
+    title: str
+    source: str
+    created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
+
+    @classmethod
+    def create(cls, title: str, source: str) -> "MediaItem":
+        return cls(id=str(uuid4()), title=title, source=source)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MediaItem":
+        created_at_raw = data.get("created_at", datetime.now().astimezone().isoformat())
+        return cls(
+            id=data.get("id", str(uuid4())),
+            title=data.get("title", "Untitled"),
+            source=data.get("source", ""),
+            created_at=_parse_datetime(created_at_raw),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "source": self.source,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
+@dataclass(slots=True)
+class ScheduleEntry:
+    id: str
+    media_id: str
+    start_at: datetime
+    hard_sync: bool = False
+    enabled: bool = True
+    one_shot: bool = True
+    fired: bool = False
+
+    @classmethod
+    def create(cls, media_id: str, start_at: datetime, hard_sync: bool = False) -> "ScheduleEntry":
+        return cls(id=str(uuid4()), media_id=media_id, start_at=start_at, hard_sync=hard_sync)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ScheduleEntry":
+        return cls(
+            id=data["id"],
+            media_id=data["media_id"],
+            start_at=_parse_datetime(data["start_at"]),
+            hard_sync=data.get("hard_sync", False),
+            enabled=data.get("enabled", True),
+            one_shot=data.get("one_shot", True),
+            fired=data.get("fired", False),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "media_id": self.media_id,
+            "start_at": self.start_at.isoformat(),
+            "hard_sync": self.hard_sync,
+            "enabled": self.enabled,
+            "one_shot": self.one_shot,
+            "fired": self.fired,
+        }
+
+
+@dataclass(slots=True)
+class AppState:
+    media_items: list[MediaItem] = field(default_factory=list)
+    schedule_entries: list[ScheduleEntry] = field(default_factory=list)
+    queue: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AppState":
+        media_items = [MediaItem.from_dict(item) for item in data.get("media_items", [])]
+        schedule_entries = [ScheduleEntry.from_dict(item) for item in data.get("schedule_entries", [])]
+        queue = list(data.get("queue", []))
+        return cls(media_items=media_items, schedule_entries=schedule_entries, queue=queue)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "media_items": [item.to_dict() for item in self.media_items],
+            "schedule_entries": [entry.to_dict() for entry in self.schedule_entries],
+            "queue": list(self.queue),
+        }
