@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
         self._schedule_entries: list[ScheduleEntry] = []
         self._play_queue: deque[str] = deque()
         self._last_source_panel = "filesystem"
+        self._automation_playing = False
 
         self._player = MediaPlayerController(self)
         self._scheduler = RadioScheduler(parent=self)
@@ -131,7 +132,6 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._wire_signals()
         self._load_initial_state()
-        self._scheduler.start()
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -142,6 +142,13 @@ class MainWindow(QMainWindow):
         self._player.set_video_output(self._video_widget)
 
         self._now_playing_label = QLabel("Now playing: nothing", root)
+        self._automation_status_label = QLabel(root)
+        self._set_automation_status(self._automation_playing)
+
+        now_playing_layout = QHBoxLayout()
+        now_playing_layout.addWidget(self._automation_status_label)
+        now_playing_layout.addWidget(self._now_playing_label)
+        now_playing_layout.addStretch()
 
         controls_layout = QHBoxLayout()
         self._play_button = QPushButton("Play")
@@ -165,7 +172,7 @@ class MainWindow(QMainWindow):
         self._log_view.setMinimumHeight(80)
 
         root_layout.addWidget(self._video_widget, 2)
-        root_layout.addWidget(self._now_playing_label)
+        root_layout.addLayout(now_playing_layout)
         root_layout.addLayout(controls_layout)
         root_layout.addLayout(panels_layout, 7)
         root_layout.addWidget(self._log_view)
@@ -697,6 +704,9 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_schedule_triggered(self, entry: ScheduleEntry) -> None:
+        if not self._automation_playing:
+            self._append_log(f"Ignoring schedule {entry.id}: automation is stopped")
+            return
         media = self._media_items.get(entry.media_id)
         if media is None:
             self._append_log(f"Skipping schedule {entry.id}: media '{self._media_log_name(entry.media_id)}' not found")
@@ -775,16 +785,29 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_play_clicked(self) -> None:
+        now = datetime.now().astimezone()
+        if not self._automation_playing:
+            self._automation_playing = True
+            self._set_automation_status(True)
+            self._scheduler.start()
+            self._append_log("Automation status changed to Playing")
+            self._recalculate_schedule_durations()
+            self._mark_missed_entries_fired(now)
+
         if self._player.is_playing():
             return
-        now = datetime.now().astimezone()
+
         self._recalculate_schedule_durations()
         active_entry = self._active_schedule_entry_at(now)
         if active_entry is not None:
             entry, start_at = active_entry
+            if entry.one_shot:
+                entry.fired = True
             media = self._media_items.get(entry.media_id)
             if media is None:
                 self._append_log(f"Play ignored: scheduled media '{self._media_log_name(entry.media_id)}' not found")
+                self._refresh_schedule_table()
+                self._save_state()
                 return
             offset_ms = max(
                 0,
@@ -794,6 +817,8 @@ class MainWindow(QMainWindow):
             self._append_log(
                 f"Started scheduled media '{media.title}' from {self._format_duration(offset_ms // 1000)}"
             )
+            self._refresh_schedule_table()
+            self._save_state()
             return
         if self._player.has_active_media():
             self._player.play()
@@ -810,6 +835,11 @@ class MainWindow(QMainWindow):
             if self._player.current_media is not None
             else "nothing"
         )
+        if self._automation_playing:
+            self._automation_playing = False
+            self._set_automation_status(False)
+            self._scheduler.stop()
+            self._append_log("Automation status changed to Stopped")
         self._player.clear_current_media()
         self._now_playing_label.setText("Now playing: nothing")
         self._append_log(f"Playback stopped and media cleared ('{current_media_name}')")
@@ -827,6 +857,43 @@ class MainWindow(QMainWindow):
     def _append_log(self, message: str) -> None:
         timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
         self._log_view.appendPlainText(f"[{timestamp}] {message}")
+
+    def _set_automation_status(self, is_playing: bool) -> None:
+        if is_playing:
+            self._automation_status_label.setText("Automation: Playing")
+            self._automation_status_label.setStyleSheet(
+                "color: #0f5132; background-color: #d1e7dd; "
+                "border: 1px solid #75b798; border-radius: 6px; "
+                "padding: 2px 8px; font-weight: 600;"
+            )
+            return
+        self._automation_status_label.setText("Automation: Stopped")
+        self._automation_status_label.setStyleSheet(
+            "color: #842029; background-color: #f8d7da; "
+            "border: 1px solid #f1aeb5; border-radius: 6px; "
+            "padding: 2px 8px; font-weight: 600;"
+        )
+
+    def _mark_missed_entries_fired(self, now: datetime) -> None:
+        active_entry = self._active_schedule_entry_at(now)
+        active_entry_id = active_entry[0].id if active_entry is not None else None
+        changed = False
+        skipped = 0
+        for entry in self._schedule_entries:
+            if entry.fired or not entry.one_shot:
+                continue
+            if entry.id == active_entry_id:
+                continue
+            start_at = self._normalized_start(entry.start_at)
+            if start_at < now:
+                entry.fired = True
+                skipped += 1
+                changed = True
+        if not changed:
+            return
+        self._refresh_schedule_table()
+        self._save_state()
+        self._append_log(f"Marked {skipped} missed one-shot schedule item(s) as fired")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._scheduler.stop()
