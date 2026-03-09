@@ -48,6 +48,7 @@ class ScheduleEntry:
     id: str
     media_id: str
     start_at: datetime
+    duration: int | None = None
     hard_sync: bool = False
     enabled: bool = True
     one_shot: bool = True
@@ -59,10 +60,18 @@ class ScheduleEntry:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ScheduleEntry":
+        duration = None
+        duration_raw = data.get("duration")
+        if duration_raw is not None:
+            try:
+                duration = int(duration_raw)
+            except (TypeError, ValueError):
+                duration = None
         return cls(
             id=data["id"],
             media_id=data["media_id"],
             start_at=_parse_datetime(data["start_at"]),
+            duration=duration,
             hard_sync=data.get("hard_sync", False),
             enabled=data.get("enabled", True),
             one_shot=data.get("one_shot", True),
@@ -74,6 +83,7 @@ class ScheduleEntry:
             "id": self.id,
             "media_id": self.media_id,
             "start_at": self.start_at.isoformat(),
+            "duration": self.duration,
             "hard_sync": self.hard_sync,
             "enabled": self.enabled,
             "one_shot": self.one_shot,

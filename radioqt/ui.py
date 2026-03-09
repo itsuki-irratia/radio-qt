@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timedelta
+import math
 from pathlib import Path
+import re
+import subprocess
 
 from PySide6.QtCore import QDateTime, QModelIndex, Qt, QUrl, Slot
 from PySide6.QtGui import QCloseEvent
@@ -56,13 +59,19 @@ SUPPORTED_MEDIA_EXTENSIONS = {
 
 
 class ScheduleDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        initial_start_at: datetime | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Add Schedule Entry")
         self._datetime_edit = QDateTimeEdit(self)
         self._datetime_edit.setCalendarPopup(True)
         self._datetime_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-        self._datetime_edit.setDateTime(QDateTime(self._default_start_datetime()))
+        if initial_start_at is None:
+            initial_start_at = self._default_start_datetime()
+        self._datetime_edit.setDateTime(QDateTime(initial_start_at))
         self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
         self._hard_sync_checkbox.setChecked(True)
         self._enabled_checkbox = QCheckBox("Enabled", self)
@@ -111,6 +120,7 @@ class MainWindow(QMainWindow):
 
         self._state_path = Path.cwd() / "state" / "radio_state.json"
         self._media_items: dict[str, MediaItem] = {}
+        self._media_duration_cache: dict[str, int | None] = {}
         self._schedule_entries: list[ScheduleEntry] = []
         self._play_queue: deque[str] = deque()
         self._last_source_panel = "filesystem"
@@ -221,9 +231,9 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(group)
 
         self._schedule_table = QTableWidget(group)
-        self._schedule_table.setColumnCount(5)
+        self._schedule_table.setColumnCount(6)
         self._schedule_table.setHorizontalHeaderLabels(
-            ["Start Time", "Media", "Hard Sync", "Enabled", "Status"]
+            ["Start Time", "Duration", "Media", "Hard Sync", "Enabled", "Status"]
         )
         self._schedule_table.horizontalHeader().setStretchLastSection(True)
         self._schedule_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -267,9 +277,11 @@ class MainWindow(QMainWindow):
         app_started_at = datetime.now().astimezone()
         state = load_state(self._state_path)
         self._media_items = {item.id: item for item in state.media_items}
+        self._media_duration_cache.clear()
         self._schedule_entries = state.schedule_entries
         self._play_queue = deque(state.queue)
         expired_entries = self._expire_missed_one_shots(app_started_at)
+        self._recalculate_schedule_durations()
 
         self._refresh_urls_list()
         self._refresh_schedule_table()
@@ -322,16 +334,149 @@ class MainWindow(QMainWindow):
             media_name = media.title if media else f"Missing ({entry.media_id[:8]})"
             status = "Disabled" if not entry.enabled else ("Fired" if entry.fired else "Pending")
             start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+            duration_label = self._format_duration(entry.duration)
 
             start_item = QTableWidgetItem(start_label)
             start_item.setData(Qt.UserRole, entry.id)
             self._schedule_table.setItem(row, 0, start_item)
-            self._schedule_table.setItem(row, 1, QTableWidgetItem(media_name))
-            self._schedule_table.setItem(row, 2, QTableWidgetItem("Yes" if entry.hard_sync else "No"))
-            self._schedule_table.setItem(row, 3, QTableWidgetItem("Yes" if entry.enabled else "No"))
-            self._schedule_table.setItem(row, 4, QTableWidgetItem(status))
+            self._schedule_table.setItem(row, 1, QTableWidgetItem(duration_label))
+            self._schedule_table.setItem(row, 2, QTableWidgetItem(media_name))
+            self._schedule_table.setItem(row, 3, QTableWidgetItem("Yes" if entry.hard_sync else "No"))
+            self._schedule_table.setItem(row, 4, QTableWidgetItem("Yes" if entry.enabled else "No"))
+            self._schedule_table.setItem(row, 5, QTableWidgetItem(status))
 
         self._schedule_table.resizeColumnsToContents()
+
+    def _recalculate_schedule_durations(self) -> None:
+        entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
+        for entry in entries:
+            entry.duration = self._media_duration_seconds(entry.media_id)
+        for current, next_entry in zip(entries, entries[1:]):
+            current_start = self._normalized_start(current.start_at)
+            next_start = self._normalized_start(next_entry.start_at)
+            current.duration = max(0, int((next_start - current_start).total_seconds()))
+
+    def _default_next_schedule_start(self) -> datetime:
+        if not self._schedule_entries:
+            return ScheduleDialog._default_start_datetime()
+
+        entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
+        previous = entries[-1]
+        previous_start = self._normalized_start(previous.start_at)
+        now = datetime.now().astimezone()
+        if previous_start <= now:
+            return ScheduleDialog._default_start_datetime()
+        if previous.duration is None:
+            return previous_start
+        return previous_start + timedelta(seconds=max(0, previous.duration))
+
+    def _media_duration_seconds(self, media_id: str) -> int | None:
+        if media_id in self._media_duration_cache:
+            return self._media_duration_cache[media_id]
+
+        media = self._media_items.get(media_id)
+        if media is None:
+            self._media_duration_cache[media_id] = None
+            return None
+
+        duration = self._probe_media_duration_seconds(media.source)
+        self._media_duration_cache[media_id] = duration
+        return duration
+
+    @staticmethod
+    def _probe_media_duration_seconds(source: str) -> int | None:
+        path: Path | None = None
+        url = QUrl(source)
+        if url.isValid() and url.scheme():
+            if url.scheme().lower() == "file":
+                local_path = url.toLocalFile()
+                if local_path:
+                    path = Path(local_path)
+            else:
+                return None
+        else:
+            path = Path(source).expanduser()
+
+        if path is None or not path.is_file():
+            return None
+
+        duration = MainWindow._probe_with_ffprobe(path)
+        if duration is not None:
+            return duration
+        return MainWindow._probe_with_ffmpeg(path)
+
+    @staticmethod
+    def _probe_with_ffprobe(path: Path) -> int | None:
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+        value = result.stdout.strip()
+        if not value:
+            return None
+        try:
+            return max(0, math.ceil(float(value)))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _probe_with_ffmpeg(path: Path) -> int | None:
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-i", str(path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+        output = f"{result.stdout}\n{result.stderr}"
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
+        if match is None:
+            return None
+
+        hours = int(match.group(1))
+        minutes = int(match.group(2))
+        seconds = float(match.group(3))
+        return max(0, math.ceil(hours * 3600 + minutes * 60 + seconds))
+
+    @staticmethod
+    def _normalized_start(start_at: datetime) -> datetime:
+        if start_at.tzinfo is None:
+            return start_at.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        return start_at
+
+    @staticmethod
+    def _format_duration(duration_seconds: int | None) -> str:
+        if duration_seconds is None:
+            return "-"
+        hours, remainder = divmod(duration_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def _media_log_name(self, media_id: str) -> str:
+        media = self._media_items.get(media_id)
+        if media is None:
+            return f"missing:{media_id[:8]}"
+        return media.title
 
     def _selected_media_id(self) -> str | None:
         if self._last_source_panel == "urls":
@@ -389,6 +534,7 @@ class MainWindow(QMainWindow):
                 return item
         media = MediaItem.create(title=file_path.name, source=resolved)
         self._media_items[media.id] = media
+        self._media_duration_cache.pop(media.id, None)
         self._save_state()
         return media
 
@@ -404,6 +550,7 @@ class MainWindow(QMainWindow):
 
         media = MediaItem.create(title=title.strip(), source=url.strip())
         self._media_items[media.id] = media
+        self._media_duration_cache.pop(media.id, None)
         self._refresh_urls_list()
         self._save_state()
         self._append_log(f"Added stream: {title.strip()}")
@@ -412,6 +559,7 @@ class MainWindow(QMainWindow):
         removed = self._media_items.pop(media_id, None)
         if removed is None:
             return
+        self._media_duration_cache.pop(media_id, None)
 
         self._schedule_entries = [entry for entry in self._schedule_entries if entry.media_id != media_id]
         self._play_queue = deque([item_id for item_id in self._play_queue if item_id != media_id])
@@ -419,6 +567,7 @@ class MainWindow(QMainWindow):
             self._player.clear_current_media()
             self._now_playing_label.setText("Now playing: nothing")
 
+        self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_urls_list()
         self._refresh_schedule_table()
@@ -458,11 +607,14 @@ class MainWindow(QMainWindow):
         if media_id is None:
             QMessageBox.information(self, "No Selection", "Select a media item first.")
             return
-        if media_id not in self._media_items:
+        media = self._media_items.get(media_id)
+        if media is None:
             return
         self._play_queue.append(media_id)
         self._save_state()
-        self._append_log(f"Queued media item ({len(self._play_queue)} item(s) pending)")
+        self._append_log(
+            f"Queued media '{media.title}' ({len(self._play_queue)} item(s) pending)"
+        )
 
     @Slot()
     def _add_schedule_entry(self) -> None:
@@ -471,7 +623,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Selection", "Select a media item from library first.")
             return
 
-        dialog = ScheduleDialog(self)
+        self._recalculate_schedule_durations()
+        dialog = ScheduleDialog(self, initial_start_at=self._default_next_schedule_start())
         if dialog.exec() != QDialog.Accepted:
             return
 
@@ -481,13 +634,21 @@ class MainWindow(QMainWindow):
             hard_sync=dialog.hard_sync(),
         )
         entry.enabled = dialog.enabled()
+        if entry.one_shot and self._normalized_start(entry.start_at) <= datetime.now().astimezone():
+            entry.fired = True
         self._schedule_entries.append(entry)
 
+        self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_schedule_table()
         self._save_state()
+        media_name = self._media_log_name(entry.media_id)
+        if entry.fired:
+            self._append_log(
+                f"Scheduled media '{media_name}' in the past; entry was marked as fired"
+            )
         self._append_log(
-            f"Scheduled item for {entry.start_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}"
+            f"Scheduled media '{media_name}' for {entry.start_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}"
         )
 
     @Slot()
@@ -497,15 +658,20 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Selection", "Select a schedule row first.")
             return
 
+        removed_entry = next((entry for entry in self._schedule_entries if entry.id == entry_id), None)
         original_count = len(self._schedule_entries)
         self._schedule_entries = [entry for entry in self._schedule_entries if entry.id != entry_id]
         if len(self._schedule_entries) == original_count:
             return
 
+        self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_schedule_table()
         self._save_state()
-        self._append_log("Removed schedule entry")
+        if removed_entry is None:
+            self._append_log("Removed schedule entry")
+        else:
+            self._append_log(f"Removed schedule entry for media '{self._media_log_name(removed_entry.media_id)}'")
 
     @Slot()
     def _toggle_schedule_entry_enabled(self) -> None:
@@ -514,26 +680,41 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Selection", "Select a schedule row first.")
             return
 
+        toggled_entry: ScheduleEntry | None = None
         for entry in self._schedule_entries:
             if entry.id == entry_id:
                 entry.enabled = not entry.enabled
+                toggled_entry = entry
                 break
 
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_schedule_table()
         self._save_state()
-        self._append_log("Toggled schedule entry enabled/disabled")
+        if toggled_entry is None:
+            self._append_log("Toggled schedule entry enabled/disabled")
+        else:
+            state = "enabled" if toggled_entry.enabled else "disabled"
+            self._append_log(
+                f"Toggled schedule entry for media '{self._media_log_name(toggled_entry.media_id)}' to {state}"
+            )
 
     @Slot(object)
     def _on_schedule_triggered(self, entry: ScheduleEntry) -> None:
         media = self._media_items.get(entry.media_id)
         if media is None:
-            self._append_log(f"Skipping schedule {entry.id}: media not found")
+            self._append_log(f"Skipping schedule {entry.id}: media '{self._media_log_name(entry.media_id)}' not found")
             return
 
         if entry.hard_sync or not self._player.is_playing():
             if entry.hard_sync and self._player.is_playing():
-                self._append_log("Hard sync active: interrupting current playback")
+                current_media_name = (
+                    self._player.current_media.title
+                    if self._player.current_media is not None
+                    else "nothing"
+                )
+                self._append_log(
+                    f"Hard sync active for '{media.title}': interrupting '{current_media_name}'"
+                )
             self._player.play_media(media)
         else:
             self._play_queue.append(media.id)
@@ -549,7 +730,12 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_media_finished(self) -> None:
-        self._append_log("Media finished")
+        current_media_name = (
+            self._player.current_media.title
+            if self._player.current_media is not None
+            else "unknown"
+        )
+        self._append_log(f"Media finished '{current_media_name}'")
         self._play_next_from_queue()
 
     def _play_next_from_queue(self) -> None:
@@ -584,13 +770,23 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_stop_clicked(self) -> None:
+        current_media_name = (
+            self._player.current_media.title
+            if self._player.current_media is not None
+            else "nothing"
+        )
         self._player.clear_current_media()
         self._now_playing_label.setText("Now playing: nothing")
-        self._append_log("Playback stopped and media cleared")
+        self._append_log(f"Playback stopped and media cleared ('{current_media_name}')")
 
     @Slot(str)
     def _on_player_error(self, message: str) -> None:
-        self._append_log(f"Player error: {message}")
+        current_media_name = (
+            self._player.current_media.title
+            if self._player.current_media is not None
+            else "unknown"
+        )
+        self._append_log(f"Player error on '{current_media_name}': {message}")
 
     @Slot(str)
     def _append_log(self, message: str) -> None:
