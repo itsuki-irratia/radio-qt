@@ -4,7 +4,7 @@ RadioQt is a Python + Qt multimedia player for radio automation workflows:
 - VLC-style local/stream playback
 - Datetime-oriented scheduling
 - Queue fallback when player is busy
-- JSON persistence for library, queue, and schedule
+- SQLite persistence for library, queue, and schedule
 
 ## Requirements
 
@@ -27,7 +27,9 @@ python -m radioqt
 
 State is saved to:
 
-`state/radio_state.json`
+`state/radio_state.db`
+
+If `state/radio_state.json` exists from an older version, it is migrated automatically on startup.
 
 ## Basic workflow
 

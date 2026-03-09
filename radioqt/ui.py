@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
         self.setMinimumSize(960, 760)
 
-        self._state_path = Path.cwd() / "state" / "radio_state.json"
+        self._state_path = Path.cwd() / "state" / "radio_state.db"
         self._media_items: dict[str, MediaItem] = {}
         self._media_duration_cache: dict[str, int | None] = {}
         self._schedule_entries: list[ScheduleEntry] = []
