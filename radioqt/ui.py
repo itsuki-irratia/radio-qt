@@ -145,13 +145,11 @@ class MainWindow(QMainWindow):
 
         controls_layout = QHBoxLayout()
         self._play_button = QPushButton("Play")
-        self._pause_button = QPushButton("Pause")
         self._stop_button = QPushButton("Stop")
         self._volume_slider = QSlider(Qt.Horizontal)
         self._volume_slider.setRange(0, 100)
         self._volume_slider.setValue(80)
         controls_layout.addWidget(self._play_button)
-        controls_layout.addWidget(self._pause_button)
         controls_layout.addWidget(self._stop_button)
         controls_layout.addWidget(QLabel("Volume"))
         controls_layout.addWidget(self._volume_slider)
@@ -261,7 +259,6 @@ class MainWindow(QMainWindow):
         self._toggle_schedule_button.clicked.connect(self._toggle_schedule_entry_enabled)
 
         self._play_button.clicked.connect(self._on_play_clicked)
-        self._pause_button.clicked.connect(self._player.pause)
         self._stop_button.clicked.connect(self._on_stop_clicked)
         self._volume_slider.valueChanged.connect(self._player.set_volume)
 
@@ -751,6 +748,26 @@ class MainWindow(QMainWindow):
         self._save_state()
         self._now_playing_label.setText("Now playing: nothing")
 
+    def _active_schedule_entry_at(self, now: datetime) -> tuple[ScheduleEntry, datetime] | None:
+        entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
+        for index, entry in enumerate(entries):
+            start_at = self._normalized_start(entry.start_at)
+            if now < start_at:
+                break
+
+            end_at: datetime | None = None
+            if index + 1 < len(entries):
+                end_at = self._normalized_start(entries[index + 1].start_at)
+            elif entry.duration is not None:
+                end_at = start_at + timedelta(seconds=max(0, entry.duration))
+
+            if end_at is not None and now >= end_at:
+                continue
+            if not entry.enabled:
+                return None
+            return entry, start_at
+        return None
+
     @Slot(object)
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
         if state == QMediaPlayer.StoppedState and not self._play_queue:
@@ -759,6 +776,24 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_play_clicked(self) -> None:
         if self._player.is_playing():
+            return
+        now = datetime.now().astimezone()
+        self._recalculate_schedule_durations()
+        active_entry = self._active_schedule_entry_at(now)
+        if active_entry is not None:
+            entry, start_at = active_entry
+            media = self._media_items.get(entry.media_id)
+            if media is None:
+                self._append_log(f"Play ignored: scheduled media '{self._media_log_name(entry.media_id)}' not found")
+                return
+            offset_ms = max(
+                0,
+                int((now - start_at).total_seconds() * 1000),
+            )
+            self._player.play_media(media, start_position_ms=offset_ms)
+            self._append_log(
+                f"Started scheduled media '{media.title}' from {self._format_duration(offset_ms // 1000)}"
+            )
             return
         if self._player.has_active_media():
             self._player.play()
