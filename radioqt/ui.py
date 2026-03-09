@@ -14,6 +14,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
@@ -336,7 +337,7 @@ class MainWindow(QMainWindow):
         for row, entry in enumerate(entries):
             media = self._media_items.get(entry.media_id)
             media_name = media.title if media else f"Missing ({entry.media_id[:8]})"
-            status = "Disabled" if not entry.enabled else ("Fired" if entry.fired else "Pending")
+            status = "Fired" if entry.fired else ("Disabled" if not entry.enabled else "Pending")
             start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
             duration_label = self._format_duration(entry.duration)
 
@@ -346,7 +347,14 @@ class MainWindow(QMainWindow):
             self._schedule_table.setItem(row, 1, QTableWidgetItem(duration_label))
             self._schedule_table.setItem(row, 2, QTableWidgetItem(media_name))
             self._schedule_table.setItem(row, 3, QTableWidgetItem("Yes" if entry.hard_sync else "No"))
-            self._schedule_table.setItem(row, 4, QTableWidgetItem("Yes" if entry.enabled else "No"))
+            enabled_selector = QComboBox(self._schedule_table)
+            enabled_selector.addItems(["Yes", "No"])
+            enabled_selector.setCurrentText("Yes" if entry.enabled else "No")
+            enabled_selector.setEnabled(not entry.fired)
+            enabled_selector.currentTextChanged.connect(
+                lambda value, entry_id=entry.id: self._on_schedule_enabled_changed(entry_id, value)
+            )
+            self._schedule_table.setCellWidget(row, 4, enabled_selector)
             self._schedule_table.setItem(row, 5, QTableWidgetItem(status))
 
         self._schedule_table.resizeColumnsToContents()
@@ -687,6 +695,11 @@ class MainWindow(QMainWindow):
         toggled_entry: ScheduleEntry | None = None
         for entry in self._schedule_entries:
             if entry.id == entry_id:
+                if entry.fired:
+                    self._append_log(
+                        f"Ignored toggle for media '{self._media_log_name(entry.media_id)}': status is Fired"
+                    )
+                    return
                 entry.enabled = not entry.enabled
                 toggled_entry = entry
                 break
@@ -701,6 +714,30 @@ class MainWindow(QMainWindow):
             self._append_log(
                 f"Toggled schedule entry for media '{self._media_log_name(toggled_entry.media_id)}' to {state}"
             )
+
+    def _on_schedule_enabled_changed(self, entry_id: str, value: str) -> None:
+        updated_entry: ScheduleEntry | None = None
+        new_enabled = value == "Yes"
+        for entry in self._schedule_entries:
+            if entry.id == entry_id:
+                if entry.fired:
+                    return
+                if entry.enabled == new_enabled:
+                    return
+                entry.enabled = new_enabled
+                updated_entry = entry
+                break
+
+        if updated_entry is None:
+            return
+
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_schedule_table()
+        self._save_state()
+        state = "enabled" if updated_entry.enabled else "disabled"
+        self._append_log(
+            f"Set schedule entry for media '{self._media_log_name(updated_entry.media_id)}' to {state}"
+        )
 
     @Slot(object)
     def _on_schedule_triggered(self, entry: ScheduleEntry) -> None:
