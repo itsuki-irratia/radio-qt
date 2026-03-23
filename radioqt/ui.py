@@ -222,13 +222,13 @@ class MainWindow(QMainWindow):
         self._urls_table.setAlternatingRowColors(True)
         self._urls_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._urls_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self._urls_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._urls_table.customContextMenuRequested.connect(self._on_urls_context_menu)
         streamings_layout.addWidget(self._urls_table)
 
         buttons_row = QHBoxLayout()
-        self._add_url_button = QPushButton("Add URL")
-        self._remove_url_button = QPushButton("Remove URL")
+        self._add_url_button = QPushButton("Add Streaming")
         buttons_row.addWidget(self._add_url_button)
-        buttons_row.addWidget(self._remove_url_button)
         streamings_layout.addLayout(buttons_row)
 
         self._library_tabs.addTab(streamings_tab, "Streamings")
@@ -263,7 +263,6 @@ class MainWindow(QMainWindow):
         self._urls_table.itemSelectionChanged.connect(self._on_urls_selection_changed)
         self._library_tabs.currentChanged.connect(self._on_library_tab_changed)
         self._add_url_button.clicked.connect(self._add_media_url)
-        self._remove_url_button.clicked.connect(self._remove_selected_url)
 
         self._add_schedule_button.clicked.connect(self._add_schedule_entry)
 
@@ -632,6 +631,43 @@ class MainWindow(QMainWindow):
         self._remove_media_by_id(media_id)
 
     @Slot()
+    def _edit_selected_url(self) -> None:
+        media_id = self._selected_url_media_id()
+        if media_id is None:
+            QMessageBox.information(self, "No Selection", "Select a URL first.")
+            return
+
+        media = self._media_items.get(media_id)
+        if media is None:
+            return
+
+        updated_url, ok = QInputDialog.getText(
+            self,
+            "Edit Stream URL",
+            "URL (http/https/rtsp/etc):",
+            text=media.source,
+        )
+        if not ok or not updated_url.strip():
+            return
+
+        updated_title, ok_title = QInputDialog.getText(
+            self,
+            "Edit Display Name",
+            "Title:",
+            text=media.title,
+        )
+        if not ok_title or not updated_title.strip():
+            updated_title = updated_url.strip()
+
+        media.source = updated_url.strip()
+        media.title = updated_title.strip()
+        self._media_duration_cache.pop(media_id, None)
+        self._refresh_urls_list()
+        self._refresh_schedule_table()
+        self._save_state()
+        self._append_log(f"Updated stream: {media.title}")
+
+    @Slot()
     def _remove_selected_media(self) -> None:
         media_id = self._selected_media_id()
         if media_id is None:
@@ -745,6 +781,22 @@ class MainWindow(QMainWindow):
         remove_action.triggered.connect(self._remove_schedule_entry)
         menu.addAction(remove_action)
         menu.exec(self._schedule_table.viewport().mapToGlobal(position))
+
+    @Slot("QPoint")
+    def _on_urls_context_menu(self, position) -> None:
+        item = self._urls_table.itemAt(position)
+        if item is None:
+            return
+        self._urls_table.selectRow(item.row())
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self._urls_table)
+        edit_action = QAction("Edit Entry", menu)
+        edit_action.triggered.connect(self._edit_selected_url)
+        menu.addAction(edit_action)
+        remove_action = QAction("Remove URL", menu)
+        remove_action.triggered.connect(self._remove_selected_url)
+        menu.addAction(remove_action)
+        menu.exec(self._urls_table.viewport().mapToGlobal(position))
 
     @Slot()
     def _toggle_schedule_entry_enabled(self) -> None:
