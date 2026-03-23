@@ -341,25 +341,40 @@ class MainWindow(QMainWindow):
         for row, entry in enumerate(entries):
             media = self._media_items.get(entry.media_id)
             media_name = media.title if media else f"Missing ({entry.media_id[:8]})"
+            media_source = media.source if media else f"Missing media ID: {entry.media_id}"
             status = "Fired" if entry.fired else ("Disabled" if not entry.enabled else "Pending")
             start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
             duration_label = self._format_duration(entry.duration)
 
             start_item = QTableWidgetItem(start_label)
             start_item.setData(Qt.UserRole, entry.id)
+            start_item.setToolTip(media_source)
             self._schedule_table.setItem(row, 0, start_item)
-            self._schedule_table.setItem(row, 1, QTableWidgetItem(duration_label))
-            self._schedule_table.setItem(row, 2, QTableWidgetItem(media_name))
-            self._schedule_table.setItem(row, 3, QTableWidgetItem("Yes" if entry.hard_sync else "No"))
+
+            duration_item = QTableWidgetItem(duration_label)
+            duration_item.setToolTip(media_source)
+            self._schedule_table.setItem(row, 1, duration_item)
+
+            media_item = QTableWidgetItem(media_name)
+            media_item.setToolTip(media_source)
+            self._schedule_table.setItem(row, 2, media_item)
+
+            hard_sync_item = QTableWidgetItem("Yes" if entry.hard_sync else "No")
+            hard_sync_item.setToolTip(media_source)
+            self._schedule_table.setItem(row, 3, hard_sync_item)
             enabled_selector = QComboBox(self._schedule_table)
             enabled_selector.addItems(["Yes", "No"])
             enabled_selector.setCurrentText("Yes" if entry.enabled else "No")
             enabled_selector.setEnabled(not entry.fired)
+            enabled_selector.setToolTip(media_source)
             enabled_selector.currentTextChanged.connect(
                 lambda value, entry_id=entry.id: self._on_schedule_enabled_changed(entry_id, value)
             )
             self._schedule_table.setCellWidget(row, 4, enabled_selector)
-            self._schedule_table.setItem(row, 5, QTableWidgetItem(status))
+
+            status_item = QTableWidgetItem(status)
+            status_item.setToolTip(media_source)
+            self._schedule_table.setItem(row, 5, status_item)
 
         self._schedule_table.resizeColumnsToContents()
 
