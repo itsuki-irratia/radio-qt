@@ -8,7 +8,7 @@ import re
 import subprocess
 
 from PySide6.QtCore import QDateTime, QModelIndex, Qt, QUrl, Slot
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -22,14 +22,13 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
     QSizePolicy,
     QSlider,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTreeView,
@@ -183,53 +182,58 @@ class MainWindow(QMainWindow):
     def _build_library_panel(self) -> QWidget:
         group = QGroupBox("Media Library")
         layout = QVBoxLayout(group)
-        layout.setSpacing(12)
+        layout.setSpacing(4)
         layout.setContentsMargins(8, 8, 8, 8)
+
+        self._library_tabs = QTabWidget(group)
+
+        # --- Filesystem tab ---
+        filesystem_tab = QWidget()
+        filesystem_layout = QVBoxLayout(filesystem_tab)
+        filesystem_layout.setContentsMargins(8, 8, 8, 8)
 
         root_path = "/"
         self._filesystem_model = QFileSystemModel(group)
         self._filesystem_model.setRootPath(root_path)
 
-        filesystem_group = QGroupBox("Filesystem", group)
-        filesystem_layout = QVBoxLayout(filesystem_group)
-        filesystem_layout.setContentsMargins(8, 8, 8, 8)
-        filesystem_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-
-        self._filesystem_view = QTreeView(filesystem_group)
+        self._filesystem_view = QTreeView(filesystem_tab)
         self._filesystem_view.setModel(self._filesystem_model)
         self._filesystem_view.setRootIndex(self._filesystem_model.index(root_path))
         self._filesystem_view.setSelectionMode(QAbstractItemView.SingleSelection)
         self._filesystem_view.setAlternatingRowColors(True)
-        self._filesystem_view.setMinimumHeight(260)
         self._filesystem_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         for column in (1, 2, 3):
             self._filesystem_view.hideColumn(column)
         filesystem_layout.addWidget(self._filesystem_view)
 
-        urls_group = QGroupBox("URLs", group)
-        urls_layout = QVBoxLayout(urls_group)
-        urls_layout.setContentsMargins(8, 8, 8, 8)
-        urls_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        urls_group.setMinimumHeight(110)
-        urls_group.setMaximumHeight(140)
+        self._library_tabs.addTab(filesystem_tab, "Filesystem")
 
-        self._urls_list = QListWidget(urls_group)
-        self._urls_list.setAlternatingRowColors(True)
-        self._urls_list.setMinimumHeight(56)
-        self._urls_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        urls_layout.addWidget(self._urls_list)
+        # --- Streamings tab ---
+        streamings_tab = QWidget()
+        streamings_layout = QVBoxLayout(streamings_tab)
+        streamings_layout.setContentsMargins(8, 8, 8, 8)
+
+        self._urls_table = QTableWidget(streamings_tab)
+        self._urls_table.setColumnCount(2)
+        self._urls_table.setHorizontalHeaderLabels(["Title", "URL"])
+        self._urls_table.horizontalHeader().setStretchLastSection(True)
+        self._urls_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._urls_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._urls_table.setAlternatingRowColors(True)
+        self._urls_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._urls_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        streamings_layout.addWidget(self._urls_table)
 
         buttons_row = QHBoxLayout()
         self._add_url_button = QPushButton("Add URL")
         self._remove_url_button = QPushButton("Remove URL")
         buttons_row.addWidget(self._add_url_button)
         buttons_row.addWidget(self._remove_url_button)
+        streamings_layout.addLayout(buttons_row)
 
-        layout.addWidget(filesystem_group, 1)
-        layout.addSpacing(10)
-        layout.addWidget(urls_group, 0)
-        layout.addSpacing(4)
-        layout.addLayout(buttons_row)
+        self._library_tabs.addTab(streamings_tab, "Streamings")
+
+        layout.addWidget(self._library_tabs)
         return group
 
     def _build_schedule_panel(self) -> QWidget:
@@ -243,14 +247,12 @@ class MainWindow(QMainWindow):
         )
         self._schedule_table.horizontalHeader().setStretchLastSection(True)
         self._schedule_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._schedule_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._schedule_table.customContextMenuRequested.connect(self._on_schedule_context_menu)
 
         buttons_row = QHBoxLayout()
         self._add_schedule_button = QPushButton("Schedule Selected Media")
-        self._remove_schedule_button = QPushButton("Remove Entry")
-        self._toggle_schedule_button = QPushButton("Toggle Enabled")
         buttons_row.addWidget(self._add_schedule_button)
-        buttons_row.addWidget(self._remove_schedule_button)
-        buttons_row.addWidget(self._toggle_schedule_button)
 
         layout.addWidget(self._schedule_table)
         layout.addLayout(buttons_row)
@@ -258,13 +260,12 @@ class MainWindow(QMainWindow):
 
     def _wire_signals(self) -> None:
         self._filesystem_view.clicked.connect(self._on_filesystem_selected)
-        self._urls_list.itemSelectionChanged.connect(self._on_urls_selection_changed)
+        self._urls_table.itemSelectionChanged.connect(self._on_urls_selection_changed)
+        self._library_tabs.currentChanged.connect(self._on_library_tab_changed)
         self._add_url_button.clicked.connect(self._add_media_url)
         self._remove_url_button.clicked.connect(self._remove_selected_url)
 
         self._add_schedule_button.clicked.connect(self._add_schedule_entry)
-        self._remove_schedule_button.clicked.connect(self._remove_schedule_entry)
-        self._toggle_schedule_button.clicked.connect(self._toggle_schedule_entry_enabled)
 
         self._play_button.clicked.connect(self._on_play_clicked)
         self._stop_button.clicked.connect(self._on_stop_clicked)
@@ -321,15 +322,18 @@ class MainWindow(QMainWindow):
         return expired
 
     def _refresh_urls_list(self) -> None:
-        self._urls_list.clear()
+        self._urls_table.setRowCount(0)
         items = sorted(self._media_items.values(), key=lambda item: item.created_at)
         for media in items:
             if not self._is_stream_source(media.source):
                 continue
-            list_item = QListWidgetItem(media.title)
-            list_item.setData(Qt.UserRole, media.id)
-            list_item.setToolTip(media.source)
-            self._urls_list.addItem(list_item)
+            row = self._urls_table.rowCount()
+            self._urls_table.insertRow(row)
+            title_item = QTableWidgetItem(media.title)
+            title_item.setData(Qt.UserRole, media.id)
+            self._urls_table.setItem(row, 0, title_item)
+            self._urls_table.setItem(row, 1, QTableWidgetItem(media.source))
+        self._urls_table.resizeColumnsToContents()
 
     def _refresh_schedule_table(self) -> None:
         entries = sorted(self._schedule_entries, key=lambda entry: entry.start_at)
@@ -511,8 +515,12 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_urls_selection_changed(self) -> None:
-        if self._urls_list.currentItem() is not None:
+        if self._urls_table.currentRow() >= 0:
             self._last_source_panel = "urls"
+
+    @Slot(int)
+    def _on_library_tab_changed(self, index: int) -> None:
+        self._last_source_panel = "urls" if index == 1 else "filesystem"
 
     @staticmethod
     def _is_supported_media_file(path: Path) -> bool:
@@ -524,7 +532,10 @@ class MainWindow(QMainWindow):
         return url.isValid() and bool(url.scheme())
 
     def _selected_url_media_id(self) -> str | None:
-        item = self._urls_list.currentItem()
+        row = self._urls_table.currentRow()
+        if row < 0:
+            return None
+        item = self._urls_table.item(row, 0)
         if item is None:
             return None
         return item.data(Qt.UserRole)
@@ -591,6 +602,17 @@ class MainWindow(QMainWindow):
         media_id = self._selected_url_media_id()
         if media_id is None:
             QMessageBox.information(self, "No Selection", "Select a URL first.")
+            return
+        media = self._media_items.get(media_id)
+        title = media.title if media else "this stream"
+        result = QMessageBox.question(
+            self,
+            "Confirm Removal",
+            f"Are you sure you want to remove '{title}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if result != QMessageBox.Yes:
             return
         self._remove_media_by_id(media_id)
 
@@ -671,6 +693,18 @@ class MainWindow(QMainWindow):
             return
 
         removed_entry = next((entry for entry in self._schedule_entries if entry.id == entry_id), None)
+        media_name = self._media_log_name(removed_entry.media_id) if removed_entry else "unknown"
+        start_label = removed_entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S") if removed_entry else "unknown"
+        result = QMessageBox.question(
+            self,
+            "Confirm Removal",
+            f"Are you sure you want to remove the schedule entry for '{media_name}' at {start_label}?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if result != QMessageBox.Yes:
+            return
+
         original_count = len(self._schedule_entries)
         self._schedule_entries = [entry for entry in self._schedule_entries if entry.id != entry_id]
         if len(self._schedule_entries) == original_count:
@@ -684,6 +718,18 @@ class MainWindow(QMainWindow):
             self._append_log("Removed schedule entry")
         else:
             self._append_log(f"Removed schedule entry for media '{self._media_log_name(removed_entry.media_id)}'")
+
+    @Slot("QPoint")
+    def _on_schedule_context_menu(self, position) -> None:
+        item = self._schedule_table.itemAt(position)
+        if item is None:
+            return
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self._schedule_table)
+        remove_action = QAction("Remove Entry", menu)
+        remove_action.triggered.connect(self._remove_schedule_entry)
+        menu.addAction(remove_action)
+        menu.exec(self._schedule_table.viewport().mapToGlobal(position))
 
     @Slot()
     def _toggle_schedule_entry_enabled(self) -> None:
