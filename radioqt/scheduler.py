@@ -4,7 +4,7 @@ from datetime import datetime
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
-from .models import ScheduleEntry
+from .models import SCHEDULE_STATUS_PENDING, ScheduleEntry
 
 
 class RadioScheduler(QObject):
@@ -32,13 +32,13 @@ class RadioScheduler(QObject):
     def _tick(self) -> None:
         now = datetime.now().astimezone()
         for entry in self._entries:
-            if not entry.enabled or entry.fired:
+            if entry.status != SCHEDULE_STATUS_PENDING:
                 continue
             start_at = self._normalized_start(entry)
 
             if now >= start_at:
                 if entry.one_shot:
-                    entry.fired = True
+                    entry.status = "fired"
                 self.log.emit(f"Schedule triggered at {now.isoformat(timespec='seconds')}: {entry.id}")
                 self.schedule_triggered.emit(entry)
 

@@ -43,6 +43,13 @@ class MediaItem:
         }
 
 
+SCHEDULE_STATUS_PENDING = "pending"
+SCHEDULE_STATUS_DISABLED = "disabled"
+SCHEDULE_STATUS_FIRED = "fired"
+
+VALID_SCHEDULE_STATUSES = {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_DISABLED, SCHEDULE_STATUS_FIRED}
+
+
 @dataclass(slots=True)
 class ScheduleEntry:
     id: str
@@ -50,9 +57,8 @@ class ScheduleEntry:
     start_at: datetime
     duration: int | None = None
     hard_sync: bool = False
-    enabled: bool = True
+    status: str = SCHEDULE_STATUS_PENDING
     one_shot: bool = True
-    fired: bool = False
 
     @classmethod
     def create(cls, media_id: str, start_at: datetime, hard_sync: bool = False) -> "ScheduleEntry":
@@ -67,15 +73,26 @@ class ScheduleEntry:
                 duration = int(duration_raw)
             except (TypeError, ValueError):
                 duration = None
+        status = data.get("status")
+        if status is None:
+            fired = data.get("fired", False)
+            enabled = data.get("enabled", True)
+            if fired:
+                status = SCHEDULE_STATUS_FIRED
+            elif not enabled:
+                status = SCHEDULE_STATUS_DISABLED
+            else:
+                status = SCHEDULE_STATUS_PENDING
+        if status not in VALID_SCHEDULE_STATUSES:
+            status = SCHEDULE_STATUS_PENDING
         return cls(
             id=data["id"],
             media_id=data["media_id"],
             start_at=_parse_datetime(data["start_at"]),
             duration=duration,
             hard_sync=data.get("hard_sync", False),
-            enabled=data.get("enabled", True),
+            status=status,
             one_shot=data.get("one_shot", True),
-            fired=data.get("fired", False),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,9 +102,8 @@ class ScheduleEntry:
             "start_at": self.start_at.isoformat(),
             "duration": self.duration,
             "hard_sync": self.hard_sync,
-            "enabled": self.enabled,
+            "status": self.status,
             "one_shot": self.one_shot,
-            "fired": self.fired,
         }
 
 

@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
 )
 
-from .models import AppState, MediaItem, ScheduleEntry
+from .models import AppState, MediaItem, SCHEDULE_STATUS_DISABLED, SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_PENDING, ScheduleEntry
 from .player import MediaPlayerController
 from .scheduler import RadioScheduler
 from .storage import load_state, save_state
@@ -305,13 +305,13 @@ class MainWindow(QMainWindow):
     def _expire_missed_one_shots(self, reference_time: datetime) -> int:
         expired = 0
         for entry in self._schedule_entries:
-            if entry.fired or not entry.one_shot or not entry.enabled:
+            if entry.status != SCHEDULE_STATUS_PENDING or not entry.one_shot:
                 continue
             start_at = entry.start_at
             if start_at.tzinfo is None:
                 start_at = start_at.replace(tzinfo=reference_time.tzinfo)
             if start_at < reference_time:
-                entry.fired = True
+                entry.status = SCHEDULE_STATUS_FIRED
                 expired += 1
         return expired
 
@@ -336,7 +336,7 @@ class MainWindow(QMainWindow):
             media = self._media_items.get(entry.media_id)
             media_name = media.title if media else f"Missing ({entry.media_id[:8]})"
             media_source = media.source if media else f"Missing media ID: {entry.media_id}"
-            status = "Fired" if entry.fired else ("Disabled" if not entry.enabled else "Pending")
+            status = entry.status.capitalize()
             start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
             duration_label = self._format_duration(entry.duration)
 
@@ -354,8 +354,8 @@ class MainWindow(QMainWindow):
             self._schedule_table.setItem(row, 2, media_item)
 
             now = datetime.now().astimezone()
-            entry_expired = not entry.enabled and self._normalized_start(entry.start_at) < now
-            is_locked = entry.fired or entry_expired
+            entry_expired = entry.status == SCHEDULE_STATUS_DISABLED and self._normalized_start(entry.start_at) < now
+            is_locked = entry.status == SCHEDULE_STATUS_FIRED or entry_expired
 
             hard_sync_selector = QComboBox(self._schedule_table)
             hard_sync_selector.addItems(["Yes", "No"])
@@ -369,7 +369,7 @@ class MainWindow(QMainWindow):
 
             status_selector = QComboBox(self._schedule_table)
             status_selector.addItems(["Pending", "Disabled"])
-            if entry.fired:
+            if entry.status == SCHEDULE_STATUS_FIRED:
                 status_selector.addItem("Fired")
             status_selector.setCurrentText(status)
             status_selector.setEnabled(not is_locked)
@@ -723,7 +723,7 @@ class MainWindow(QMainWindow):
             hard_sync=dialog.hard_sync(),
         )
         if entry.one_shot and self._normalized_start(entry.start_at) <= datetime.now().astimezone():
-            entry.fired = True
+            entry.status = SCHEDULE_STATUS_FIRED
         self._schedule_entries.append(entry)
 
         self._recalculate_schedule_durations()
@@ -731,7 +731,7 @@ class MainWindow(QMainWindow):
         self._refresh_schedule_table()
         self._save_state()
         media_name = self._media_log_name(entry.media_id)
-        if entry.fired:
+        if entry.status == SCHEDULE_STATUS_FIRED:
             self._append_log(
                 f"Scheduled media '{media_name}' in the past; entry was marked as fired"
             )
@@ -806,7 +806,7 @@ class MainWindow(QMainWindow):
         new_hard_sync = value == "Yes"
         for entry in self._schedule_entries:
             if entry.id == entry_id:
-                if entry.fired:
+                if entry.status == SCHEDULE_STATUS_FIRED:
                     return
                 if entry.hard_sync == new_hard_sync:
                     return
@@ -829,12 +829,12 @@ class MainWindow(QMainWindow):
         updated_entry: ScheduleEntry | None = None
         for entry in self._schedule_entries:
             if entry.id == entry_id:
-                if entry.fired:
+                if entry.status == SCHEDULE_STATUS_FIRED:
                     return
-                new_enabled = value == "Pending"
-                if entry.enabled == new_enabled:
+                new_status = SCHEDULE_STATUS_PENDING if value == "Pending" else SCHEDULE_STATUS_DISABLED
+                if entry.status == new_status:
                     return
-                entry.enabled = new_enabled
+                entry.status = new_status
                 updated_entry = entry
                 break
 
@@ -919,7 +919,7 @@ class MainWindow(QMainWindow):
 
             if end_at is not None and now >= end_at:
                 continue
-            if not entry.enabled:
+            if entry.status != SCHEDULE_STATUS_PENDING:
                 return None
             return entry, start_at
         return None
@@ -948,7 +948,7 @@ class MainWindow(QMainWindow):
         if active_entry is not None:
             entry, start_at = active_entry
             if entry.one_shot:
-                entry.fired = True
+                entry.status = SCHEDULE_STATUS_FIRED
             media = self._media_items.get(entry.media_id)
             if media is None:
                 self._append_log(f"Play ignored: scheduled media '{self._media_log_name(entry.media_id)}' not found")
@@ -1026,13 +1026,13 @@ class MainWindow(QMainWindow):
         changed = False
         skipped = 0
         for entry in self._schedule_entries:
-            if entry.fired or not entry.one_shot or not entry.enabled:
+            if entry.status != SCHEDULE_STATUS_PENDING or not entry.one_shot:
                 continue
             if entry.id == active_entry_id:
                 continue
             start_at = self._normalized_start(entry.start_at)
             if start_at < now:
-                entry.fired = True
+                entry.status = SCHEDULE_STATUS_FIRED
                 skipped += 1
                 changed = True
         if not changed:

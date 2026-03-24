@@ -29,9 +29,8 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             start_at TEXT NOT NULL,
             duration INTEGER,
             hard_sync INTEGER NOT NULL DEFAULT 0,
-            enabled INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'pending',
             one_shot INTEGER NOT NULL DEFAULT 1,
-            fired INTEGER NOT NULL DEFAULT 0,
             position INTEGER NOT NULL
         );
 
@@ -106,13 +105,12 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "start_at": row["start_at"],
             "duration": row["duration"],
             "hard_sync": bool(row["hard_sync"]),
-            "enabled": bool(row["enabled"]),
+            "status": row["status"],
             "one_shot": bool(row["one_shot"]),
-            "fired": bool(row["fired"]),
         }
         for row in connection.execute(
             """
-            SELECT id, media_id, start_at, duration, hard_sync, enabled, one_shot, fired
+            SELECT id, media_id, start_at, duration, hard_sync, status, one_shot
             FROM schedule_entries
             ORDER BY position
             """
@@ -152,9 +150,9 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
         connection.executemany(
             """
             INSERT INTO schedule_entries (
-                id, media_id, start_at, duration, hard_sync, enabled, one_shot, fired, position
+                id, media_id, start_at, duration, hard_sync, status, one_shot, position
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -163,9 +161,8 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
                     entry.start_at.isoformat(),
                     entry.duration,
                     int(entry.hard_sync),
-                    int(entry.enabled),
+                    entry.status,
                     int(entry.one_shot),
-                    int(entry.fired),
                     index,
                 )
                 for index, entry in enumerate(state.schedule_entries)
@@ -177,12 +174,57 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
         )
 
 
+def _migrate_enabled_fired_to_status(connection: sqlite3.Connection) -> None:
+    """Migrate old enabled/fired columns to the new status column."""
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(schedule_entries)").fetchall()
+    }
+    if "fired" not in columns and "enabled" not in columns:
+        return
+
+    if "status" not in columns:
+        connection.execute(
+            "ALTER TABLE schedule_entries ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'"
+        )
+
+    if "fired" in columns and "enabled" in columns:
+        connection.execute(
+            """
+            UPDATE schedule_entries
+            SET status = CASE
+                WHEN fired = 1 THEN 'fired'
+                WHEN enabled = 0 THEN 'disabled'
+                ELSE 'pending'
+            END
+            """
+        )
+
+    for col in ("fired", "enabled"):
+        if col in columns:
+            connection.executescript(
+                f"""
+                CREATE TABLE schedule_entries_backup AS SELECT
+                    id, media_id, start_at, duration, hard_sync, status, one_shot, position
+                FROM schedule_entries;
+                DROP TABLE schedule_entries;
+                ALTER TABLE schedule_entries_backup RENAME TO schedule_entries;
+                CREATE INDEX IF NOT EXISTS idx_schedule_entries_position
+                    ON schedule_entries(position);
+                """
+            )
+            break
+
+    connection.commit()
+
+
 def load_state(path: Path) -> AppState:
     path.parent.mkdir(parents=True, exist_ok=True)
     legacy_json_path = path.with_suffix(".json")
 
     with _connect(path) as connection:
         _ensure_schema(connection)
+        _migrate_enabled_fired_to_status(connection)
         if not _is_legacy_migration_done(connection):
             if not _database_has_data(connection) and legacy_json_path.exists():
                 legacy_state = _load_legacy_json_state(legacy_json_path)
