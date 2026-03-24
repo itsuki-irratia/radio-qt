@@ -358,9 +358,15 @@ class MainWindow(QMainWindow):
             media_item.setToolTip(media_source)
             self._schedule_table.setItem(row, 2, media_item)
 
-            hard_sync_item = QTableWidgetItem("Yes" if entry.hard_sync else "No")
-            hard_sync_item.setToolTip(media_source)
-            self._schedule_table.setItem(row, 3, hard_sync_item)
+            hard_sync_selector = QComboBox(self._schedule_table)
+            hard_sync_selector.addItems(["Yes", "No"])
+            hard_sync_selector.setCurrentText("Yes" if entry.hard_sync else "No")
+            hard_sync_selector.setEnabled(not entry.fired)
+            hard_sync_selector.setToolTip(media_source)
+            hard_sync_selector.currentTextChanged.connect(
+                lambda value, entry_id=entry.id: self._on_schedule_hard_sync_changed(entry_id, value)
+            )
+            self._schedule_table.setCellWidget(row, 3, hard_sync_selector)
             enabled_selector = QComboBox(self._schedule_table)
             enabled_selector.addItems(["Yes", "No"])
             enabled_selector.setCurrentText("Yes" if entry.enabled else "No")
@@ -827,6 +833,30 @@ class MainWindow(QMainWindow):
             self._append_log(
                 f"Toggled schedule entry for media '{self._media_log_name(toggled_entry.media_id)}' to {state}"
             )
+
+    def _on_schedule_hard_sync_changed(self, entry_id: str, value: str) -> None:
+        updated_entry: ScheduleEntry | None = None
+        new_hard_sync = value == "Yes"
+        for entry in self._schedule_entries:
+            if entry.id == entry_id:
+                if entry.fired:
+                    return
+                if entry.hard_sync == new_hard_sync:
+                    return
+                entry.hard_sync = new_hard_sync
+                updated_entry = entry
+                break
+
+        if updated_entry is None:
+            return
+
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_schedule_table()
+        self._save_state()
+        state = "enabled" if updated_entry.hard_sync else "disabled"
+        self._append_log(
+            f"Set hard sync for media '{self._media_log_name(updated_entry.media_id)}' to {state}"
+        )
 
     def _on_schedule_enabled_changed(self, entry_id: str, value: str) -> None:
         updated_entry: ScheduleEntry | None = None
