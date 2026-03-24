@@ -241,6 +241,7 @@ class MainWindow(QMainWindow):
         )
         self._schedule_table.horizontalHeader().setStretchLastSection(True)
         self._schedule_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._schedule_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._schedule_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self._schedule_table.customContextMenuRequested.connect(self._on_schedule_context_menu)
 
@@ -304,7 +305,7 @@ class MainWindow(QMainWindow):
     def _expire_missed_one_shots(self, reference_time: datetime) -> int:
         expired = 0
         for entry in self._schedule_entries:
-            if entry.fired or not entry.one_shot:
+            if entry.fired or not entry.one_shot or not entry.enabled:
                 continue
             start_at = entry.start_at
             if start_at.tzinfo is None:
@@ -352,10 +353,14 @@ class MainWindow(QMainWindow):
             media_item.setToolTip(media_source)
             self._schedule_table.setItem(row, 2, media_item)
 
+            now = datetime.now().astimezone()
+            entry_expired = not entry.enabled and self._normalized_start(entry.start_at) < now
+            is_locked = entry.fired or entry_expired
+
             hard_sync_selector = QComboBox(self._schedule_table)
             hard_sync_selector.addItems(["Yes", "No"])
             hard_sync_selector.setCurrentText("Yes" if entry.hard_sync else "No")
-            hard_sync_selector.setEnabled(not entry.fired)
+            hard_sync_selector.setEnabled(not is_locked)
             hard_sync_selector.setToolTip(media_source)
             hard_sync_selector.currentTextChanged.connect(
                 lambda value, entry_id=entry.id: self._on_schedule_hard_sync_changed(entry_id, value)
@@ -367,7 +372,7 @@ class MainWindow(QMainWindow):
             if entry.fired:
                 status_selector.addItem("Fired")
             status_selector.setCurrentText(status)
-            status_selector.setEnabled(not entry.fired)
+            status_selector.setEnabled(not is_locked)
             status_selector.setToolTip(media_source)
             status_selector.currentTextChanged.connect(
                 lambda value, entry_id=entry.id: self._on_schedule_status_changed(entry_id, value)
@@ -826,11 +831,9 @@ class MainWindow(QMainWindow):
             if entry.id == entry_id:
                 if entry.fired:
                     return
-                new_fired = value == "Fired"
                 new_enabled = value == "Pending"
-                if entry.fired == new_fired and entry.enabled == new_enabled:
+                if entry.enabled == new_enabled:
                     return
-                entry.fired = new_fired
                 entry.enabled = new_enabled
                 updated_entry = entry
                 break
@@ -1023,7 +1026,7 @@ class MainWindow(QMainWindow):
         changed = False
         skipped = 0
         for entry in self._schedule_entries:
-            if entry.fired or not entry.one_shot:
+            if entry.fired or not entry.one_shot or not entry.enabled:
                 continue
             if entry.id == active_entry_id:
                 continue
