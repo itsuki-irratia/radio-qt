@@ -74,8 +74,6 @@ class ScheduleDialog(QDialog):
         self._datetime_edit.setDateTime(QDateTime(initial_start_at))
         self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
         self._hard_sync_checkbox.setChecked(True)
-        self._enabled_checkbox = QCheckBox("Enabled", self)
-        self._enabled_checkbox.setChecked(True)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         buttons.accepted.connect(self.accept)
@@ -85,7 +83,6 @@ class ScheduleDialog(QDialog):
         layout.addWidget(QLabel("Start at:"))
         layout.addWidget(self._datetime_edit)
         layout.addWidget(self._hard_sync_checkbox)
-        layout.addWidget(self._enabled_checkbox)
         layout.addWidget(buttons)
 
     @staticmethod
@@ -102,9 +99,6 @@ class ScheduleDialog(QDialog):
 
     def hard_sync(self) -> bool:
         return self._hard_sync_checkbox.isChecked()
-
-    def enabled(self) -> bool:
-        return self._enabled_checkbox.isChecked()
 
 
 class MainWindow(QMainWindow):
@@ -241,9 +235,9 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(group)
 
         self._schedule_table = QTableWidget(group)
-        self._schedule_table.setColumnCount(6)
+        self._schedule_table.setColumnCount(5)
         self._schedule_table.setHorizontalHeaderLabels(
-            ["Start Time", "Duration", "Media", "Hard Sync", "Enabled", "Status"]
+            ["Start Time", "Duration", "Media", "Hard Sync", "Status"]
         )
         self._schedule_table.horizontalHeader().setStretchLastSection(True)
         self._schedule_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -367,19 +361,18 @@ class MainWindow(QMainWindow):
                 lambda value, entry_id=entry.id: self._on_schedule_hard_sync_changed(entry_id, value)
             )
             self._schedule_table.setCellWidget(row, 3, hard_sync_selector)
-            enabled_selector = QComboBox(self._schedule_table)
-            enabled_selector.addItems(["Yes", "No"])
-            enabled_selector.setCurrentText("Yes" if entry.enabled else "No")
-            enabled_selector.setEnabled(not entry.fired)
-            enabled_selector.setToolTip(media_source)
-            enabled_selector.currentTextChanged.connect(
-                lambda value, entry_id=entry.id: self._on_schedule_enabled_changed(entry_id, value)
-            )
-            self._schedule_table.setCellWidget(row, 4, enabled_selector)
 
-            status_item = QTableWidgetItem(status)
-            status_item.setToolTip(media_source)
-            self._schedule_table.setItem(row, 5, status_item)
+            status_selector = QComboBox(self._schedule_table)
+            status_selector.addItems(["Pending", "Disabled"])
+            if entry.fired:
+                status_selector.addItem("Fired")
+            status_selector.setCurrentText(status)
+            status_selector.setEnabled(not entry.fired)
+            status_selector.setToolTip(media_source)
+            status_selector.currentTextChanged.connect(
+                lambda value, entry_id=entry.id: self._on_schedule_status_changed(entry_id, value)
+            )
+            self._schedule_table.setCellWidget(row, 4, status_selector)
 
         self._schedule_table.resizeColumnsToContents()
 
@@ -724,7 +717,6 @@ class MainWindow(QMainWindow):
             start_at=dialog.selected_datetime(),
             hard_sync=dialog.hard_sync(),
         )
-        entry.enabled = dialog.enabled()
         if entry.one_shot and self._normalized_start(entry.start_at) <= datetime.now().astimezone():
             entry.fired = True
         self._schedule_entries.append(entry)
@@ -804,36 +796,6 @@ class MainWindow(QMainWindow):
         menu.addAction(remove_action)
         menu.exec(self._urls_table.viewport().mapToGlobal(position))
 
-    @Slot()
-    def _toggle_schedule_entry_enabled(self) -> None:
-        entry_id = self._selected_schedule_entry_id()
-        if entry_id is None:
-            QMessageBox.information(self, "No Selection", "Select a schedule row first.")
-            return
-
-        toggled_entry: ScheduleEntry | None = None
-        for entry in self._schedule_entries:
-            if entry.id == entry_id:
-                if entry.fired:
-                    self._append_log(
-                        f"Ignored toggle for media '{self._media_log_name(entry.media_id)}': status is Fired"
-                    )
-                    return
-                entry.enabled = not entry.enabled
-                toggled_entry = entry
-                break
-
-        self._scheduler.set_entries(self._schedule_entries)
-        self._refresh_schedule_table()
-        self._save_state()
-        if toggled_entry is None:
-            self._append_log("Toggled schedule entry enabled/disabled")
-        else:
-            state = "enabled" if toggled_entry.enabled else "disabled"
-            self._append_log(
-                f"Toggled schedule entry for media '{self._media_log_name(toggled_entry.media_id)}' to {state}"
-            )
-
     def _on_schedule_hard_sync_changed(self, entry_id: str, value: str) -> None:
         updated_entry: ScheduleEntry | None = None
         new_hard_sync = value == "Yes"
@@ -858,15 +820,17 @@ class MainWindow(QMainWindow):
             f"Set hard sync for media '{self._media_log_name(updated_entry.media_id)}' to {state}"
         )
 
-    def _on_schedule_enabled_changed(self, entry_id: str, value: str) -> None:
+    def _on_schedule_status_changed(self, entry_id: str, value: str) -> None:
         updated_entry: ScheduleEntry | None = None
-        new_enabled = value == "Yes"
         for entry in self._schedule_entries:
             if entry.id == entry_id:
                 if entry.fired:
                     return
-                if entry.enabled == new_enabled:
+                new_fired = value == "Fired"
+                new_enabled = value == "Pending"
+                if entry.fired == new_fired and entry.enabled == new_enabled:
                     return
+                entry.fired = new_fired
                 entry.enabled = new_enabled
                 updated_entry = entry
                 break
@@ -877,9 +841,8 @@ class MainWindow(QMainWindow):
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_schedule_table()
         self._save_state()
-        state = "enabled" if updated_entry.enabled else "disabled"
         self._append_log(
-            f"Set schedule entry for media '{self._media_log_name(updated_entry.media_id)}' to {state}"
+            f"Set status for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
         )
 
     @Slot(object)
