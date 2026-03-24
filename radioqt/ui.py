@@ -149,11 +149,16 @@ class MainWindow(QMainWindow):
         self._stop_button = QPushButton("Stop")
         self._volume_slider = QSlider(Qt.Horizontal)
         self._volume_slider.setRange(0, 100)
-        self._volume_slider.setValue(80)
+        self._volume_slider.setValue(100)
         controls_layout.addWidget(self._play_button)
         controls_layout.addWidget(self._stop_button)
         controls_layout.addWidget(QLabel("Volume"))
         controls_layout.addWidget(self._volume_slider)
+        self._volume_label = QLabel("100%")
+        controls_layout.addWidget(self._volume_label)
+        self._volume_slider.valueChanged.connect(
+            lambda v: self._volume_label.setText(f"{v}%")
+        )
 
         panels_layout = QHBoxLayout()
         panels_layout.addWidget(self._build_library_panel(), 1)
