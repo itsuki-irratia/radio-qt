@@ -135,7 +135,7 @@ class MainWindow(QMainWindow):
         self._video_widget.setMinimumHeight(180)
         self._player.set_video_output(self._video_widget)
 
-        self._now_playing_label = QLabel("Now playing: nothing", root)
+        self._now_playing_label = QLabel("None", root)
         self._automation_status_label = QLabel(root)
         self._set_automation_status(self._automation_playing)
 
@@ -246,6 +246,7 @@ class MainWindow(QMainWindow):
         )
         self._schedule_table.horizontalHeader().setStretchLastSection(True)
         self._schedule_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._schedule_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._schedule_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._schedule_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self._schedule_table.customContextMenuRequested.connect(self._on_schedule_context_menu)
@@ -285,8 +286,8 @@ class MainWindow(QMainWindow):
         self._media_duration_cache.clear()
         self._schedule_entries = state.schedule_entries
         self._play_queue = deque(state.queue)
-        expired_entries = self._expire_missed_one_shots(app_started_at)
         self._recalculate_schedule_durations()
+        expired_entries = self._expire_missed_one_shots(app_started_at)
 
         self._refresh_urls_list()
         self._refresh_schedule_table()
@@ -308,9 +309,13 @@ class MainWindow(QMainWindow):
         save_state(self._state_path, state)
 
     def _expire_missed_one_shots(self, reference_time: datetime) -> int:
+        active_entry = self._active_schedule_entry_at(reference_time)
+        active_entry_id = active_entry[0].id if active_entry is not None else None
         expired = 0
         for entry in self._schedule_entries:
             if entry.status != SCHEDULE_STATUS_PENDING or not entry.one_shot:
+                continue
+            if entry.id == active_entry_id:
                 continue
             start_at = entry.start_at
             if start_at.tzinfo is None:
@@ -532,6 +537,17 @@ class MainWindow(QMainWindow):
             return None
         return item.data(Qt.UserRole)
 
+    def _selected_schedule_entry_ids(self) -> list[str]:
+        rows = sorted({index.row() for index in self._schedule_table.selectedIndexes()})
+        entry_ids = []
+        for row in rows:
+            item = self._schedule_table.item(row, 0)
+            if item is not None:
+                entry_id = item.data(Qt.UserRole)
+                if entry_id is not None:
+                    entry_ids.append(entry_id)
+        return entry_ids
+
     @Slot(QModelIndex)
     def _on_filesystem_selected(self, _: QModelIndex) -> None:
         self._last_source_panel = "filesystem"
@@ -611,7 +627,7 @@ class MainWindow(QMainWindow):
         self._play_queue = deque([item_id for item_id in self._play_queue if item_id != media_id])
         if self._player.current_media is not None and self._player.current_media.id == media_id:
             self._player.clear_current_media()
-            self._now_playing_label.setText("Now playing: nothing")
+            self._now_playing_label.setText("None")
 
         self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
@@ -746,46 +762,59 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _remove_schedule_entry(self) -> None:
-        entry_id = self._selected_schedule_entry_id()
-        if entry_id is None:
+        entry_ids = self._selected_schedule_entry_ids()
+        if not entry_ids:
             QMessageBox.information(self, "No Selection", "Select a schedule row first.")
             return
 
-        removed_entry = next((entry for entry in self._schedule_entries if entry.id == entry_id), None)
-        media_name = self._media_log_name(removed_entry.media_id) if removed_entry else "unknown"
-        start_label = removed_entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S") if removed_entry else "unknown"
+        entry_ids_set = set(entry_ids)
+        entries_to_remove = [e for e in self._schedule_entries if e.id in entry_ids_set]
+        if not entries_to_remove:
+            return
+
+        if len(entries_to_remove) == 1:
+            entry = entries_to_remove[0]
+            media_name = self._media_log_name(entry.media_id)
+            start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            message = f"Are you sure you want to remove the schedule entry for '{media_name}' at {start_label}?"
+        else:
+            lines = []
+            for entry in sorted(entries_to_remove, key=lambda e: e.start_at):
+                media_name = self._media_log_name(entry.media_id)
+                start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+                lines.append(f"  - '{media_name}' at {start_label}")
+            message = f"Are you sure you want to remove {len(entries_to_remove)} schedule entries?\n" + "\n".join(lines)
+
         result = QMessageBox.question(
             self,
             "Confirm Removal",
-            f"Are you sure you want to remove the schedule entry for '{media_name}' at {start_label}?",
+            message,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if result != QMessageBox.Yes:
             return
 
-        original_count = len(self._schedule_entries)
-        self._schedule_entries = [entry for entry in self._schedule_entries if entry.id != entry_id]
-        if len(self._schedule_entries) == original_count:
-            return
-
+        self._schedule_entries = [e for e in self._schedule_entries if e.id not in entry_ids_set]
         self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_schedule_table()
         self._save_state()
-        if removed_entry is None:
-            self._append_log("Removed schedule entry")
+        if len(entries_to_remove) == 1:
+            self._append_log(f"Removed schedule entry for media '{self._media_log_name(entries_to_remove[0].media_id)}'")
         else:
-            self._append_log(f"Removed schedule entry for media '{self._media_log_name(removed_entry.media_id)}'")
+            self._append_log(f"Removed {len(entries_to_remove)} schedule entries")
 
     @Slot("QPoint")
     def _on_schedule_context_menu(self, position) -> None:
         item = self._schedule_table.itemAt(position)
         if item is None:
             return
+        selected_count = len(self._selected_schedule_entry_ids())
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self._schedule_table)
-        remove_action = QAction("Remove Entry", menu)
+        label = f"Remove {selected_count} Entries" if selected_count > 1 else "Remove Entry"
+        remove_action = QAction(label, menu)
         remove_action.triggered.connect(self._remove_schedule_entry)
         menu.addAction(remove_action)
         menu.exec(self._schedule_table.viewport().mapToGlobal(position))
@@ -883,7 +912,7 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_media_started(self, media: MediaItem) -> None:
-        self._now_playing_label.setText(f"Now playing: {media.title}")
+        self._now_playing_label.setText(media.title)
         self._append_log(f"Now playing '{media.title}'")
 
     @Slot()
@@ -907,7 +936,7 @@ class MainWindow(QMainWindow):
             return
         self._player.clear_current_media()
         self._save_state()
-        self._now_playing_label.setText("Now playing: nothing")
+        self._now_playing_label.setText("None")
 
     def _active_schedule_entry_at(self, now: datetime) -> tuple[ScheduleEntry, datetime] | None:
         entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
@@ -924,7 +953,7 @@ class MainWindow(QMainWindow):
 
             if end_at is not None and now >= end_at:
                 continue
-            if entry.status != SCHEDULE_STATUS_PENDING:
+            if entry.status == SCHEDULE_STATUS_DISABLED:
                 return None
             return entry, start_at
         return None
@@ -932,7 +961,7 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
         if state == QMediaPlayer.StoppedState and not self._play_queue:
-            self._now_playing_label.setText("Now playing: nothing")
+            self._now_playing_label.setText("None")
 
     @Slot()
     def _on_play_clicked(self) -> None:
@@ -977,7 +1006,15 @@ class MainWindow(QMainWindow):
         if self._play_queue:
             self._play_next_from_queue()
             return
-        self._append_log("Play ignored: no active or queued media")
+        entries_detail = []
+        for e in sorted(self._schedule_entries, key=lambda e: self._normalized_start(e.start_at)):
+            s = self._normalized_start(e.start_at).strftime("%H:%M:%S")
+            name = self._media_log_name(e.media_id)
+            entries_detail.append(f"{name}@{s}/{e.status}/dur={e.duration}")
+        self._append_log(
+            f"Play ignored: no active or queued media at {now.strftime('%H:%M:%S')} "
+            f"— schedule: [{', '.join(entries_detail) or 'empty'}]"
+        )
 
     @Slot()
     def _on_stop_clicked(self) -> None:
@@ -992,7 +1029,7 @@ class MainWindow(QMainWindow):
             self._scheduler.stop()
             self._append_log("Automation status changed to Stopped")
         self._player.clear_current_media()
-        self._now_playing_label.setText("Now playing: nothing")
+        self._now_playing_label.setText("None")
         self._append_log(f"Playback stopped and media cleared ('{current_media_name}')")
 
     @Slot(str)
