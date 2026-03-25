@@ -236,10 +236,17 @@ class MainWindow(QMainWindow):
         return group
 
     def _build_schedule_panel(self) -> QWidget:
-        group = QGroupBox("Datetime Schedule")
+        group = QGroupBox("Schedule")
         layout = QVBoxLayout(group)
 
-        self._schedule_table = QTableWidget(group)
+        # Tabs for different scheduling types
+        self._schedule_tabs = QTabWidget(group)
+
+        # --- Datetime tab (existing UI) ---
+        datetime_tab = QWidget()
+        datetime_layout = QVBoxLayout(datetime_tab)
+
+        self._schedule_table = QTableWidget(datetime_tab)
         self._schedule_table.setColumnCount(5)
         self._schedule_table.setHorizontalHeaderLabels(
             ["Start Time", "Duration", "Media", "Hard Sync", "Status"]
@@ -255,8 +262,33 @@ class MainWindow(QMainWindow):
         self._add_schedule_button = QPushButton("Schedule Selected Media")
         buttons_row.addWidget(self._add_schedule_button)
 
-        layout.addWidget(self._schedule_table)
-        layout.addLayout(buttons_row)
+        datetime_layout.addWidget(self._schedule_table)
+        datetime_layout.addLayout(buttons_row)
+        self._schedule_tabs.addTab(datetime_tab, "Date Time")
+
+        # --- CRON tab (placeholder for CRON-based scheduling) ---
+        cron_tab = QWidget()
+        cron_layout = QVBoxLayout(cron_tab)
+
+        self._cron_table = QTableWidget(cron_tab)
+        self._cron_table.setColumnCount(3)
+        self._cron_table.setHorizontalHeaderLabels(["Cron", "Media", "Status"])
+        self._cron_table.horizontalHeader().setStretchLastSection(True)
+        self._cron_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._cron_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._cron_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._cron_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._cron_table.customContextMenuRequested.connect(self._on_cron_context_menu)
+
+        cron_buttons_row = QHBoxLayout()
+        self._add_cron_button = QPushButton("Add CRON Schedule")
+        cron_buttons_row.addWidget(self._add_cron_button)
+
+        cron_layout.addWidget(self._cron_table)
+        cron_layout.addLayout(cron_buttons_row)
+        self._schedule_tabs.addTab(cron_tab, "CRON")
+
+        layout.addWidget(self._schedule_tabs)
         return group
 
     def _wire_signals(self) -> None:
@@ -818,6 +850,27 @@ class MainWindow(QMainWindow):
         remove_action.triggered.connect(self._remove_schedule_entry)
         menu.addAction(remove_action)
         menu.exec(self._schedule_table.viewport().mapToGlobal(position))
+
+    @Slot("QPoint")
+    def _on_cron_context_menu(self, position) -> None:
+        item = self._cron_table.itemAt(position)
+        if item is None:
+            return
+        self._cron_table.selectRow(item.row())
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self._cron_table)
+        remove_action = QAction("Remove CRON Entry", menu)
+        remove_action.triggered.connect(self._remove_selected_cron)
+        menu.addAction(remove_action)
+        menu.exec(self._cron_table.viewport().mapToGlobal(position))
+
+    @Slot()
+    def _add_cron_schedule(self) -> None:
+        # Placeholder: CRON scheduling behavior not yet implemented.
+        QMessageBox.information(self, "Not implemented", "CRON scheduling is not implemented yet.")
+
+    def _remove_selected_cron(self) -> None:
+        QMessageBox.information(self, "Not implemented", "CRON scheduling is not implemented yet.")
 
     @Slot("QPoint")
     def _on_urls_context_menu(self, position) -> None:
