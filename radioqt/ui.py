@@ -150,6 +150,7 @@ class MainWindow(QMainWindow):
         self._play_queue: deque[str] = deque()
         self._last_source_panel = "filesystem"
         self._automation_playing = False
+        self._fullscreen_active = False
 
         self._player = MediaPlayerController(self)
         self._scheduler = RadioScheduler(parent=self)
@@ -178,14 +179,11 @@ class MainWindow(QMainWindow):
         controls_layout = QHBoxLayout()
         self._play_button = QPushButton("Play")
         self._stop_button = QPushButton("Stop")
-        self._fullscreen_button = QPushButton("Fullscreen")
-        self._fullscreen_button.setCheckable(True)
         self._volume_slider = QSlider(Qt.Horizontal)
         self._volume_slider.setRange(0, 100)
         self._volume_slider.setValue(100)
         controls_layout.addWidget(self._play_button)
         controls_layout.addWidget(self._stop_button)
-        controls_layout.addWidget(self._fullscreen_button)
         controls_layout.addWidget(QLabel("Volume"))
         controls_layout.addWidget(self._volume_slider)
         self._volume_label = QLabel("100%")
@@ -337,7 +335,6 @@ class MainWindow(QMainWindow):
 
         self._play_button.clicked.connect(self._on_play_clicked)
         self._stop_button.clicked.connect(self._on_stop_clicked)
-        self._fullscreen_button.clicked.connect(self._on_fullscreen_toggled)
         self._volume_slider.valueChanged.connect(self._player.set_volume)
 
         self._player.media_started.connect(self._on_media_started)
@@ -365,7 +362,7 @@ class MainWindow(QMainWindow):
             pass
 
     def eventFilter(self, obj: object, event: object) -> bool:
-        # Catch Escape key press anywhere in the window to exit fullscreen modes
+        # Catch keyboard/mouse shortcuts for fullscreen handling.
         try:
             if isinstance(event, QEvent) and event.type() == QEvent.KeyPress:
                 from PySide6.QtGui import QKeyEvent
@@ -373,9 +370,24 @@ class MainWindow(QMainWindow):
                 if isinstance(event, QKeyEvent) and event.key() == Qt.Key_Escape:
                     self._ensure_exit_fullscreen()
                     return True
+            if (
+                obj in (self._video_widget, self._fullscreen_overlay)
+                and isinstance(event, QEvent)
+                and event.type() == QEvent.MouseButtonDblClick
+            ):
+                self._toggle_fullscreen()
+                return True
         except Exception:
             pass
         return super().eventFilter(obj, event)
+
+    def _toggle_fullscreen(self) -> None:
+        is_fullscreen = (
+            getattr(self._video_widget, "isFullScreen", lambda: False)()
+            or self._fullscreen_overlay.isVisible()
+            or self.isFullScreen()
+        )
+        self._on_fullscreen_toggled(not is_fullscreen)
 
     def _ensure_exit_fullscreen(self) -> None:
         # Centralized exit fullscreen: video widget, overlay, main window
@@ -401,10 +413,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        try:
-            self._fullscreen_button.setChecked(False)
-        except Exception:
-            pass
+        self._fullscreen_active = False
 
     def _load_initial_state(self) -> None:
         app_started_at = datetime.now().astimezone()
@@ -1264,18 +1273,11 @@ class MainWindow(QMainWindow):
                 self._fullscreen_overlay.hide()
 
     def _on_video_fullscreen_changed(self, is_fullscreen: bool) -> None:
-        # Keep the fullscreen button state in sync
-        try:
-            self._fullscreen_button.setChecked(bool(is_fullscreen))
-        except Exception:
-            pass
+        self._fullscreen_active = bool(is_fullscreen)
 
     def _exit_fullscreen_overlay(self) -> None:
         # Called by overlay when it is dismissed (ESC)
-        try:
-            self._fullscreen_button.setChecked(False)
-        except Exception:
-            pass
+        self._fullscreen_active = False
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._scheduler.stop()
