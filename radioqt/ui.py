@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import math
 from pathlib import Path
 import re
 import subprocess
 
-from PySide6.QtCore import QDateTime, QModelIndex, Qt, QUrl, Slot, QEvent
+from PySide6.QtCore import QDate, QDateTime, QModelIndex, Qt, QUrl, Slot, QEvent
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDateEdit,
     QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
@@ -151,6 +152,7 @@ class MainWindow(QMainWindow):
         self._last_source_panel = "filesystem"
         self._automation_playing = False
         self._fullscreen_active = False
+        self._schedule_filter_date = datetime.now().astimezone().date()
 
         self._player = MediaPlayerController(self)
         self._scheduler = RadioScheduler(parent=self)
@@ -280,6 +282,21 @@ class MainWindow(QMainWindow):
         datetime_tab = QWidget()
         datetime_layout = QVBoxLayout(datetime_tab)
 
+        filter_row = QHBoxLayout()
+        self._schedule_date_selector = QDateEdit(datetime_tab)
+        self._schedule_date_selector.setCalendarPopup(True)
+        self._schedule_date_selector.setDisplayFormat("yyyy-MM-dd")
+        self._schedule_date_selector.setDate(
+            QDate(
+                self._schedule_filter_date.year,
+                self._schedule_filter_date.month,
+                self._schedule_filter_date.day,
+            )
+        )
+        filter_row.addWidget(QLabel("Date"))
+        filter_row.addWidget(self._schedule_date_selector)
+        filter_row.addStretch()
+
         self._schedule_table = QTableWidget(datetime_tab)
         self._schedule_table.setColumnCount(5)
         self._schedule_table.setHorizontalHeaderLabels(
@@ -296,6 +313,7 @@ class MainWindow(QMainWindow):
         self._add_schedule_button = QPushButton("Schedule Selected Media")
         buttons_row.addWidget(self._add_schedule_button)
 
+        datetime_layout.addLayout(filter_row)
         datetime_layout.addWidget(self._schedule_table)
         datetime_layout.addLayout(buttons_row)
         self._schedule_tabs.addTab(datetime_tab, "Date Time")
@@ -332,6 +350,7 @@ class MainWindow(QMainWindow):
         self._add_url_button.clicked.connect(self._add_media_url)
 
         self._add_schedule_button.clicked.connect(self._add_schedule_entry)
+        self._schedule_date_selector.dateChanged.connect(self._on_schedule_filter_date_changed)
 
         self._play_button.clicked.connect(self._on_play_clicked)
         self._stop_button.clicked.connect(self._on_stop_clicked)
@@ -424,6 +443,8 @@ class MainWindow(QMainWindow):
         self._play_queue = deque(state.queue)
         self._recalculate_schedule_durations()
         expired_entries = self._expire_missed_one_shots(app_started_at)
+        self._schedule_filter_date = self._initial_schedule_filter_date()
+        self._set_schedule_filter_date(self._schedule_filter_date)
 
         self._refresh_urls_list()
         self._refresh_schedule_table()
@@ -476,7 +497,7 @@ class MainWindow(QMainWindow):
         self._urls_table.resizeColumnsToContents()
 
     def _refresh_schedule_table(self) -> None:
-        entries = sorted(self._schedule_entries, key=lambda entry: entry.start_at)
+        entries = self._visible_schedule_entries()
         self._schedule_table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
             media = self._media_items.get(entry.media_id)
@@ -526,6 +547,39 @@ class MainWindow(QMainWindow):
             self._schedule_table.setCellWidget(row, 4, status_selector)
 
         self._schedule_table.resizeColumnsToContents()
+
+    def _visible_schedule_entries(self) -> list[ScheduleEntry]:
+        return [
+            entry
+            for entry in sorted(
+                self._schedule_entries,
+                key=lambda current_entry: self._normalized_start(current_entry.start_at),
+            )
+            if self._normalized_start(entry.start_at).date() == self._schedule_filter_date
+        ]
+
+    def _initial_schedule_filter_date(self) -> date:
+        if not self._schedule_entries:
+            return datetime.now().astimezone().date()
+
+        sorted_entries = sorted(
+            self._schedule_entries,
+            key=lambda entry: self._normalized_start(entry.start_at),
+        )
+        today = datetime.now().astimezone().date()
+        for entry in sorted_entries:
+            entry_date = self._normalized_start(entry.start_at).date()
+            if entry_date >= today:
+                return entry_date
+        return self._normalized_start(sorted_entries[0].start_at).date()
+
+    def _set_schedule_filter_date(self, target_date: date) -> None:
+        self._schedule_filter_date = target_date
+        self._schedule_date_selector.blockSignals(True)
+        self._schedule_date_selector.setDate(
+            QDate(target_date.year, target_date.month, target_date.day)
+        )
+        self._schedule_date_selector.blockSignals(False)
 
     def _recalculate_schedule_durations(self) -> None:
         entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
@@ -683,6 +737,11 @@ class MainWindow(QMainWindow):
                 if entry_id is not None:
                     entry_ids.append(entry_id)
         return entry_ids
+
+    @Slot(QDate)
+    def _on_schedule_filter_date_changed(self, selected_date: QDate) -> None:
+        self._schedule_filter_date = selected_date.toPython()
+        self._refresh_schedule_table()
 
     @Slot(QModelIndex)
     def _on_filesystem_selected(self, _: QModelIndex) -> None:
@@ -885,6 +944,7 @@ class MainWindow(QMainWindow):
 
         self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
+        self._set_schedule_filter_date(self._normalized_start(entry.start_at).date())
         self._refresh_schedule_table()
         self._save_state()
         media_name = self._media_log_name(entry.media_id)
