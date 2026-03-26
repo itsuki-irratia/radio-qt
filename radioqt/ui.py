@@ -6,8 +6,9 @@ import math
 from pathlib import Path
 import re
 import subprocess
+from uuid import NAMESPACE_URL, uuid5
 
-from PySide6.QtCore import QDate, QDateTime, QModelIndex, Qt, QUrl, Slot, QEvent
+from PySide6.QtCore import QDate, QDateTime, QModelIndex, Qt, QTimer, QUrl, Slot, QEvent
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -36,9 +37,19 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QInputDialog,
+    QLineEdit,
 )
 
-from .models import AppState, MediaItem, SCHEDULE_STATUS_DISABLED, SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_PENDING, ScheduleEntry
+from .cron import CronExpression, CronParseError
+from .models import (
+    AppState,
+    CronEntry,
+    MediaItem,
+    SCHEDULE_STATUS_DISABLED,
+    SCHEDULE_STATUS_FIRED,
+    SCHEDULE_STATUS_PENDING,
+    ScheduleEntry,
+)
 from .player import MediaPlayerController
 from .scheduler import RadioScheduler
 from .storage import load_state, save_state
@@ -133,6 +144,41 @@ class ScheduleDialog(QDialog):
         return self._hard_sync_checkbox.isChecked()
 
 
+class CronDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Add CRON Entry")
+        self._expression_edit = QLineEdit(self)
+        self._expression_edit.setPlaceholderText("sec min hour day month weekday")
+        self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
+        self._hard_sync_checkbox.setChecked(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("CRON expression (with seconds):"))
+        layout.addWidget(self._expression_edit)
+        layout.addWidget(QLabel("Example: 0 */15 * * * *"))
+        layout.addWidget(self._hard_sync_checkbox)
+        layout.addWidget(buttons)
+
+    def expression(self) -> str:
+        return self._expression_edit.text().strip()
+
+    def hard_sync(self) -> bool:
+        return self._hard_sync_checkbox.isChecked()
+
+    def _validate_and_accept(self) -> None:
+        try:
+            CronExpression.parse(self.expression())
+        except CronParseError as exc:
+            QMessageBox.warning(self, "Invalid CRON", str(exc))
+            return
+        self.accept()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -148,6 +194,7 @@ class MainWindow(QMainWindow):
         self._media_items: dict[str, MediaItem] = {}
         self._media_duration_cache: dict[str, int | None] = {}
         self._schedule_entries: list[ScheduleEntry] = []
+        self._cron_entries: list[CronEntry] = []
         self._play_queue: deque[str] = deque()
         self._last_source_panel = "filesystem"
         self._automation_playing = False
@@ -157,10 +204,13 @@ class MainWindow(QMainWindow):
 
         self._player = MediaPlayerController(self)
         self._scheduler = RadioScheduler(parent=self)
+        self._cron_refresh_timer = QTimer(self)
+        self._cron_refresh_timer.setInterval(30000)
 
         self._build_ui()
         self._wire_signals()
         self._load_initial_state()
+        self._cron_refresh_timer.start()
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -324,8 +374,8 @@ class MainWindow(QMainWindow):
         cron_layout = QVBoxLayout(cron_tab)
 
         self._cron_table = QTableWidget(cron_tab)
-        self._cron_table.setColumnCount(3)
-        self._cron_table.setHorizontalHeaderLabels(["Cron", "Media", "Status"])
+        self._cron_table.setColumnCount(4)
+        self._cron_table.setHorizontalHeaderLabels(["CRON", "Media", "Hard Sync", "Status"])
         self._cron_table.horizontalHeader().setStretchLastSection(True)
         self._cron_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._cron_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -351,6 +401,7 @@ class MainWindow(QMainWindow):
         self._add_url_button.clicked.connect(self._add_media_url)
 
         self._add_schedule_button.clicked.connect(self._add_schedule_entry)
+        self._add_cron_button.clicked.connect(self._add_cron_schedule)
         self._schedule_date_selector.dateChanged.connect(self._on_schedule_filter_date_changed)
 
         self._play_button.clicked.connect(self._on_play_clicked)
@@ -365,6 +416,7 @@ class MainWindow(QMainWindow):
 
         self._scheduler.schedule_triggered.connect(self._on_schedule_triggered)
         self._scheduler.log.connect(self._append_log)
+        self._cron_refresh_timer.timeout.connect(self._refresh_cron_runtime_window)
         # Sync fullscreen button with video widget state
         try:
             self._video_widget.fullScreenChanged.connect(self._on_video_fullscreen_changed)
@@ -442,13 +494,18 @@ class MainWindow(QMainWindow):
         self._media_items = {item.id: item for item in state.media_items}
         self._media_duration_cache.clear()
         self._schedule_entries = state.schedule_entries
+        self._cron_entries = state.cron_entries
         self._play_queue = deque(state.queue)
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
         self._recalculate_schedule_durations()
         expired_entries = self._expire_missed_one_shots(app_started_at)
         self._schedule_filter_date = self._initial_schedule_filter_date()
         self._set_schedule_filter_date(self._schedule_filter_date)
+        self._refresh_cron_schedule_entries({self._schedule_filter_date})
+        self._recalculate_schedule_durations()
 
         self._refresh_urls_list()
+        self._refresh_cron_table()
         self._refresh_schedule_table()
         self._scheduler.set_entries(self._schedule_entries)
         self._player.set_volume(self._volume_slider.value())
@@ -463,6 +520,7 @@ class MainWindow(QMainWindow):
         state = AppState(
             media_items=list(self._media_items.values()),
             schedule_entries=self._schedule_entries,
+            cron_entries=self._cron_entries,
             queue=list(self._play_queue),
         )
         save_state(self._state_path, state)
@@ -498,6 +556,135 @@ class MainWindow(QMainWindow):
             self._urls_table.setItem(row, 1, QTableWidgetItem(media.source))
         self._urls_table.resizeColumnsToContents()
 
+    def _refresh_cron_table(self) -> None:
+        entries = sorted(self._cron_entries, key=lambda entry: entry.created_at)
+        self._cron_table.setRowCount(len(entries))
+        for row, entry in enumerate(entries):
+            media = self._media_items.get(entry.media_id)
+            media_name = media.title if media else f"Missing ({entry.media_id[:8]})"
+            media_source = media.source if media else f"Missing media ID: {entry.media_id}"
+
+            expression_item = QTableWidgetItem(entry.expression)
+            expression_item.setData(Qt.UserRole, entry.id)
+            expression_item.setToolTip(media_source)
+            self._cron_table.setItem(row, 0, expression_item)
+
+            media_item = QTableWidgetItem(media_name)
+            media_item.setToolTip(media_source)
+            self._cron_table.setItem(row, 1, media_item)
+
+            hard_sync_selector = QComboBox(self._cron_table)
+            hard_sync_selector.addItems(["Yes", "No"])
+            hard_sync_selector.setCurrentText("Yes" if entry.hard_sync else "No")
+            hard_sync_selector.setToolTip(media_source)
+            hard_sync_selector.currentTextChanged.connect(
+                lambda value, entry_id=entry.id: self._on_cron_hard_sync_changed(entry_id, value)
+            )
+            self._cron_table.setCellWidget(row, 2, hard_sync_selector)
+
+            status_selector = QComboBox(self._cron_table)
+            status_selector.addItems(["Pending", "Disabled"])
+            status_selector.setCurrentText("Pending" if entry.enabled else "Disabled")
+            status_selector.setToolTip(media_source)
+            status_selector.currentTextChanged.connect(
+                lambda value, entry_id=entry.id: self._on_cron_status_changed(entry_id, value)
+            )
+            self._cron_table.setCellWidget(row, 3, status_selector)
+
+        self._cron_table.resizeColumnsToContents()
+
+    @staticmethod
+    def _cron_occurrence_entry_id(cron_id: str, start_at: datetime) -> str:
+        return str(uuid5(NAMESPACE_URL, f"radioqt-cron:{cron_id}:{start_at.isoformat()}"))
+
+    def _cron_entry_by_id(self, cron_id: str | None) -> CronEntry | None:
+        if cron_id is None:
+            return None
+        for entry in self._cron_entries:
+            if entry.id == cron_id:
+                return entry
+        return None
+
+    @staticmethod
+    def _runtime_cron_dates() -> set[date]:
+        today = datetime.now().astimezone().date()
+        return {today - timedelta(days=1), today, today + timedelta(days=1)}
+
+    def _next_cron_occurrence(self, cron_entry: CronEntry, start: datetime) -> datetime | None:
+        try:
+            expression = CronExpression.parse(cron_entry.expression)
+        except CronParseError:
+            return None
+        return expression.next_at_or_after(start)
+
+    def _apply_cron_entry_defaults(self, entry: ScheduleEntry, cron_entry: CronEntry) -> None:
+        entry.media_id = cron_entry.media_id
+        entry.one_shot = True
+        entry.cron_id = cron_entry.id
+        if entry.cron_hard_sync_override is None:
+            entry.hard_sync = cron_entry.hard_sync
+        else:
+            entry.hard_sync = entry.cron_hard_sync_override
+
+        if entry.status == SCHEDULE_STATUS_FIRED:
+            return
+        if not cron_entry.enabled:
+            entry.status = SCHEDULE_STATUS_DISABLED
+            return
+        entry.status = entry.cron_status_override or SCHEDULE_STATUS_PENDING
+
+    def _refresh_cron_schedule_entries(self, target_dates: set[date] | None = None) -> None:
+        refreshed_entries: list[ScheduleEntry] = []
+        for entry in self._schedule_entries:
+            if entry.cron_id is None:
+                refreshed_entries.append(entry)
+                continue
+            cron_entry = self._cron_entry_by_id(entry.cron_id)
+            if cron_entry is None:
+                if entry.status == SCHEDULE_STATUS_FIRED:
+                    refreshed_entries.append(entry)
+                continue
+            self._apply_cron_entry_defaults(entry, cron_entry)
+            refreshed_entries.append(entry)
+
+        self._schedule_entries = refreshed_entries
+        existing_by_id = {entry.id: entry for entry in self._schedule_entries}
+        if not target_dates:
+            return
+
+        timezone = datetime.now().astimezone().tzinfo
+        for cron_entry in self._cron_entries:
+            try:
+                expression = CronExpression.parse(cron_entry.expression)
+            except CronParseError:
+                continue
+            for target_date in sorted(target_dates):
+                for start_at in expression.iter_datetimes_on_date(target_date, timezone):
+                    entry_id = self._cron_occurrence_entry_id(cron_entry.id, start_at)
+                    entry = existing_by_id.get(entry_id)
+                    if entry is None:
+                        entry = ScheduleEntry(
+                            id=entry_id,
+                            media_id=cron_entry.media_id,
+                            start_at=start_at,
+                            hard_sync=cron_entry.hard_sync,
+                            status=SCHEDULE_STATUS_PENDING,
+                            one_shot=True,
+                            cron_id=cron_entry.id,
+                        )
+                        self._apply_cron_entry_defaults(entry, cron_entry)
+                        self._schedule_entries.append(entry)
+                        existing_by_id[entry_id] = entry
+                        continue
+
+                    entry.start_at = start_at
+                    self._apply_cron_entry_defaults(entry, cron_entry)
+
+    def _refresh_cron_runtime_window(self) -> None:
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
+
     def _refresh_schedule_table(self) -> None:
         entries = self._visible_schedule_entries()
         self._schedule_table.setRowCount(len(entries))
@@ -508,41 +695,48 @@ class MainWindow(QMainWindow):
             status = entry.status.capitalize()
             start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
             duration_label = self._format_duration(entry.duration)
+            cron_entry = self._cron_entry_by_id(entry.cron_id)
+            origin_label = f"Generated from CRON: {cron_entry.expression}" if cron_entry is not None else "Manual schedule"
+            tooltip = f"{media_source}\n{origin_label}"
 
             start_item = QTableWidgetItem(start_label)
             start_item.setData(Qt.UserRole, entry.id)
-            start_item.setToolTip(media_source)
+            start_item.setToolTip(tooltip)
             self._schedule_table.setItem(row, 0, start_item)
 
             duration_item = QTableWidgetItem(duration_label)
-            duration_item.setToolTip(media_source)
+            duration_item.setToolTip(tooltip)
             self._schedule_table.setItem(row, 1, duration_item)
 
             media_item = QTableWidgetItem(media_name)
-            media_item.setToolTip(media_source)
+            media_item.setToolTip(tooltip)
             self._schedule_table.setItem(row, 2, media_item)
 
             now = datetime.now().astimezone()
             entry_expired = entry.status == SCHEDULE_STATUS_DISABLED and self._normalized_start(entry.start_at) < now
+            cron_globally_disabled = cron_entry is not None and not cron_entry.enabled
             is_locked = entry.status == SCHEDULE_STATUS_FIRED or entry_expired
 
             hard_sync_selector = QComboBox(self._schedule_table)
             hard_sync_selector.addItems(["Yes", "No"])
             hard_sync_selector.setCurrentText("Yes" if entry.hard_sync else "No")
             hard_sync_selector.setEnabled(not is_locked)
-            hard_sync_selector.setToolTip(media_source)
+            hard_sync_selector.setToolTip(tooltip)
             hard_sync_selector.currentTextChanged.connect(
                 lambda value, entry_id=entry.id: self._on_schedule_hard_sync_changed(entry_id, value)
             )
             self._schedule_table.setCellWidget(row, 3, hard_sync_selector)
 
             status_selector = QComboBox(self._schedule_table)
-            status_selector.addItems(["Pending", "Disabled"])
+            if cron_globally_disabled:
+                status_selector.addItem("Disabled")
+            else:
+                status_selector.addItems(["Pending", "Disabled"])
             if entry.status == SCHEDULE_STATUS_FIRED:
                 status_selector.addItem("Fired")
             status_selector.setCurrentText(status)
-            status_selector.setEnabled(not is_locked)
-            status_selector.setToolTip(media_source)
+            status_selector.setEnabled(not is_locked and not cron_globally_disabled)
+            status_selector.setToolTip(tooltip)
             status_selector.currentTextChanged.connect(
                 lambda value, entry_id=entry.id: self._on_schedule_status_changed(entry_id, value)
             )
@@ -561,19 +755,29 @@ class MainWindow(QMainWindow):
         ]
 
     def _initial_schedule_filter_date(self) -> date:
-        if not self._schedule_entries:
-            return datetime.now().astimezone().date()
-
-        sorted_entries = sorted(
-            self._schedule_entries,
-            key=lambda entry: self._normalized_start(entry.start_at),
-        )
         today = datetime.now().astimezone().date()
-        for entry in sorted_entries:
-            entry_date = self._normalized_start(entry.start_at).date()
+        upcoming_dates = [
+            self._normalized_start(entry.start_at).date()
+            for entry in sorted(
+                self._schedule_entries,
+                key=lambda entry: self._normalized_start(entry.start_at),
+            )
+        ]
+        for entry_date in upcoming_dates:
             if entry_date >= today:
                 return entry_date
-        return self._normalized_start(sorted_entries[0].start_at).date()
+        if upcoming_dates:
+            return upcoming_dates[0]
+
+        now = datetime.now().astimezone()
+        cron_dates = []
+        for cron_entry in self._cron_entries:
+            next_occurrence = self._next_cron_occurrence(cron_entry, now)
+            if next_occurrence is not None:
+                cron_dates.append(next_occurrence.date())
+        if cron_dates:
+            return min(cron_dates)
+        return today
 
     def _set_schedule_filter_date(self, target_date: date) -> None:
         self._schedule_filter_date = target_date
@@ -750,9 +954,21 @@ class MainWindow(QMainWindow):
                     entry_ids.append(entry_id)
         return entry_ids
 
+    def _selected_cron_entry_id(self) -> str | None:
+        row = self._cron_table.currentRow()
+        if row < 0:
+            return None
+        item = self._cron_table.item(row, 0)
+        if item is None:
+            return None
+        return item.data(Qt.UserRole)
+
     @Slot(QDate)
     def _on_schedule_filter_date_changed(self, selected_date: QDate) -> None:
         self._schedule_filter_date = selected_date.toPython()
+        self._refresh_cron_schedule_entries({self._schedule_filter_date})
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
         self._refresh_schedule_table()
 
     @Slot(QModelIndex)
@@ -830,15 +1046,18 @@ class MainWindow(QMainWindow):
             return
         self._media_duration_cache.pop(media_id, None)
 
+        self._cron_entries = [entry for entry in self._cron_entries if entry.media_id != media_id]
         self._schedule_entries = [entry for entry in self._schedule_entries if entry.media_id != media_id]
         self._play_queue = deque([item_id for item_id in self._play_queue if item_id != media_id])
         if self._player.current_media is not None and self._player.current_media.id == media_id:
             self._player.clear_current_media()
             self._now_playing_label.setText("None")
 
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
         self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_urls_list()
+        self._refresh_cron_table()
         self._refresh_schedule_table()
         self._save_state()
         self._append_log(f"Removed media: {removed.title}")
@@ -940,6 +1159,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Selection", "Select a media item from library first.")
             return
 
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
         self._recalculate_schedule_durations()
         dialog = ScheduleDialog(self, initial_start_at=self._default_next_schedule_start())
         if dialog.exec() != QDialog.Accepted:
@@ -978,6 +1198,14 @@ class MainWindow(QMainWindow):
         entry_ids_set = set(entry_ids)
         entries_to_remove = [e for e in self._schedule_entries if e.id in entry_ids_set]
         if not entries_to_remove:
+            return
+        cron_generated_entries = [entry for entry in entries_to_remove if entry.cron_id is not None]
+        if cron_generated_entries:
+            QMessageBox.information(
+                self,
+                "CRON-managed Entries",
+                "CRON-generated rows cannot be removed from Date Time. Disable that exact occurrence here, or remove the rule from the CRON tab.",
+            )
             return
 
         if len(entries_to_remove) == 1:
@@ -1019,10 +1247,20 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         selected_count = len(self._selected_schedule_entry_ids())
+        selected_ids = set(self._selected_schedule_entry_ids())
+        has_cron_generated = any(
+            entry.id in selected_ids and entry.cron_id is not None
+            for entry in self._schedule_entries
+        )
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self._schedule_table)
-        label = f"Remove {selected_count} Entries" if selected_count > 1 else "Remove Entry"
+        label = (
+            "CRON-managed Entries Cannot Be Removed"
+            if has_cron_generated
+            else f"Remove {selected_count} Entries" if selected_count > 1 else "Remove Entry"
+        )
         remove_action = QAction(label, menu)
+        remove_action.setEnabled(not has_cron_generated)
         remove_action.triggered.connect(self._remove_schedule_entry)
         menu.addAction(remove_action)
         menu.exec(self._schedule_table.viewport().mapToGlobal(position))
@@ -1042,11 +1280,70 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _add_cron_schedule(self) -> None:
-        # Placeholder: CRON scheduling behavior not yet implemented.
-        QMessageBox.information(self, "Not implemented", "CRON scheduling is not implemented yet.")
+        media_id = self._selected_media_id()
+        if media_id is None:
+            QMessageBox.information(self, "No Selection", "Select a media item from library first.")
+            return
+
+        dialog = CronDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        entry = CronEntry.create(
+            media_id=media_id,
+            expression=dialog.expression(),
+            hard_sync=dialog.hard_sync(),
+        )
+        self._cron_entries.append(entry)
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
+        next_occurrence = self._next_cron_occurrence(entry, datetime.now().astimezone())
+        if next_occurrence is not None:
+            self._set_schedule_filter_date(next_occurrence.date())
+            self._refresh_cron_schedule_entries({next_occurrence.date()})
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_cron_table()
+        self._refresh_schedule_table()
+        self._save_state()
+        self._append_log(
+            f"Added CRON schedule '{entry.expression}' for media '{self._media_log_name(entry.media_id)}'"
+        )
 
     def _remove_selected_cron(self) -> None:
-        QMessageBox.information(self, "Not implemented", "CRON scheduling is not implemented yet.")
+        cron_id = self._selected_cron_entry_id()
+        if cron_id is None:
+            QMessageBox.information(self, "No Selection", "Select a CRON row first.")
+            return
+
+        cron_entry = self._cron_entry_by_id(cron_id)
+        if cron_entry is None:
+            return
+
+        result = QMessageBox.question(
+            self,
+            "Confirm Removal",
+            (
+                f"Are you sure you want to remove the CRON rule '{cron_entry.expression}' "
+                f"for '{self._media_log_name(cron_entry.media_id)}'?"
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if result != QMessageBox.Yes:
+            return
+
+        self._cron_entries = [entry for entry in self._cron_entries if entry.id != cron_id]
+        self._schedule_entries = [
+            entry
+            for entry in self._schedule_entries
+            if entry.cron_id != cron_id or entry.status == SCHEDULE_STATUS_FIRED
+        ]
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_cron_table()
+        self._refresh_schedule_table()
+        self._save_state()
+        self._append_log(f"Removed CRON schedule '{cron_entry.expression}'")
 
     @Slot("QPoint")
     def _on_urls_context_menu(self, position) -> None:
@@ -1071,6 +1368,15 @@ class MainWindow(QMainWindow):
             if entry.id == entry_id:
                 if entry.status == SCHEDULE_STATUS_FIRED:
                     return
+                cron_entry = self._cron_entry_by_id(entry.cron_id)
+                if cron_entry is not None:
+                    override_value = None if cron_entry.hard_sync == new_hard_sync else new_hard_sync
+                    if entry.cron_hard_sync_override == override_value and entry.hard_sync == new_hard_sync:
+                        return
+                    entry.cron_hard_sync_override = override_value
+                    entry.hard_sync = new_hard_sync
+                    updated_entry = entry
+                    break
                 if entry.hard_sync == new_hard_sync:
                     return
                 entry.hard_sync = new_hard_sync
@@ -1094,9 +1400,17 @@ class MainWindow(QMainWindow):
             if entry.id == entry_id:
                 if entry.status == SCHEDULE_STATUS_FIRED:
                     return
+                cron_entry = self._cron_entry_by_id(entry.cron_id)
+                if cron_entry is not None and not cron_entry.enabled:
+                    self._refresh_schedule_table()
+                    return
                 new_status = SCHEDULE_STATUS_PENDING if value == "Pending" else SCHEDULE_STATUS_DISABLED
                 if entry.status == new_status:
                     return
+                if cron_entry is not None:
+                    entry.cron_status_override = (
+                        SCHEDULE_STATUS_DISABLED if new_status == SCHEDULE_STATUS_DISABLED else None
+                    )
                 entry.status = new_status
                 updated_entry = entry
                 break
@@ -1109,6 +1423,54 @@ class MainWindow(QMainWindow):
         self._save_state()
         self._append_log(
             f"Set status for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
+        )
+
+    def _on_cron_hard_sync_changed(self, cron_id: str, value: str) -> None:
+        updated_entry: CronEntry | None = None
+        new_hard_sync = value == "Yes"
+        for entry in self._cron_entries:
+            if entry.id != cron_id:
+                continue
+            if entry.hard_sync == new_hard_sync:
+                return
+            entry.hard_sync = new_hard_sync
+            updated_entry = entry
+            break
+
+        if updated_entry is None:
+            return
+
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_schedule_table()
+        self._save_state()
+        self._append_log(
+            f"Set CRON hard sync for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
+        )
+
+    def _on_cron_status_changed(self, cron_id: str, value: str) -> None:
+        updated_entry: CronEntry | None = None
+        enabled = value == "Pending"
+        for entry in self._cron_entries:
+            if entry.id != cron_id:
+                continue
+            if entry.enabled == enabled:
+                return
+            entry.enabled = enabled
+            updated_entry = entry
+            break
+
+        if updated_entry is None:
+            return
+
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_schedule_table()
+        self._save_state()
+        self._append_log(
+            f"Set CRON status for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
         )
 
     @Slot(object)
@@ -1203,18 +1565,19 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_play_clicked(self) -> None:
         now = datetime.now().astimezone()
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
         if not self._automation_playing:
             self._automation_playing = True
             self._set_automation_status(True)
             self._scheduler.start()
             self._append_log("Automation status changed to Playing")
-            self._recalculate_schedule_durations()
             self._mark_missed_entries_fired(now)
 
         if self._player.is_playing():
             return
 
-        self._recalculate_schedule_durations()
         active_entry = self._active_schedule_entry_at(now)
         if active_entry is not None:
             entry, start_at = active_entry

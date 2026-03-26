@@ -31,11 +31,27 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             hard_sync INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'pending',
             one_shot INTEGER NOT NULL DEFAULT 1,
+            cron_id TEXT,
+            cron_status_override TEXT,
+            cron_hard_sync_override INTEGER,
             position INTEGER NOT NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_schedule_entries_position
             ON schedule_entries(position);
+
+        CREATE TABLE IF NOT EXISTS cron_entries (
+            id TEXT PRIMARY KEY,
+            media_id TEXT NOT NULL,
+            expression TEXT NOT NULL,
+            hard_sync INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            position INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_cron_entries_position
+            ON cron_entries(position);
 
         CREATE TABLE IF NOT EXISTS queue_items (
             position INTEGER PRIMARY KEY,
@@ -58,7 +74,7 @@ def _table_has_rows(connection: sqlite3.Connection, table_name: str) -> bool:
 def _database_has_data(connection: sqlite3.Connection) -> bool:
     return any(
         _table_has_rows(connection, table)
-        for table in ("media_items", "schedule_entries", "queue_items")
+        for table in ("media_items", "schedule_entries", "cron_entries", "queue_items")
     )
 
 
@@ -107,11 +123,43 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "hard_sync": bool(row["hard_sync"]),
             "status": row["status"],
             "one_shot": bool(row["one_shot"]),
+            "cron_id": row["cron_id"],
+            "cron_status_override": row["cron_status_override"],
+            "cron_hard_sync_override": (
+                None if row["cron_hard_sync_override"] is None else bool(row["cron_hard_sync_override"])
+            ),
         }
         for row in connection.execute(
             """
-            SELECT id, media_id, start_at, duration, hard_sync, status, one_shot
+            SELECT
+                id,
+                media_id,
+                start_at,
+                duration,
+                hard_sync,
+                status,
+                one_shot,
+                cron_id,
+                cron_status_override,
+                cron_hard_sync_override
             FROM schedule_entries
+            ORDER BY position
+            """
+        ).fetchall()
+    ]
+    cron_entries = [
+        {
+            "id": row["id"],
+            "media_id": row["media_id"],
+            "expression": row["expression"],
+            "hard_sync": bool(row["hard_sync"]),
+            "enabled": bool(row["enabled"]),
+            "created_at": row["created_at"],
+        }
+        for row in connection.execute(
+            """
+            SELECT id, media_id, expression, hard_sync, enabled, created_at
+            FROM cron_entries
             ORDER BY position
             """
         ).fetchall()
@@ -126,6 +174,7 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
         {
             "media_items": media_items,
             "schedule_entries": schedule_entries,
+            "cron_entries": cron_entries,
             "queue": queue,
         }
     )
@@ -134,6 +183,7 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
 def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
     with connection:
         connection.execute("DELETE FROM queue_items")
+        connection.execute("DELETE FROM cron_entries")
         connection.execute("DELETE FROM schedule_entries")
         connection.execute("DELETE FROM media_items")
 
@@ -150,9 +200,19 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
         connection.executemany(
             """
             INSERT INTO schedule_entries (
-                id, media_id, start_at, duration, hard_sync, status, one_shot, position
+                id,
+                media_id,
+                start_at,
+                duration,
+                hard_sync,
+                status,
+                one_shot,
+                cron_id,
+                cron_status_override,
+                cron_hard_sync_override,
+                position
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -163,9 +223,36 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
                     int(entry.hard_sync),
                     entry.status,
                     int(entry.one_shot),
+                    entry.cron_id,
+                    entry.cron_status_override,
+                    (
+                        None
+                        if entry.cron_hard_sync_override is None
+                        else int(entry.cron_hard_sync_override)
+                    ),
                     index,
                 )
                 for index, entry in enumerate(state.schedule_entries)
+            ],
+        )
+        connection.executemany(
+            """
+            INSERT INTO cron_entries (
+                id, media_id, expression, hard_sync, enabled, created_at, position
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    entry.id,
+                    entry.media_id,
+                    entry.expression,
+                    int(entry.hard_sync),
+                    int(entry.enabled),
+                    entry.created_at.isoformat(),
+                    index,
+                )
+                for index, entry in enumerate(state.cron_entries)
             ],
         )
         connection.executemany(
@@ -218,6 +305,20 @@ def _migrate_enabled_fired_to_status(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
+def _migrate_schedule_entries_for_cron(connection: sqlite3.Connection) -> None:
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(schedule_entries)").fetchall()
+    }
+    if "cron_id" not in columns:
+        connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_id TEXT")
+    if "cron_status_override" not in columns:
+        connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_status_override TEXT")
+    if "cron_hard_sync_override" not in columns:
+        connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_hard_sync_override INTEGER")
+    connection.commit()
+
+
 def load_state(path: Path) -> AppState:
     path.parent.mkdir(parents=True, exist_ok=True)
     legacy_json_path = path.with_suffix(".json")
@@ -225,6 +326,7 @@ def load_state(path: Path) -> AppState:
     with _connect(path) as connection:
         _ensure_schema(connection)
         _migrate_enabled_fired_to_status(connection)
+        _migrate_schedule_entries_for_cron(connection)
         if not _is_legacy_migration_done(connection):
             if not _database_has_data(connection) and legacy_json_path.exists():
                 legacy_state = _load_legacy_json_state(legacy_json_path)
@@ -237,4 +339,5 @@ def save_state(path: Path, state: AppState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with _connect(path) as connection:
         _ensure_schema(connection)
+        _migrate_schedule_entries_for_cron(connection)
         _write_state(connection, state)
