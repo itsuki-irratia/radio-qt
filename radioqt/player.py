@@ -13,6 +13,7 @@ class MediaPlayerController(QObject):
     media_started = Signal(object)
     media_finished = Signal()
     playback_state_changed = Signal(object)
+    playback_position_changed = Signal(int)
     playback_error = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -21,6 +22,7 @@ class MediaPlayerController(QObject):
         self._media_player = QMediaPlayer(self)
         self._media_player.setAudioOutput(self._audio_output)
         self._media_player.playbackStateChanged.connect(self._on_playback_state_changed)
+        self._media_player.positionChanged.connect(self.playback_position_changed.emit)
         self._media_player.errorOccurred.connect(self._on_error)
         self._media_player.mediaStatusChanged.connect(self._on_media_status_changed)
         self.current_media: MediaItem | None = None
@@ -63,6 +65,9 @@ class MediaPlayerController(QObject):
 
     def has_active_media(self) -> bool:
         return self.current_media is not None
+
+    def current_position_ms(self) -> int:
+        return max(0, self._media_player.position())
 
     @staticmethod
     def _resolve_source(source: str) -> QUrl | None:

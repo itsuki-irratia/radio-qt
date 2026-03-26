@@ -153,6 +153,7 @@ class MainWindow(QMainWindow):
         self._automation_playing = False
         self._fullscreen_active = False
         self._schedule_filter_date = datetime.now().astimezone().date()
+        self._current_playback_position_ms = 0
 
         self._player = MediaPlayerController(self)
         self._scheduler = RadioScheduler(parent=self)
@@ -359,6 +360,7 @@ class MainWindow(QMainWindow):
         self._player.media_started.connect(self._on_media_started)
         self._player.media_finished.connect(self._on_media_finished)
         self._player.playback_state_changed.connect(self._on_playback_state_changed)
+        self._player.playback_position_changed.connect(self._on_playback_position_changed)
         self._player.playback_error.connect(self._on_player_error)
 
         self._scheduler.schedule_triggered.connect(self._on_schedule_triggered)
@@ -705,6 +707,16 @@ class MainWindow(QMainWindow):
         hours, remainder = divmod(duration_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def _update_now_playing_label(self) -> None:
+        media = self._player.current_media
+        if media is None:
+            self._now_playing_label.setText("None")
+            return
+        elapsed_seconds = max(0, self._current_playback_position_ms // 1000)
+        self._now_playing_label.setText(
+            f"{media.title} - {self._format_duration(elapsed_seconds)}"
+        )
 
     def _media_log_name(self, media_id: str) -> str:
         media = self._media_items.get(media_id)
@@ -1129,7 +1141,8 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_media_started(self, media: MediaItem) -> None:
-        self._now_playing_label.setText(media.title)
+        self._current_playback_position_ms = self._player.current_position_ms()
+        self._update_now_playing_label()
         self._append_log(f"Now playing '{media.title}'")
 
     @Slot()
@@ -1152,8 +1165,9 @@ class MainWindow(QMainWindow):
             self._player.play_media(next_media)
             return
         self._player.clear_current_media()
+        self._current_playback_position_ms = 0
         self._save_state()
-        self._now_playing_label.setText("None")
+        self._update_now_playing_label()
 
     def _active_schedule_entry_at(self, now: datetime) -> tuple[ScheduleEntry, datetime] | None:
         entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
@@ -1178,7 +1192,13 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
         if state == QMediaPlayer.StoppedState and not self._play_queue:
-            self._now_playing_label.setText("None")
+            self._current_playback_position_ms = 0
+            self._update_now_playing_label()
+
+    @Slot(int)
+    def _on_playback_position_changed(self, position_ms: int) -> None:
+        self._current_playback_position_ms = max(0, position_ms)
+        self._update_now_playing_label()
 
     @Slot()
     def _on_play_clicked(self) -> None:
@@ -1246,7 +1266,8 @@ class MainWindow(QMainWindow):
             self._scheduler.stop()
             self._append_log("Automation status changed to Stopped")
         self._player.clear_current_media()
-        self._now_playing_label.setText("None")
+        self._current_playback_position_ms = 0
+        self._update_now_playing_label()
         self._append_log(f"Playback stopped and media cleared ('{current_media_name}')")
 
     @Slot(str)
