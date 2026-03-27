@@ -9,7 +9,7 @@ import subprocess
 from uuid import NAMESPACE_URL, uuid5
 
 from PySide6.QtCore import QDate, QDateTime, QModelIndex, Qt, QTimer, QUrl, Slot, QEvent
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -583,8 +583,8 @@ class MainWindow(QMainWindow):
             self._cron_table.setCellWidget(row, 2, hard_sync_selector)
 
             status_selector = QComboBox(self._cron_table)
-            status_selector.addItems(["Pending", "Disabled"])
-            status_selector.setCurrentText("Pending" if entry.enabled else "Disabled")
+            status_selector.addItems(["Enabled", "Disabled"])
+            status_selector.setCurrentText("Enabled" if entry.enabled else "Disabled")
             status_selector.setToolTip(media_source)
             status_selector.currentTextChanged.connect(
                 lambda value, entry_id=entry.id: self._on_cron_status_changed(entry_id, value)
@@ -685,9 +685,54 @@ class MainWindow(QMainWindow):
         self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
 
+    def _current_schedule_entry_for_playback(self, reference_time: datetime) -> ScheduleEntry | None:
+        if not self._player.is_playing() or self._player.current_media is None:
+            return None
+        active_entry = self._active_schedule_entry_at(reference_time)
+        if active_entry is None:
+            return None
+        entry, _ = active_entry
+        if entry.media_id != self._player.current_media.id:
+            return None
+        return entry
+
+    def _schedule_entry_palette(self, entry: ScheduleEntry, reference_time: datetime) -> tuple[QColor, QColor] | None:
+        current_entry = self._current_schedule_entry_for_playback(reference_time)
+        if current_entry is not None and current_entry.id == entry.id:
+            return QColor("#2d6a4f"), QColor("#ffffff")
+        if entry.status == SCHEDULE_STATUS_DISABLED:
+            return QColor("#f8d7da"), QColor("#842029")
+        if entry.status == SCHEDULE_STATUS_FIRED and self._normalized_start(entry.start_at) < reference_time:
+            return QColor("#d8f3dc"), QColor("#1b4332")
+        if entry.cron_id is not None:
+            return QColor("#ffd166"), QColor("#5f4b00")
+        return None
+
+    @staticmethod
+    def _apply_item_palette(item: QTableWidgetItem, palette: tuple[QColor, QColor] | None) -> None:
+        if palette is None:
+            return
+        background, foreground = palette
+        item.setBackground(QBrush(background))
+        item.setForeground(QBrush(foreground))
+
+    @staticmethod
+    def _apply_widget_palette(widget: QWidget, palette: tuple[QColor, QColor] | None) -> None:
+        if palette is None:
+            widget.setStyleSheet("")
+            return
+        background, foreground = palette
+        widget.setStyleSheet(
+            "QComboBox {"
+            f"background-color: {background.name()};"
+            f"color: {foreground.name()};"
+            "}"
+        )
+
     def _refresh_schedule_table(self) -> None:
         entries = self._visible_schedule_entries()
         self._schedule_table.setRowCount(len(entries))
+        now = datetime.now().astimezone()
         for row, entry in enumerate(entries):
             media = self._media_items.get(entry.media_id)
             media_name = media.title if media else f"Missing ({entry.media_id[:8]})"
@@ -698,21 +743,24 @@ class MainWindow(QMainWindow):
             cron_entry = self._cron_entry_by_id(entry.cron_id)
             origin_label = f"Generated from CRON: {cron_entry.expression}" if cron_entry is not None else "Manual schedule"
             tooltip = f"{media_source}\n{origin_label}"
+            palette = self._schedule_entry_palette(entry, now)
 
             start_item = QTableWidgetItem(start_label)
             start_item.setData(Qt.UserRole, entry.id)
             start_item.setToolTip(tooltip)
+            self._apply_item_palette(start_item, palette)
             self._schedule_table.setItem(row, 0, start_item)
 
             duration_item = QTableWidgetItem(duration_label)
             duration_item.setToolTip(tooltip)
+            self._apply_item_palette(duration_item, palette)
             self._schedule_table.setItem(row, 1, duration_item)
 
             media_item = QTableWidgetItem(media_name)
             media_item.setToolTip(tooltip)
+            self._apply_item_palette(media_item, palette)
             self._schedule_table.setItem(row, 2, media_item)
 
-            now = datetime.now().astimezone()
             entry_expired = entry.status == SCHEDULE_STATUS_DISABLED and self._normalized_start(entry.start_at) < now
             cron_globally_disabled = cron_entry is not None and not cron_entry.enabled
             is_locked = entry.status == SCHEDULE_STATUS_FIRED or entry_expired
@@ -725,6 +773,7 @@ class MainWindow(QMainWindow):
             hard_sync_selector.currentTextChanged.connect(
                 lambda value, entry_id=entry.id: self._on_schedule_hard_sync_changed(entry_id, value)
             )
+            self._apply_widget_palette(hard_sync_selector, palette)
             self._schedule_table.setCellWidget(row, 3, hard_sync_selector)
 
             status_selector = QComboBox(self._schedule_table)
@@ -740,6 +789,7 @@ class MainWindow(QMainWindow):
             status_selector.currentTextChanged.connect(
                 lambda value, entry_id=entry.id: self._on_schedule_status_changed(entry_id, value)
             )
+            self._apply_widget_palette(status_selector, palette)
             self._schedule_table.setCellWidget(row, 4, status_selector)
 
         self._schedule_table.resizeColumnsToContents()
@@ -1451,7 +1501,7 @@ class MainWindow(QMainWindow):
 
     def _on_cron_status_changed(self, cron_id: str, value: str) -> None:
         updated_entry: CronEntry | None = None
-        enabled = value == "Pending"
+        enabled = value == "Enabled"
         for entry in self._cron_entries:
             if entry.id != cron_id:
                 continue
