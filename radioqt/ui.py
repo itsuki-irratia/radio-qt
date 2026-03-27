@@ -9,7 +9,7 @@ import subprocess
 from uuid import NAMESPACE_URL, uuid5
 
 from PySide6.QtCore import QDate, QDateTime, QModelIndex, QSize, Qt, QTimer, QUrl, Slot, QEvent
-from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor
+from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor, QPainter
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QSizePolicy,
     QSlider,
+    QStackedLayout,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -99,6 +100,87 @@ class FullscreenOverlay(QWidget):
         except Exception:
             pass
         super().keyPressEvent(event)
+
+
+class WaveformWidget(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._title = "No media"
+        self._active = False
+        self._levels = [0.0] * 36
+        self.setMinimumHeight(180)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._decay_levels)
+        self._timer.start()
+
+    def set_media_state(self, title: str, active: bool) -> None:
+        self._title = title
+        self._active = active
+        self.update()
+
+    def set_levels(self, levels: list[float] | None) -> None:
+        if not levels:
+            self._levels = [0.0] * len(self._levels)
+            self.update()
+            return
+        if len(levels) != len(self._levels):
+            self._levels = [0.0] * len(levels)
+        smoothed_levels = []
+        for current, incoming in zip(self._levels, levels):
+            smoothed_levels.append(max(incoming, current * 0.65))
+        self._levels = smoothed_levels
+        self.update()
+
+    def clear(self) -> None:
+        self._title = "No media"
+        self._active = False
+        self._levels = [0.0] * len(self._levels)
+        self.update()
+
+    def _decay_levels(self) -> None:
+        if not any(level > 0.002 for level in self._levels):
+            return
+        decay_factor = 0.92 if self._active else 0.82
+        self._levels = [level * decay_factor if level > 0.002 else 0.0 for level in self._levels]
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#111827"))
+
+        title_color = QColor("#f9fafb") if self._active else QColor("#d1d5db")
+        subtitle_color = QColor("#9ca3af")
+        accent_color = QColor("#38bdf8") if self._active else QColor("#475569")
+        baseline_color = QColor("#1f2937")
+
+        painter.setPen(title_color)
+        painter.drawText(24, 34, self._title)
+        painter.setPen(subtitle_color)
+        painter.drawText(24, 56, "Audio waveform")
+
+        center_y = int(self.height() * 0.62)
+        painter.setPen(baseline_color)
+        painter.drawLine(24, center_y, self.width() - 24, center_y)
+
+        bars = len(self._levels)
+        gap = 4
+        available_width = max(40, self.width() - 48)
+        bar_width = max(4, int((available_width - gap * (bars - 1)) / bars))
+        max_height = max(36, int(self.height() * 0.22))
+        left = 24
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(accent_color)
+        for index, normalized in enumerate(self._levels):
+            x = left + index * (bar_width + gap)
+            bar_height = max(10, int(10 + normalized * max_height))
+            top = center_y - bar_height
+            painter.drawRoundedRect(x, top, bar_width, bar_height * 2, 2, 2)
+
+        super().paintEvent(event)
 
 
 class ScheduleDialog(QDialog):
@@ -286,13 +368,47 @@ class MainWindow(QMainWindow):
         layout.addWidget(marker)
         return container
 
+    @staticmethod
+    def _media_looks_like_video(media: MediaItem | None) -> bool:
+        if media is None:
+            return False
+        source = media.source.strip()
+        if not source:
+            return False
+        url = QUrl(source)
+        if url.isValid() and url.scheme():
+            if url.scheme().lower() == "file":
+                suffix = Path(url.toLocalFile()).suffix.lower()
+            else:
+                suffix = Path(url.path()).suffix.lower()
+        else:
+            suffix = Path(source).expanduser().suffix.lower()
+        return suffix in VIDEO_EXTENSIONS
+
+    def _update_player_visual_state(self) -> None:
+        media = self._player.current_media
+        if self._media_looks_like_video(media):
+            self._player_display_layout.setCurrentWidget(self._video_widget)
+            return
+        title = media.title if media is not None else "No media"
+        self._waveform_widget.set_media_state(title, self._player.is_playing())
+        self._player_display_layout.setCurrentWidget(self._waveform_widget)
+
     def _build_ui(self) -> None:
         root = QWidget(self)
         root_layout = QVBoxLayout(root)
 
-        self._video_widget = QVideoWidget(root)
+        self._player_display = QWidget(root)
+        self._player_display_layout = QStackedLayout(self._player_display)
+        self._player_display_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._video_widget = QVideoWidget(self._player_display)
         self._video_widget.setMinimumHeight(180)
         self._player.set_video_output(self._video_widget)
+        self._waveform_widget = WaveformWidget(self._player_display)
+        self._player_display_layout.addWidget(self._video_widget)
+        self._player_display_layout.addWidget(self._waveform_widget)
+        self._player_display_layout.setCurrentWidget(self._waveform_widget)
 
         self._now_playing_label = QLabel("None", root)
         self._automation_status_label = QLabel(root)
@@ -329,7 +445,7 @@ class MainWindow(QMainWindow):
         self._log_view.setPlaceholderText("Runtime events...")
         self._log_view.setMinimumHeight(80)
 
-        root_layout.addWidget(self._video_widget, 2)
+        root_layout.addWidget(self._player_display, 2)
         root_layout.addLayout(now_playing_layout)
         root_layout.addLayout(controls_layout)
         root_layout.addLayout(panels_layout, 7)
@@ -498,6 +614,7 @@ class MainWindow(QMainWindow):
         self._player.playback_state_changed.connect(self._on_playback_state_changed)
         self._player.playback_position_changed.connect(self._on_playback_position_changed)
         self._player.playback_error.connect(self._on_player_error)
+        self._player.audio_levels_changed.connect(self._on_audio_levels_changed)
 
         self._scheduler.schedule_triggered.connect(self._on_schedule_triggered)
         self._scheduler.log.connect(self._append_log)
@@ -516,6 +633,10 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
+            self._waveform_widget.installEventFilter(self)
+        except Exception:
+            pass
+        try:
             self._fullscreen_overlay.installEventFilter(self)
         except Exception:
             pass
@@ -530,7 +651,7 @@ class MainWindow(QMainWindow):
                     self._ensure_exit_fullscreen()
                     return True
             if (
-                obj in (self._video_widget, self._fullscreen_overlay)
+                obj in (self._video_widget, self._waveform_widget, self._fullscreen_overlay)
                 and isinstance(event, QEvent)
                 and event.type() == QEvent.MouseButtonDblClick
             ):
@@ -595,6 +716,7 @@ class MainWindow(QMainWindow):
         self._refresh_schedule_table()
         self._scheduler.set_entries(self._schedule_entries)
         self._player.set_volume(self._volume_slider.value())
+        self._update_player_visual_state()
         if expired_entries:
             self._append_log(
                 f"Marked {expired_entries} missed one-shot schedule item(s) as fired on startup"
@@ -1188,6 +1310,7 @@ class MainWindow(QMainWindow):
         if self._player.current_media is not None and self._player.current_media.id == media_id:
             self._player.clear_current_media()
             self._now_playing_label.setText("None")
+            self._update_player_visual_state()
 
         self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
         self._recalculate_schedule_durations()
@@ -1641,6 +1764,7 @@ class MainWindow(QMainWindow):
     def _on_media_started(self, media: MediaItem) -> None:
         self._current_playback_position_ms = self._player.current_position_ms()
         self._update_now_playing_label()
+        self._update_player_visual_state()
         self._append_log(f"Now playing '{media.title}'")
 
     @Slot()
@@ -1651,6 +1775,7 @@ class MainWindow(QMainWindow):
             else "unknown"
         )
         self._append_log(f"Media finished '{current_media_name}'")
+        self._update_player_visual_state()
         self._play_next_from_queue()
 
     def _play_next_from_queue(self) -> None:
@@ -1666,6 +1791,7 @@ class MainWindow(QMainWindow):
         self._current_playback_position_ms = 0
         self._save_state()
         self._update_now_playing_label()
+        self._update_player_visual_state()
 
     def _active_schedule_entry_at(self, now: datetime) -> tuple[ScheduleEntry, datetime] | None:
         entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
@@ -1689,6 +1815,7 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
+        self._update_player_visual_state()
         if state == QMediaPlayer.StoppedState and not self._play_queue:
             self._current_playback_position_ms = 0
             self._update_now_playing_label()
@@ -1767,6 +1894,7 @@ class MainWindow(QMainWindow):
         self._player.clear_current_media()
         self._current_playback_position_ms = 0
         self._update_now_playing_label()
+        self._update_player_visual_state()
         self._append_log(f"Playback stopped and media cleared ('{current_media_name}')")
 
     @Slot(str)
@@ -1777,6 +1905,12 @@ class MainWindow(QMainWindow):
             else "unknown"
         )
         self._append_log(f"Player error on '{current_media_name}': {message}")
+
+    @Slot(object)
+    def _on_audio_levels_changed(self, levels: object) -> None:
+        if self._media_looks_like_video(self._player.current_media):
+            return
+        self._waveform_widget.set_levels(levels if isinstance(levels, list) else None)
 
     @Slot(str)
     def _append_log(self, message: str) -> None:
