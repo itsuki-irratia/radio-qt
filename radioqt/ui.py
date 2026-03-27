@@ -8,7 +8,7 @@ import re
 import subprocess
 from uuid import NAMESPACE_URL, uuid5
 
-from PySide6.QtCore import QDate, QDateTime, QModelIndex, Qt, QTimer, QUrl, Slot, QEvent
+from PySide6.QtCore import QDate, QDateTime, QModelIndex, QSize, Qt, QTimer, QUrl, Slot, QEvent
 from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -212,6 +212,24 @@ class MainWindow(QMainWindow):
         self._load_initial_state()
         self._cron_refresh_timer.start()
 
+    @staticmethod
+    def _make_tab_label(text: str, marker_color: str) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        text_label = QLabel(text, container)
+        marker = QLabel(container)
+        marker.setFixedSize(QSize(10, 10))
+        marker.setStyleSheet(
+            f"background-color: {marker_color}; border: 1px solid rgba(0, 0, 0, 0.25);"
+        )
+
+        layout.addWidget(text_label)
+        layout.addWidget(marker)
+        return container
+
     def _build_ui(self) -> None:
         root = QWidget(self)
         root_layout = QVBoxLayout(root)
@@ -389,7 +407,12 @@ class MainWindow(QMainWindow):
 
         cron_layout.addWidget(self._cron_table)
         cron_layout.addLayout(cron_buttons_row)
-        self._schedule_tabs.addTab(cron_tab, "CRON")
+        cron_tab_index = self._schedule_tabs.addTab(cron_tab, "")
+        self._schedule_tabs.tabBar().setTabButton(
+            cron_tab_index,
+            self._schedule_tabs.tabBar().ButtonPosition.RightSide,
+            self._make_tab_label("CRON", "#ffd166"),
+        )
 
         layout.addWidget(self._schedule_tabs)
         return group
