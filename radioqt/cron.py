@@ -4,31 +4,6 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterator
 
-MONTH_NAMES = {
-    "jan": 1,
-    "feb": 2,
-    "mar": 3,
-    "apr": 4,
-    "may": 5,
-    "jun": 6,
-    "jul": 7,
-    "aug": 8,
-    "sep": 9,
-    "oct": 10,
-    "nov": 11,
-    "dec": 12,
-}
-
-DOW_NAMES = {
-    "sun": 0,
-    "mon": 1,
-    "tue": 2,
-    "wed": 3,
-    "thu": 4,
-    "fri": 5,
-    "sat": 6,
-}
-
 
 class CronParseError(ValueError):
     pass
@@ -144,8 +119,8 @@ class CronExpression:
             minute=_parse_field(parts[1], 0, 59),
             hour=_parse_field(parts[2], 0, 23),
             day_of_month=_parse_field(parts[3], 1, 31),
-            month=_parse_field(parts[4], 1, 12, names=MONTH_NAMES),
-            day_of_week=_parse_field(parts[5], 0, 6, names=DOW_NAMES, normalize=_normalize_dow),
+            month=_parse_field(parts[4], 1, 12),
+            day_of_week=_parse_field(parts[5], 0, 7, normalize=_normalize_dow),
         )
 
     def matches(self, value: datetime) -> bool:

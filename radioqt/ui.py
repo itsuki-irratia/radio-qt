@@ -161,6 +161,7 @@ class CronDialog(QDialog):
         layout.addWidget(QLabel("CRON expression (with seconds):"))
         layout.addWidget(self._expression_edit)
         layout.addWidget(QLabel("Example: 0 */15 * * * *"))
+        layout.addWidget(QLabel("Use numeric values only. Month: 1-12. Weekday starts on Monday: 1-7."))
         layout.addWidget(self._hard_sync_checkbox)
         layout.addWidget(buttons)
 
@@ -177,6 +178,60 @@ class CronDialog(QDialog):
             QMessageBox.warning(self, "Invalid CRON", str(exc))
             return
         self.accept()
+
+
+class CronHelpDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("CRON Help")
+        self.resize(760, 420)
+
+        help_text = (
+            "CRON format in RadioQt uses 6 fields:\n"
+            "second minute hour day-of-month month day-of-week\n\n"
+            "Supported syntax:\n"
+            "*  any value\n"
+            ",  list of values\n"
+            "-  range of values\n"
+            "/  step values\n"
+            "Use numeric values only\n"
+            "Month: 1-12\n"
+            "Day-of-week starts on Monday:\n"
+            "  1 = Monday\n"
+            "  2 = Tuesday\n"
+            "  3 = Wednesday\n"
+            "  4 = Thursday\n"
+            "  5 = Friday\n"
+            "  6 = Saturday\n"
+            "  7 = Sunday\n\n"
+            "Examples:\n"
+            "0 * * * * *\n"
+            "  Every minute, at second 0\n\n"
+            "0 */15 * * * *\n"
+            "  Every 15 minutes\n\n"
+            "0 30 8 * * *\n"
+            "  Every day at 08:30:00\n\n"
+            "0 0 9 * * 1-5\n"
+            "  Monday to Friday at 09:00:00\n\n"
+            "30 0 12 1 * *\n"
+            "  On day 1 of every month at 12:00:30\n\n"
+            "0 0 18 * 1,6,12 *\n"
+            "  Every day at 18:00:00, only in months 1, 6 and 12\n\n"
+            "0 0 6 * * 7\n"
+            "  Every Sunday at 06:00:00\n"
+        )
+
+        text = QPlainTextEdit(self)
+        text.setReadOnly(True)
+        text.setPlainText(help_text)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(text)
+        layout.addWidget(buttons)
 
 
 class MainWindow(QMainWindow):
@@ -208,6 +263,7 @@ class MainWindow(QMainWindow):
         self._cron_refresh_timer.setInterval(30000)
 
         self._build_ui()
+        self._build_menu_bar()
         self._wire_signals()
         self._load_initial_state()
         self._cron_refresh_timer.start()
@@ -282,6 +338,12 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         # Fullscreen overlay for audio-only playback
         self._fullscreen_overlay = FullscreenOverlay(self)
+
+    def _build_menu_bar(self) -> None:
+        menu_bar = self.menuBar()
+        help_menu = menu_bar.addMenu("&Help")
+        self._cron_help_action = QAction("&CRON", self)
+        help_menu.addAction(self._cron_help_action)
 
     def _build_library_panel(self) -> QWidget:
         group = QGroupBox("Media Library")
@@ -440,6 +502,7 @@ class MainWindow(QMainWindow):
         self._scheduler.schedule_triggered.connect(self._on_schedule_triggered)
         self._scheduler.log.connect(self._append_log)
         self._cron_refresh_timer.timeout.connect(self._refresh_cron_runtime_window)
+        self._cron_help_action.triggered.connect(self._show_cron_help)
         # Sync fullscreen button with video widget state
         try:
             self._video_widget.fullScreenChanged.connect(self._on_video_fullscreen_changed)
@@ -1719,6 +1782,11 @@ class MainWindow(QMainWindow):
     def _append_log(self, message: str) -> None:
         timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
         self._log_view.appendPlainText(f"[{timestamp}] {message}")
+
+    @Slot()
+    def _show_cron_help(self) -> None:
+        dialog = CronHelpDialog(self)
+        dialog.exec()
 
     def _set_automation_status(self, is_playing: bool) -> None:
         if is_playing:
