@@ -48,6 +48,7 @@ from .models import (
     MediaItem,
     SCHEDULE_STATUS_DISABLED,
     SCHEDULE_STATUS_FIRED,
+    SCHEDULE_STATUS_MISSED,
     SCHEDULE_STATUS_PENDING,
     ScheduleEntry,
 )
@@ -719,7 +720,7 @@ class MainWindow(QMainWindow):
         self._update_player_visual_state()
         if expired_entries:
             self._append_log(
-                f"Marked {expired_entries} missed one-shot schedule item(s) as fired on startup"
+                f"Marked {expired_entries} missed one-shot schedule item(s) as missed on startup"
             )
             self._save_state()
         self._append_log(f"Loaded state from {self._state_path}")
@@ -746,7 +747,7 @@ class MainWindow(QMainWindow):
             if start_at.tzinfo is None:
                 start_at = start_at.replace(tzinfo=reference_time.tzinfo)
             if start_at < reference_time:
-                entry.status = SCHEDULE_STATUS_FIRED
+                entry.status = SCHEDULE_STATUS_MISSED
                 expired += 1
         return expired
 
@@ -813,6 +814,10 @@ class MainWindow(QMainWindow):
                 return entry
         return None
 
+    def _is_schedule_entry_protected_from_removal(self, entry: ScheduleEntry) -> bool:
+        cron_entry = self._cron_entry_by_id(entry.cron_id)
+        return cron_entry is not None and cron_entry.enabled
+
     @staticmethod
     def _runtime_cron_dates() -> set[date]:
         today = datetime.now().astimezone().date()
@@ -834,7 +839,7 @@ class MainWindow(QMainWindow):
         else:
             entry.hard_sync = entry.cron_hard_sync_override
 
-        if entry.status == SCHEDULE_STATUS_FIRED:
+        if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
             return
         if not cron_entry.enabled:
             entry.status = SCHEDULE_STATUS_DISABLED
@@ -849,7 +854,7 @@ class MainWindow(QMainWindow):
                 continue
             cron_entry = self._cron_entry_by_id(entry.cron_id)
             if cron_entry is None:
-                if entry.status == SCHEDULE_STATUS_FIRED:
+                if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
                     refreshed_entries.append(entry)
                 continue
             self._apply_cron_entry_defaults(entry, cron_entry)
@@ -862,6 +867,8 @@ class MainWindow(QMainWindow):
 
         timezone = datetime.now().astimezone().tzinfo
         for cron_entry in self._cron_entries:
+            if not cron_entry.enabled:
+                continue
             try:
                 expression = CronExpression.parse(cron_entry.expression)
             except CronParseError:
@@ -912,6 +919,8 @@ class MainWindow(QMainWindow):
             return QColor("#f8d7da"), QColor("#842029")
         if entry.status == SCHEDULE_STATUS_FIRED and self._normalized_start(entry.start_at) < reference_time:
             return QColor("#d8f3dc"), QColor("#1b4332")
+        if entry.status == SCHEDULE_STATUS_MISSED:
+            return QColor("#fff3cd"), QColor("#664d03")
         if entry.cron_id is not None:
             return QColor("#ffd166"), QColor("#5f4b00")
         return None
@@ -971,7 +980,7 @@ class MainWindow(QMainWindow):
 
             entry_expired = entry.status == SCHEDULE_STATUS_DISABLED and self._normalized_start(entry.start_at) < now
             cron_globally_disabled = cron_entry is not None and not cron_entry.enabled
-            is_locked = entry.status == SCHEDULE_STATUS_FIRED or entry_expired
+            is_locked = entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED} or entry_expired
 
             hard_sync_selector = QComboBox(self._schedule_table)
             hard_sync_selector.addItems(["Yes", "No"])
@@ -991,6 +1000,8 @@ class MainWindow(QMainWindow):
                 status_selector.addItems(["Pending", "Disabled"])
             if entry.status == SCHEDULE_STATUS_FIRED:
                 status_selector.addItem("Fired")
+            if entry.status == SCHEDULE_STATUS_MISSED:
+                status_selector.addItem("Missed")
             status_selector.setCurrentText(status)
             status_selector.setEnabled(not is_locked and not cron_globally_disabled)
             status_selector.setToolTip(tooltip)
@@ -1430,7 +1441,7 @@ class MainWindow(QMainWindow):
             hard_sync=dialog.hard_sync(),
         )
         if entry.one_shot and self._normalized_start(entry.start_at) <= datetime.now().astimezone():
-            entry.status = SCHEDULE_STATUS_FIRED
+            entry.status = SCHEDULE_STATUS_MISSED
         self._schedule_entries.append(entry)
 
         self._recalculate_schedule_durations()
@@ -1439,9 +1450,9 @@ class MainWindow(QMainWindow):
         self._refresh_schedule_table()
         self._save_state()
         media_name = self._media_log_name(entry.media_id)
-        if entry.status == SCHEDULE_STATUS_FIRED:
+        if entry.status == SCHEDULE_STATUS_MISSED:
             self._append_log(
-                f"Scheduled media '{media_name}' in the past; entry was marked as fired"
+                f"Scheduled media '{media_name}' in the past; entry was marked as missed"
             )
         self._append_log(
             f"Scheduled media '{media_name}' for {entry.start_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}"
@@ -1458,12 +1469,14 @@ class MainWindow(QMainWindow):
         entries_to_remove = [e for e in self._schedule_entries if e.id in entry_ids_set]
         if not entries_to_remove:
             return
-        cron_generated_entries = [entry for entry in entries_to_remove if entry.cron_id is not None]
+        cron_generated_entries = [
+            entry for entry in entries_to_remove if self._is_schedule_entry_protected_from_removal(entry)
+        ]
         if cron_generated_entries:
             QMessageBox.information(
                 self,
                 "CRON-managed Entries",
-                "CRON-generated rows cannot be removed from Date Time. Disable that exact occurrence here, or remove the rule from the CRON tab.",
+                "Active CRON-generated rows cannot be removed from Date Time. Disable the CRON rule first if you want to remove them here.",
             )
             return
 
@@ -1508,7 +1521,7 @@ class MainWindow(QMainWindow):
         selected_count = len(self._selected_schedule_entry_ids())
         selected_ids = set(self._selected_schedule_entry_ids())
         has_cron_generated = any(
-            entry.id in selected_ids and entry.cron_id is not None
+            entry.id in selected_ids and self._is_schedule_entry_protected_from_removal(entry)
             for entry in self._schedule_entries
         )
         from PySide6.QtWidgets import QMenu
@@ -1595,7 +1608,7 @@ class MainWindow(QMainWindow):
         self._schedule_entries = [
             entry
             for entry in self._schedule_entries
-            if entry.cron_id != cron_id or entry.status == SCHEDULE_STATUS_FIRED
+            if entry.cron_id != cron_id or entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}
         ]
         self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
@@ -1625,7 +1638,7 @@ class MainWindow(QMainWindow):
         new_hard_sync = value == "Yes"
         for entry in self._schedule_entries:
             if entry.id == entry_id:
-                if entry.status == SCHEDULE_STATUS_FIRED:
+                if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
                     return
                 cron_entry = self._cron_entry_by_id(entry.cron_id)
                 if cron_entry is not None:
@@ -1657,7 +1670,7 @@ class MainWindow(QMainWindow):
         updated_entry: ScheduleEntry | None = None
         for entry in self._schedule_entries:
             if entry.id == entry_id:
-                if entry.status == SCHEDULE_STATUS_FIRED:
+                if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
                     return
                 cron_entry = self._cron_entry_by_id(entry.cron_id)
                 if cron_entry is not None and not cron_entry.enabled:
@@ -1735,12 +1748,22 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_schedule_triggered(self, entry: ScheduleEntry) -> None:
         if not self._automation_playing:
+            if entry.one_shot and entry.status == SCHEDULE_STATUS_PENDING:
+                entry.status = SCHEDULE_STATUS_MISSED
             self._append_log(f"Ignoring schedule {entry.id}: automation is stopped")
+            self._refresh_schedule_table()
+            self._save_state()
             return
         media = self._media_items.get(entry.media_id)
         if media is None:
+            if entry.one_shot:
+                entry.status = SCHEDULE_STATUS_MISSED
             self._append_log(f"Skipping schedule {entry.id}: media '{self._media_log_name(entry.media_id)}' not found")
+            self._refresh_schedule_table()
+            self._save_state()
             return
+        if entry.one_shot:
+            entry.status = SCHEDULE_STATUS_FIRED
 
         if entry.hard_sync or not self._player.is_playing():
             if entry.hard_sync and self._player.is_playing():
@@ -1836,7 +1859,7 @@ class MainWindow(QMainWindow):
             self._set_automation_status(True)
             self._scheduler.start()
             self._append_log("Automation status changed to Playing")
-            self._mark_missed_entries_fired(now)
+            self._mark_missed_entries_missed(now)
 
         if self._player.is_playing():
             return
@@ -1844,14 +1867,20 @@ class MainWindow(QMainWindow):
         active_entry = self._active_schedule_entry_at(now)
         if active_entry is not None:
             entry, start_at = active_entry
-            if entry.one_shot:
-                entry.status = SCHEDULE_STATUS_FIRED
+            if entry.status != SCHEDULE_STATUS_PENDING:
+                self._refresh_schedule_table()
+                self._save_state()
+                return
             media = self._media_items.get(entry.media_id)
             if media is None:
+                if entry.one_shot:
+                    entry.status = SCHEDULE_STATUS_MISSED
                 self._append_log(f"Play ignored: scheduled media '{self._media_log_name(entry.media_id)}' not found")
                 self._refresh_schedule_table()
                 self._save_state()
                 return
+            if entry.one_shot:
+                entry.status = SCHEDULE_STATUS_FIRED
             offset_ms = max(
                 0,
                 int((now - start_at).total_seconds() * 1000),
@@ -1938,7 +1967,7 @@ class MainWindow(QMainWindow):
             "padding: 2px 8px; font-weight: 600;"
         )
 
-    def _mark_missed_entries_fired(self, now: datetime) -> None:
+    def _mark_missed_entries_missed(self, now: datetime) -> None:
         active_entry = self._active_schedule_entry_at(now)
         active_entry_id = active_entry[0].id if active_entry is not None else None
         changed = False
@@ -1950,14 +1979,14 @@ class MainWindow(QMainWindow):
                 continue
             start_at = self._normalized_start(entry.start_at)
             if start_at < now:
-                entry.status = SCHEDULE_STATUS_FIRED
+                entry.status = SCHEDULE_STATUS_MISSED
                 skipped += 1
                 changed = True
         if not changed:
             return
         self._refresh_schedule_table()
         self._save_state()
-        self._append_log(f"Marked {skipped} missed one-shot schedule item(s) as fired")
+        self._append_log(f"Marked {skipped} missed one-shot schedule item(s) as missed")
 
     @Slot(bool)
     def _on_fullscreen_toggled(self, checked: bool) -> None:

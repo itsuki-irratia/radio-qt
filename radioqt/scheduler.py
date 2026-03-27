@@ -37,8 +37,6 @@ class RadioScheduler(QObject):
             start_at = self._normalized_start(entry)
 
             if now >= start_at:
-                if entry.one_shot:
-                    entry.status = "fired"
                 self.log.emit(f"Schedule triggered at {now.isoformat(timespec='seconds')}: {entry.id}")
                 self.schedule_triggered.emit(entry)
 
