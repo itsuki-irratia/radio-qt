@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QTextBrowser,
     QSizePolicy,
     QSlider,
     QStackedLayout,
@@ -269,44 +270,96 @@ class CronHelpDialog(QDialog):
         self.setWindowTitle("CRON Help")
         self.resize(760, 420)
 
-        help_text = (
-            "CRON format in RadioQt uses 6 fields:\n"
-            "second minute hour day-of-month month day-of-week\n\n"
-            "Supported syntax:\n"
-            "*  any value\n"
-            ",  list of values\n"
-            "-  range of values\n"
-            "/  step values\n"
-            "Use numeric values only\n"
-            "Month: 1-12\n"
-            "Day-of-week starts on Monday:\n"
-            "  1 = Monday\n"
-            "  2 = Tuesday\n"
-            "  3 = Wednesday\n"
-            "  4 = Thursday\n"
-            "  5 = Friday\n"
-            "  6 = Saturday\n"
-            "  7 = Sunday\n\n"
-            "Examples:\n"
-            "0 * * * * *\n"
-            "  Every minute, at second 0\n\n"
-            "0 */15 * * * *\n"
-            "  Every 15 minutes\n\n"
-            "0 30 8 * * *\n"
-            "  Every day at 08:30:00\n\n"
-            "0 0 9 * * 1-5\n"
-            "  Monday to Friday at 09:00:00\n\n"
-            "30 0 12 1 * *\n"
-            "  On day 1 of every month at 12:00:30\n\n"
-            "0 0 18 * 1,6,12 *\n"
-            "  Every day at 18:00:00, only in months 1, 6 and 12\n\n"
-            "0 0 6 * * 7\n"
-            "  Every Sunday at 06:00:00\n"
-        )
+        help_html = """
+        <h3>CRON format in RadioQt</h3>
+        <p>RadioQt uses 6 fields:</p>
+        <p><code>second minute hour day-of-month month day-of-week</code></p>
 
-        text = QPlainTextEdit(self)
+        <h4>Field order</h4>
+        <table border="1" cellspacing="0" cellpadding="6">
+          <tr>
+            <th><code>second</code></th>
+            <th><code>minute</code></th>
+            <th><code>hour</code></th>
+            <th><code>day-of-month</code></th>
+            <th><code>month</code></th>
+            <th><code>day-of-week</code></th>
+          </tr>
+          <tr>
+            <td><code>0-59</code></td>
+            <td><code>0-59</code></td>
+            <td><code>0-23</code></td>
+            <td><code>1-31</code></td>
+            <td><code>1-12</code></td>
+            <td><code>1-7</code></td>
+          </tr>
+        </table>
+
+        <h4>Supported syntax</h4>
+        <p><code>*</code> any value<br>
+        <code>,</code> list of values<br>
+        <code>-</code> range of values<br>
+        <code>/</code> step values</p>
+
+        <p>Use numeric values only.<br>
+        Month: <code>1-12</code><br>
+        Day-of-week starts on Monday:
+        <code>1=Monday 2=Tuesday 3=Wednesday 4=Thursday 5=Friday 6=Saturday 7=Sunday</code></p>
+
+        <h4>Examples by use</h4>
+        <table border="1" cellspacing="0" cellpadding="6">
+          <tr>
+            <th>Use</th>
+            <th>Expression</th>
+            <th>Meaning</th>
+          </tr>
+          <tr>
+            <td>Exact time</td>
+            <td><code>0 30 8 * * *</code></td>
+            <td>Every day at 08:30:00</td>
+          </tr>
+          <tr>
+            <td>Wildcard <code>*</code></td>
+            <td><code>0 * * * * *</code></td>
+            <td>Every minute, at second 0</td>
+          </tr>
+          <tr>
+            <td>List <code>,</code></td>
+            <td><code>0 0 18 * 1,6,12 *</code></td>
+            <td>Every day at 18:00:00, only in months 1, 6 and 12</td>
+          </tr>
+          <tr>
+            <td>Range <code>-</code></td>
+            <td><code>0 0 9 * * 1-5</code></td>
+            <td>Monday to Friday at 09:00:00</td>
+          </tr>
+          <tr>
+            <td>Step <code>/</code></td>
+            <td><code>0 */15 * * * *</code></td>
+            <td>Every 15 minutes</td>
+          </tr>
+          <tr>
+            <td>Specific day of month</td>
+            <td><code>30 0 12 1 * *</code></td>
+            <td>On day 1 of every month at 12:00:30</td>
+          </tr>
+          <tr>
+            <td>Specific weekday</td>
+            <td><code>0 0 6 * * 7</code></td>
+            <td>Every Sunday at 06:00:00</td>
+          </tr>
+          <tr>
+            <td>Combined range + step</td>
+            <td><code>0 0/10 9-17 * * 1-5</code></td>
+            <td>Every 10 minutes between 09:00 and 17:59, Monday to Friday</td>
+          </tr>
+        </table>
+        """
+
+        text = QTextBrowser(self)
         text.setReadOnly(True)
-        text.setPlainText(help_text)
+        text.setOpenExternalLinks(False)
+        text.setHtml(help_html)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         buttons.rejected.connect(self.reject)
