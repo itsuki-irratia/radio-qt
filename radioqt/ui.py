@@ -706,7 +706,10 @@ class MainWindow(QMainWindow):
         self._play_queue = deque(state.queue)
         self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
         self._recalculate_schedule_durations()
-        expired_entries = self._expire_missed_one_shots(app_started_at)
+        normalized_entries = self._normalize_overdue_one_shots(
+            app_started_at,
+            {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_FIRED},
+        )
         self._schedule_filter_date = self._initial_schedule_filter_date()
         self._set_schedule_filter_date(self._schedule_filter_date)
         self._refresh_cron_schedule_entries({self._schedule_filter_date})
@@ -718,9 +721,9 @@ class MainWindow(QMainWindow):
         self._scheduler.set_entries(self._schedule_entries)
         self._player.set_volume(self._volume_slider.value())
         self._update_player_visual_state()
-        if expired_entries:
+        if normalized_entries:
             self._append_log(
-                f"Marked {expired_entries} missed one-shot schedule item(s) as missed on startup"
+                f"Normalized {normalized_entries} past one-shot schedule item(s) to missed on startup"
             )
             self._save_state()
         self._append_log(f"Loaded state from {self._state_path}")
@@ -734,22 +737,25 @@ class MainWindow(QMainWindow):
         )
         save_state(self._state_path, state)
 
-    def _expire_missed_one_shots(self, reference_time: datetime) -> int:
-        active_entry = self._active_schedule_entry_at(reference_time)
-        active_entry_id = active_entry[0].id if active_entry is not None else None
-        expired = 0
+    def _normalize_overdue_one_shots(
+        self,
+        reference_time: datetime,
+        eligible_statuses: set[str],
+    ) -> int:
+        normalized = 0
         for entry in self._schedule_entries:
-            if entry.status != SCHEDULE_STATUS_PENDING or not entry.one_shot:
-                continue
-            if entry.id == active_entry_id:
+            if not entry.one_shot:
                 continue
             start_at = entry.start_at
             if start_at.tzinfo is None:
                 start_at = start_at.replace(tzinfo=reference_time.tzinfo)
-            if start_at < reference_time:
-                entry.status = SCHEDULE_STATUS_MISSED
-                expired += 1
-        return expired
+            if start_at >= reference_time:
+                continue
+            if entry.status not in eligible_statuses:
+                continue
+            entry.status = SCHEDULE_STATUS_MISSED
+            normalized += 1
+        return normalized
 
     def _refresh_urls_list(self) -> None:
         self._urls_table.setRowCount(0)
@@ -898,7 +904,17 @@ class MainWindow(QMainWindow):
     def _refresh_cron_runtime_window(self) -> None:
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
+        normalized_entries = self._normalize_overdue_one_shots(
+            datetime.now().astimezone(),
+            {SCHEDULE_STATUS_PENDING},
+        )
         self._scheduler.set_entries(self._schedule_entries)
+        if normalized_entries:
+            self._refresh_schedule_table()
+            self._save_state()
+            self._append_log(
+                f"Marked {normalized_entries} overdue one-shot schedule item(s) as missed"
+            )
 
     def _current_schedule_entry_for_playback(self, reference_time: datetime) -> ScheduleEntry | None:
         if not self._player.is_playing() or self._player.current_media is None:
@@ -978,9 +994,8 @@ class MainWindow(QMainWindow):
             self._apply_item_palette(media_item, palette)
             self._schedule_table.setItem(row, 2, media_item)
 
-            entry_expired = entry.status == SCHEDULE_STATUS_DISABLED and self._normalized_start(entry.start_at) < now
             cron_globally_disabled = cron_entry is not None and not cron_entry.enabled
-            is_locked = entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED} or entry_expired
+            is_locked = entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}
 
             hard_sync_selector = QComboBox(self._schedule_table)
             hard_sync_selector.addItems(["Yes", "No"])
@@ -1668,6 +1683,7 @@ class MainWindow(QMainWindow):
 
     def _on_schedule_status_changed(self, entry_id: str, value: str) -> None:
         updated_entry: ScheduleEntry | None = None
+        applied_value = value
         for entry in self._schedule_entries:
             if entry.id == entry_id:
                 if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
@@ -1677,6 +1693,13 @@ class MainWindow(QMainWindow):
                     self._refresh_schedule_table()
                     return
                 new_status = SCHEDULE_STATUS_PENDING if value == "Pending" else SCHEDULE_STATUS_DISABLED
+                if (
+                    new_status == SCHEDULE_STATUS_PENDING
+                    and entry.one_shot
+                    and self._normalized_start(entry.start_at) < datetime.now().astimezone()
+                ):
+                    new_status = SCHEDULE_STATUS_MISSED
+                    applied_value = "Missed"
                 if entry.status == new_status:
                     return
                 if cron_entry is not None:
@@ -1694,7 +1717,7 @@ class MainWindow(QMainWindow):
         self._refresh_schedule_table()
         self._save_state()
         self._append_log(
-            f"Set status for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
+            f"Set status for media '{self._media_log_name(updated_entry.media_id)}' to {applied_value}"
         )
 
     def _on_cron_hard_sync_changed(self, cron_id: str, value: str) -> None:
@@ -1968,21 +1991,8 @@ class MainWindow(QMainWindow):
         )
 
     def _mark_missed_entries_missed(self, now: datetime) -> None:
-        active_entry = self._active_schedule_entry_at(now)
-        active_entry_id = active_entry[0].id if active_entry is not None else None
-        changed = False
-        skipped = 0
-        for entry in self._schedule_entries:
-            if entry.status != SCHEDULE_STATUS_PENDING or not entry.one_shot:
-                continue
-            if entry.id == active_entry_id:
-                continue
-            start_at = self._normalized_start(entry.start_at)
-            if start_at < now:
-                entry.status = SCHEDULE_STATUS_MISSED
-                skipped += 1
-                changed = True
-        if not changed:
+        skipped = self._normalize_overdue_one_shots(now, {SCHEDULE_STATUS_PENDING})
+        if not skipped:
             return
         self._refresh_schedule_table()
         self._save_state()
