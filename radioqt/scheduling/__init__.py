@@ -1,4 +1,4 @@
-from .scheduling.logic import (
+from .logic import (
     active_schedule_entry_at,
     normalize_overdue_one_shots,
     normalized_start,
@@ -7,8 +7,10 @@ from .scheduling.logic import (
     schedule_entry_window_details,
     sort_schedule_entries,
 )
+from .runtime import RadioScheduler
 
 __all__ = [
+    "RadioScheduler",
     "active_schedule_entry_at",
     "normalize_overdue_one_shots",
     "normalized_start",

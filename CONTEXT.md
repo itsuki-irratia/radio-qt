@@ -32,8 +32,10 @@ Main runtime state file:
 - `radioqt/models.py`: dataclasses and schedule status constants
 - `radioqt/cron.py`: custom 6-field CRON parser and iterator
 - `radioqt/player.py`: wrapper around `QMediaPlayer`
-- `radioqt/schedule_logic.py`: pure scheduling helpers extracted from UI logic
-- `radioqt/scheduler.py`: timer-based schedule trigger engine
+- `radioqt/scheduling/logic.py`: pure scheduling helpers extracted from UI logic
+- `radioqt/scheduling/runtime.py`: timer-based schedule trigger engine
+- `radioqt/schedule_logic.py`: compatibility wrapper to the new scheduling package
+- `radioqt/scheduler.py`: compatibility wrapper to the new scheduling package
 - `radioqt/storage.py`: SQLite persistence and legacy JSON migration
 - `radioqt/ui.py`: almost all application behavior and UI
 - `.codex`: currently empty
@@ -173,7 +175,7 @@ Limitations:
 
 ## Scheduler Engine
 
-Implemented in `radioqt/scheduler.py`.
+Implemented in `radioqt/scheduling/runtime.py`.
 
 Behavior:
 
@@ -185,12 +187,12 @@ Behavior:
 Important:
 
 - the scheduler itself does not resolve collisions, end times, or queue rules
-- timing normalization is shared through `radioqt/schedule_logic.py`
+- timing normalization is shared through `radioqt/scheduling/logic.py`
 - all playback consequences still live in `ui.py`
 
 ## Schedule Logic Module
 
-Implemented in `radioqt/schedule_logic.py`.
+Implemented in `radioqt/scheduling/logic.py`.
 
 This module now contains the pure scheduling computations that were previously embedded in `ui.py`:
 
@@ -516,7 +518,7 @@ These are now part of the current codebase and should be preserved:
 9. Diagnostic logs now include active-entry timing/offset details on `Play` and sampled details when overdue items are normalized to `missed`.
 10. The Duration column now distinguishes formatted media duration, remote streams, missing media/files, and unknown probe failures.
 11. Runtime logs can now be exported from the Help menu for troubleshooting.
-12. Core pure scheduling computations were extracted from `ui.py` into `radioqt/schedule_logic.py`.
+12. Core pure scheduling computations were extracted from `ui.py` into `radioqt/scheduling/logic.py`.
 
 ## Places Most Likely To Need Care
 
@@ -601,7 +603,7 @@ This section is intentionally operational and should be updated after important 
   - overdue/missed normalization
   - restore-from-missed behavior
   - play-from-offset behavior
-- Continue extracting remaining schedule/UI coordination from `MainWindow` now that core computations live in `radioqt/schedule_logic.py`.
+- Continue extracting remaining schedule/UI coordination from `MainWindow` now that core computations live in `radioqt/scheduling/logic.py`.
 - Extract media library actions from `ui.py` into their own module.
 - Consider adding a small diagnostics screen for troubleshooting user reports beyond raw log export.
 

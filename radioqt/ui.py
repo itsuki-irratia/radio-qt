@@ -56,7 +56,8 @@ from .models import (
     ScheduleEntry,
 )
 from .player import MediaPlayerController
-from .schedule_logic import (
+from .scheduling import (
+    RadioScheduler,
     active_schedule_entry_at,
     normalize_overdue_one_shots,
     normalized_start,
@@ -64,7 +65,6 @@ from .schedule_logic import (
     schedule_entry_end_at,
     schedule_entry_window_details,
 )
-from .scheduler import RadioScheduler
 from .storage import load_state, save_state
 
 SUPPORTED_MEDIA_EXTENSIONS = {
