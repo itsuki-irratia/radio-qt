@@ -389,6 +389,7 @@ class MainWindow(QMainWindow):
         self._play_queue: deque[str] = deque()
         self._last_source_panel = "filesystem"
         self._automation_playing = False
+        self._schedule_auto_focus_enabled = False
         self._fullscreen_active = False
         self._schedule_filter_date = datetime.now().astimezone().date()
         self._current_playback_position_ms = 0
@@ -397,12 +398,15 @@ class MainWindow(QMainWindow):
         self._scheduler = RadioScheduler(parent=self)
         self._cron_refresh_timer = QTimer(self)
         self._cron_refresh_timer.setInterval(30000)
+        self._schedule_focus_timer = QTimer(self)
+        self._schedule_focus_timer.setInterval(1000)
 
         self._build_ui()
         self._build_menu_bar()
         self._wire_signals()
         self._load_initial_state()
         self._cron_refresh_timer.start()
+        self._schedule_focus_timer.start()
 
     @staticmethod
     def _make_tab_label(text: str, marker_color: str) -> QWidget:
@@ -613,6 +617,12 @@ class MainWindow(QMainWindow):
         buttons_row = QHBoxLayout()
         self._add_schedule_button = QPushButton("Schedule Selected Media")
         buttons_row.addWidget(self._add_schedule_button)
+        self._schedule_focus_checkbox = QCheckBox("Focus current program")
+        self._schedule_focus_checkbox.setToolTip(
+            "Automatically keep the current schedule entry selected in the table."
+        )
+        buttons_row.addWidget(self._schedule_focus_checkbox)
+        buttons_row.addStretch()
 
         datetime_layout.addLayout(filter_row)
         datetime_layout.addWidget(self._schedule_table)
@@ -658,6 +668,7 @@ class MainWindow(QMainWindow):
         self._add_schedule_button.clicked.connect(self._add_schedule_entry)
         self._add_cron_button.clicked.connect(self._add_cron_schedule)
         self._schedule_date_selector.dateChanged.connect(self._on_schedule_filter_date_changed)
+        self._schedule_focus_checkbox.toggled.connect(self._on_schedule_auto_focus_toggled)
 
         self._play_button.clicked.connect(self._on_play_clicked)
         self._stop_button.clicked.connect(self._on_stop_clicked)
@@ -673,6 +684,7 @@ class MainWindow(QMainWindow):
         self._scheduler.schedule_triggered.connect(self._on_schedule_triggered)
         self._scheduler.log.connect(self._append_log)
         self._cron_refresh_timer.timeout.connect(self._refresh_cron_runtime_window)
+        self._schedule_focus_timer.timeout.connect(self._refresh_schedule_auto_focus)
         self._cron_help_action.triggered.connect(self._show_cron_help)
         # Sync fullscreen button with video widget state
         try:
@@ -757,26 +769,37 @@ class MainWindow(QMainWindow):
         self._schedule_entries = state.schedule_entries
         self._cron_entries = state.cron_entries
         self._play_queue = deque(state.queue)
+        self._schedule_auto_focus_enabled = state.schedule_auto_focus
         self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
         self._recalculate_schedule_durations()
+        restored_entries = self._restore_active_missed_one_shots(app_started_at)
         normalized_entries = self._normalize_overdue_one_shots(
             app_started_at,
             {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_FIRED},
         )
         self._schedule_filter_date = self._initial_schedule_filter_date()
         self._set_schedule_filter_date(self._schedule_filter_date)
+        self._schedule_focus_checkbox.blockSignals(True)
+        self._schedule_focus_checkbox.setChecked(self._schedule_auto_focus_enabled)
+        self._schedule_focus_checkbox.blockSignals(False)
         self._refresh_cron_schedule_entries({self._schedule_filter_date})
         self._recalculate_schedule_durations()
 
         self._refresh_urls_list()
         self._refresh_cron_table()
         self._refresh_schedule_table()
+        self._apply_schedule_auto_focus(force=True)
         self._scheduler.set_entries(self._schedule_entries)
         self._player.set_volume(self._volume_slider.value())
         self._update_player_visual_state()
         if normalized_entries:
             self._append_log(
                 f"Normalized {normalized_entries} past one-shot schedule item(s) to missed on startup"
+            )
+            self._save_state()
+        elif restored_entries:
+            self._append_log(
+                f"Restored {restored_entries} active one-shot schedule item(s) from missed on startup"
             )
             self._save_state()
         self._append_log(f"Loaded state from {self._state_path}")
@@ -787,6 +810,7 @@ class MainWindow(QMainWindow):
             schedule_entries=self._schedule_entries,
             cron_entries=self._cron_entries,
             queue=list(self._play_queue),
+            schedule_auto_focus=self._schedule_auto_focus_enabled,
         )
         save_state(self._state_path, state)
 
@@ -796,19 +820,45 @@ class MainWindow(QMainWindow):
         eligible_statuses: set[str],
     ) -> int:
         normalized = 0
-        for entry in self._schedule_entries:
+        entries = sorted(
+            self._schedule_entries,
+            key=lambda entry: self._normalized_start(entry.start_at),
+        )
+        for index, entry in enumerate(entries):
             if not entry.one_shot:
                 continue
-            start_at = entry.start_at
-            if start_at.tzinfo is None:
-                start_at = start_at.replace(tzinfo=reference_time.tzinfo)
+            start_at = self._normalized_start(entry.start_at)
             if start_at >= reference_time:
                 continue
             if entry.status not in eligible_statuses:
                 continue
+            end_at = self._schedule_entry_end_at(entries, index)
+            if end_at is not None and reference_time < end_at:
+                continue
+            if end_at is None:
+                continue
             entry.status = SCHEDULE_STATUS_MISSED
             normalized += 1
         return normalized
+
+    def _restore_active_missed_one_shots(self, reference_time: datetime) -> int:
+        restored = 0
+        entries = sorted(
+            self._schedule_entries,
+            key=lambda entry: self._normalized_start(entry.start_at),
+        )
+        for index, entry in enumerate(entries):
+            if not entry.one_shot or entry.status != SCHEDULE_STATUS_MISSED:
+                continue
+            start_at = self._normalized_start(entry.start_at)
+            if start_at > reference_time:
+                continue
+            end_at = self._schedule_entry_end_at(entries, index)
+            if end_at is None or reference_time >= end_at:
+                continue
+            entry.status = SCHEDULE_STATUS_PENDING
+            restored += 1
+        return restored
 
     def _refresh_urls_list(self) -> None:
         self._urls_table.setRowCount(0)
@@ -1027,8 +1077,13 @@ class MainWindow(QMainWindow):
             start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
             duration_label = self._format_duration(entry.duration)
             cron_entry = self._cron_entry_by_id(entry.cron_id)
-            origin_label = f"Generated from CRON: {cron_entry.expression}" if cron_entry is not None else "Manual schedule"
-            tooltip = f"{media_source}\n{origin_label}"
+            origin_label = (
+                f"Generated from CRON: {cron_entry.expression}"
+                if cron_entry is not None
+                else "Manual schedule"
+            )
+            duration_tooltip = self._duration_tooltip(media_source, entry.duration)
+            tooltip = f"{media_source}\n{origin_label}\n{duration_tooltip}"
             palette = self._schedule_entry_palette(entry, now)
 
             start_item = QTableWidgetItem(start_label)
@@ -1128,10 +1183,6 @@ class MainWindow(QMainWindow):
         entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
         for entry in entries:
             entry.duration = self._media_duration_seconds(entry.media_id)
-        for current, next_entry in zip(entries, entries[1:]):
-            current_start = self._normalized_start(current.start_at)
-            next_start = self._normalized_start(next_entry.start_at)
-            current.duration = max(0, int((next_start - current_start).total_seconds()))
 
     def _default_next_schedule_start(self) -> datetime:
         if not self._schedule_entries:
@@ -1249,6 +1300,46 @@ class MainWindow(QMainWindow):
         minutes, seconds = divmod(remainder, 60)
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
+    @staticmethod
+    def _duration_tooltip(source: str, duration_seconds: int | None) -> str:
+        if duration_seconds is not None:
+            return f"Duration read from media file: {MainWindow._format_duration(duration_seconds)}"
+        url = QUrl(source)
+        if url.isValid() and url.scheme() and url.scheme().lower() != "file":
+            return "Duration unavailable for remote streams/URLs"
+        return "Duration unavailable: ffprobe/ffmpeg could not read this file"
+
+    def _schedule_log_summary(self, reference_time: datetime, limit: int = 5) -> str:
+        entries = sorted(
+            self._schedule_entries,
+            key=lambda entry: self._normalized_start(entry.start_at),
+        )
+        if not entries:
+            return "schedule: empty"
+
+        upcoming_entries = [
+            entry
+            for entry in entries
+            if self._normalized_start(entry.start_at) >= reference_time
+        ]
+        displayed_entries = upcoming_entries[:limit] if upcoming_entries else entries[-limit:]
+        summary_parts = []
+        for entry in displayed_entries:
+            start_label = self._normalized_start(entry.start_at).strftime("%H:%M:%S")
+            duration_label = (
+                str(entry.duration)
+                if entry.duration is not None
+                else "-"
+            )
+            summary_parts.append(
+                f"{self._media_log_name(entry.media_id)}@{start_label}/{entry.status}/dur={duration_label}"
+            )
+
+        remaining = max(0, len(upcoming_entries) - len(displayed_entries))
+        prefix = "next" if upcoming_entries else "recent"
+        suffix = f" (+{remaining} more)" if remaining else ""
+        return f"schedule {prefix}: [{', '.join(summary_parts)}]{suffix}"
+
     def _update_now_playing_label(self) -> None:
         media = self._player.current_media
         if media is None:
@@ -1258,6 +1349,47 @@ class MainWindow(QMainWindow):
         self._now_playing_label.setText(
             f"{media.title} - {self._format_duration(elapsed_seconds)}"
         )
+
+    def _focus_schedule_entry(self, entry_id: str, force: bool = False) -> None:
+        selected_entry_ids = self._selected_schedule_entry_ids()
+        if not force and selected_entry_ids == [entry_id]:
+            return
+
+        for row in range(self._schedule_table.rowCount()):
+            item = self._schedule_table.item(row, 0)
+            if item is None or item.data(Qt.UserRole) != entry_id:
+                continue
+            self._schedule_table.clearSelection()
+            self._schedule_table.setCurrentCell(row, 0)
+            self._schedule_table.selectRow(row)
+            self._schedule_table.scrollToItem(
+                item,
+                QAbstractItemView.ScrollHint.PositionAtCenter,
+            )
+            return
+
+    def _apply_schedule_auto_focus(self, force: bool = False) -> None:
+        if not self._schedule_auto_focus_enabled:
+            return
+
+        active_entry = self._active_schedule_entry_at(datetime.now().astimezone())
+        if active_entry is None:
+            return
+
+        entry, start_at = active_entry
+        active_date = start_at.date()
+        if active_date != self._schedule_filter_date:
+            self._set_schedule_filter_date(active_date)
+            self._refresh_cron_schedule_entries({self._schedule_filter_date})
+            self._recalculate_schedule_durations()
+            self._scheduler.set_entries(self._schedule_entries)
+            self._refresh_schedule_table()
+
+        self._focus_schedule_entry(entry.id, force=force)
+
+    @Slot()
+    def _refresh_schedule_auto_focus(self) -> None:
+        self._apply_schedule_auto_focus()
 
     def _media_log_name(self, media_id: str) -> str:
         media = self._media_items.get(media_id)
@@ -1307,6 +1439,13 @@ class MainWindow(QMainWindow):
         self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_schedule_table()
+
+    @Slot(bool)
+    def _on_schedule_auto_focus_toggled(self, checked: bool) -> None:
+        self._schedule_auto_focus_enabled = checked
+        self._save_state()
+        if checked:
+            self._apply_schedule_auto_focus(force=True)
 
     @Slot(QModelIndex)
     def _on_filesystem_selected(self, _: QModelIndex) -> None:
@@ -1899,18 +2038,29 @@ class MainWindow(QMainWindow):
             if now < start_at:
                 break
 
-            end_at: datetime | None = None
-            if index + 1 < len(entries):
-                end_at = self._normalized_start(entries[index + 1].start_at)
-            elif entry.duration is not None:
-                end_at = start_at + timedelta(seconds=max(0, entry.duration))
-
+            end_at = self._schedule_entry_end_at(entries, index)
             if end_at is not None and now >= end_at:
                 continue
             if entry.status == SCHEDULE_STATUS_DISABLED:
                 return None
             return entry, start_at
         return None
+
+    def _schedule_entry_end_at(
+        self,
+        entries: list[ScheduleEntry],
+        index: int,
+    ) -> datetime | None:
+        entry = entries[index]
+        start_at = self._normalized_start(entry.start_at)
+        end_candidates: list[datetime] = []
+        if entry.duration is not None:
+            end_candidates.append(start_at + timedelta(seconds=max(0, entry.duration)))
+        if index + 1 < len(entries):
+            end_candidates.append(self._normalized_start(entries[index + 1].start_at))
+        if not end_candidates:
+            return None
+        return min(end_candidates)
 
     @Slot(object)
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
@@ -1929,6 +2079,7 @@ class MainWindow(QMainWindow):
         now = datetime.now().astimezone()
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
+        restored_entries = self._restore_active_missed_one_shots(now)
         self._scheduler.set_entries(self._schedule_entries)
         if not self._automation_playing:
             self._automation_playing = True
@@ -1936,6 +2087,10 @@ class MainWindow(QMainWindow):
             self._scheduler.start()
             self._append_log("Automation status changed to Playing")
             self._mark_missed_entries_missed(now)
+        if restored_entries:
+            self._append_log(
+                f"Restored {restored_entries} active one-shot schedule item(s) from missed"
+            )
 
         if self._player.is_playing():
             return
@@ -1943,7 +2098,7 @@ class MainWindow(QMainWindow):
         active_entry = self._active_schedule_entry_at(now)
         if active_entry is not None:
             entry, start_at = active_entry
-            if entry.status != SCHEDULE_STATUS_PENDING:
+            if entry.status not in {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
                 self._refresh_schedule_table()
                 self._save_state()
                 return
@@ -1955,7 +2110,7 @@ class MainWindow(QMainWindow):
                 self._refresh_schedule_table()
                 self._save_state()
                 return
-            if entry.one_shot:
+            if entry.one_shot and entry.status in {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_MISSED}:
                 entry.status = SCHEDULE_STATUS_FIRED
             offset_ms = max(
                 0,
@@ -1974,14 +2129,9 @@ class MainWindow(QMainWindow):
         if self._play_queue:
             self._play_next_from_queue()
             return
-        entries_detail = []
-        for e in sorted(self._schedule_entries, key=lambda e: self._normalized_start(e.start_at)):
-            s = self._normalized_start(e.start_at).strftime("%H:%M:%S")
-            name = self._media_log_name(e.media_id)
-            entries_detail.append(f"{name}@{s}/{e.status}/dur={e.duration}")
         self._append_log(
             f"Play ignored: no active or queued media at {now.strftime('%H:%M:%S')} "
-            f"— schedule: [{', '.join(entries_detail) or 'empty'}]"
+            f"— {self._schedule_log_summary(now)}"
         )
 
     @Slot()

@@ -174,6 +174,7 @@ class AppState:
     schedule_entries: list[ScheduleEntry] = field(default_factory=list)
     cron_entries: list[CronEntry] = field(default_factory=list)
     queue: list[str] = field(default_factory=list)
+    schedule_auto_focus: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppState":
@@ -186,6 +187,7 @@ class AppState:
             schedule_entries=schedule_entries,
             cron_entries=cron_entries,
             queue=queue,
+            schedule_auto_focus=bool(data.get("schedule_auto_focus", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -194,4 +196,5 @@ class AppState:
             "schedule_entries": [entry.to_dict() for entry in self.schedule_entries],
             "cron_entries": [entry.to_dict() for entry in self.cron_entries],
             "queue": list(self.queue),
+            "schedule_auto_focus": self.schedule_auto_focus,
         }

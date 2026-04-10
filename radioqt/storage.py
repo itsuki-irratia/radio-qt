@@ -103,6 +103,12 @@ def _load_legacy_json_state(path: Path) -> AppState:
 
 
 def _read_state(connection: sqlite3.Connection) -> AppState:
+    schedule_auto_focus_row = connection.execute(
+        "SELECT value FROM app_meta WHERE key = 'schedule_auto_focus'"
+    ).fetchone()
+    schedule_auto_focus = (
+        schedule_auto_focus_row is not None and schedule_auto_focus_row["value"] == "1"
+    )
     media_items = [
         {
             "id": row["id"],
@@ -176,6 +182,7 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "schedule_entries": schedule_entries,
             "cron_entries": cron_entries,
             "queue": queue,
+            "schedule_auto_focus": schedule_auto_focus,
         }
     )
 
@@ -258,6 +265,14 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
         connection.executemany(
             "INSERT INTO queue_items (position, media_id) VALUES (?, ?)",
             [(index, media_id) for index, media_id in enumerate(state.queue)],
+        )
+        connection.execute(
+            """
+            INSERT INTO app_meta(key, value)
+            VALUES('schedule_auto_focus', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            ("1" if state.schedule_auto_focus else "0",),
         )
 
 
