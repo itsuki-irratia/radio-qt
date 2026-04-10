@@ -32,6 +32,8 @@ Main runtime state file:
 - `radioqt/models.py`: dataclasses and schedule status constants
 - `radioqt/cron.py`: custom 6-field CRON parser and iterator
 - `radioqt/player.py`: wrapper around `QMediaPlayer`
+- `radioqt/library/sources.py`: media source helpers, file/stream detection, and extension lists
+- `radioqt/library/items.py`: media library selection and item-creation helpers
 - `radioqt/scheduling/logic.py`: pure scheduling helpers extracted from UI logic
 - `radioqt/scheduling/runtime.py`: timer-based schedule trigger engine
 - `radioqt/ui_components/widgets.py`: reusable UI widgets extracted from `ui.py`
@@ -40,7 +42,7 @@ Main runtime state file:
 - `radioqt/scheduler.py`: compatibility wrapper to the new scheduling package
 - `radioqt/storage.py`: SQLite persistence and legacy JSON migration
 - `radioqt/ui.py`: almost all application behavior and UI
-- `.codex`: currently empty
+- `.codex`: points future sessions to `CONTEXT.md`
 
 ## Runtime / Startup
 
@@ -529,6 +531,7 @@ These are now part of the current codebase and should be preserved:
 11. Runtime logs can now be exported from the Help menu for troubleshooting.
 12. Core pure scheduling computations were extracted from `ui.py` into `radioqt/scheduling/logic.py`.
 13. Reusable dialogs and widgets were extracted from `ui.py` into `radioqt/ui_components/`.
+14. Media source and library-selection helpers were extracted from `ui.py` into `radioqt/library/`.
 
 ## Places Most Likely To Need Care
 
@@ -572,7 +575,7 @@ These are not implemented yet, but would improve maintainability:
 - split `ui.py` into smaller modules:
   - dialogs
   - schedule logic
-  - media library logic
+  - remaining media library actions
   - playback controller UI
 - add automated tests for:
   - CRON generation
@@ -603,6 +606,7 @@ This section is intentionally operational and should be updated after important 
 - The UI currently exposes status and hard-sync editing directly inside tables, which is convenient but increases the chance of subtle state interactions with CRON-managed rows.
 - Logging is user-friendly now, but it is still not structured; troubleshooting complex timing issues can require inspecting the SQLite database directly.
 - Scheduling logic is no longer fully trapped in `ui.py`, but there is still significant schedule/UI coordination there.
+- Media library detection/selection is no longer fully trapped in `ui.py`, but add/edit/remove flows still live there.
 
 ### High-Value TODO
 
@@ -615,7 +619,7 @@ This section is intentionally operational and should be updated after important 
   - play-from-offset behavior
 - Continue extracting remaining schedule/UI coordination from `MainWindow` now that core computations live in `radioqt/scheduling/logic.py`.
 - Continue splitting `MainWindow` responsibilities now that reusable dialogs/widgets live in `radioqt/ui_components/`.
-- Extract media library actions from `ui.py` into their own module.
+- Continue extracting remaining media library actions from `ui.py` now that shared helpers live in `radioqt/library/`.
 - Consider adding a small diagnostics screen for troubleshooting user reports beyond raw log export.
 
 ### Session Notes

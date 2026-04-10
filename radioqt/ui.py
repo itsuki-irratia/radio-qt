@@ -8,7 +8,7 @@ import re
 import subprocess
 from uuid import NAMESPACE_URL, uuid5
 
-from PySide6.QtCore import QDate, QDateTime, QModelIndex, QSize, Qt, QTimer, QUrl, Slot, QEvent
+from PySide6.QtCore import QDate, QDateTime, QModelIndex, QSize, Qt, QTimer, Slot, QEvent
 from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -39,6 +39,16 @@ from PySide6.QtWidgets import (
 )
 
 from .cron import CronExpression, CronParseError
+from .library import (
+    VIDEO_EXTENSIONS,
+    create_stream_media_item,
+    is_stream_source,
+    local_media_path_from_source,
+    media_looks_like_video_source,
+    media_source_suffix,
+    selected_filesystem_media_id,
+    selected_url_media_id,
+)
 from .models import (
     AppState,
     CronEntry,
@@ -62,23 +72,6 @@ from .scheduling import (
 )
 from .storage import load_state, save_state
 from .ui_components import CronDialog, CronHelpDialog, FullscreenOverlay, ScheduleDialog, WaveformWidget
-
-SUPPORTED_MEDIA_EXTENSIONS = {
-    ".aac",
-    ".avi",
-    ".flac",
-    ".m4a",
-    ".mkv",
-    ".mov",
-    ".mp3",
-    ".mp4",
-    ".ogg",
-    ".opus",
-    ".wav",
-    ".webm",
-}
-
-VIDEO_EXTENSIONS = {".avi", ".mkv", ".mov", ".mp4", ".webm", ".flv"}
 
 
 class MainWindow(QMainWindow):
@@ -141,18 +134,7 @@ class MainWindow(QMainWindow):
     def _media_looks_like_video(media: MediaItem | None) -> bool:
         if media is None:
             return False
-        source = media.source.strip()
-        if not source:
-            return False
-        url = QUrl(source)
-        if url.isValid() and url.scheme():
-            if url.scheme().lower() == "file":
-                suffix = Path(url.toLocalFile()).suffix.lower()
-            else:
-                suffix = Path(url.path()).suffix.lower()
-        else:
-            suffix = Path(source).expanduser().suffix.lower()
-        return suffix in VIDEO_EXTENSIONS
+        return media_looks_like_video_source(media.source)
 
     def _update_player_visual_state(self) -> None:
         media = self._player.current_media
@@ -577,7 +559,7 @@ class MainWindow(QMainWindow):
         self._urls_table.setRowCount(0)
         items = sorted(self._media_items.values(), key=lambda item: item.created_at)
         for media in items:
-            if not self._is_stream_source(media.source):
+            if not is_stream_source(media.source):
                 continue
             row = self._urls_table.rowCount()
             self._urls_table.insertRow(row)
@@ -927,18 +909,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _probe_media_duration_seconds(source: str) -> int | None:
-        path: Path | None = None
-        url = QUrl(source)
-        if url.isValid() and url.scheme():
-            if url.scheme().lower() == "file":
-                local_path = url.toLocalFile()
-                if local_path:
-                    path = Path(local_path)
-            else:
-                return None
-        else:
-            path = Path(source).expanduser()
-
+        path = local_media_path_from_source(source)
         if path is None or not path.is_file():
             return None
 
@@ -1023,14 +994,9 @@ class MainWindow(QMainWindow):
         if media is None:
             return "Missing", "Duration unavailable: media item is missing"
 
-        url = QUrl(media.source)
-        if url.isValid() and url.scheme():
-            if url.scheme().lower() != "file":
-                return "Stream", "Duration unavailable for remote streams/URLs"
-            local_path = Path(url.toLocalFile()) if url.toLocalFile() else None
-        else:
-            local_path = Path(media.source).expanduser()
-
+        if is_stream_source(media.source) and local_media_path_from_source(media.source) is None:
+            return "Stream", "Duration unavailable for remote streams/URLs"
+        local_path = local_media_path_from_source(media.source)
         if local_path is None or not local_path.exists():
             return "Missing", "Duration unavailable: local file is missing"
         return "Unknown", "Duration unavailable: ffprobe/ffmpeg could not read this file"
@@ -1165,9 +1131,17 @@ class MainWindow(QMainWindow):
 
     def _selected_media_id(self) -> str | None:
         if self._last_source_panel == "urls":
-            return self._selected_url_media_id()
+            return selected_url_media_id(self._urls_table)
 
-        return self._selected_filesystem_media_id()
+        media_id, created = selected_filesystem_media_id(
+            self._filesystem_view,
+            self._filesystem_model,
+            self._media_items,
+            self._media_duration_cache,
+        )
+        if created:
+            self._save_state()
+        return media_id
 
     def _selected_schedule_entry_id(self) -> str | None:
         row = self._schedule_table.currentRow()
@@ -1226,45 +1200,6 @@ class MainWindow(QMainWindow):
     def _on_library_tab_changed(self, index: int) -> None:
         self._last_source_panel = "urls" if index == 1 else "filesystem"
 
-    @staticmethod
-    def _is_supported_media_file(path: Path) -> bool:
-        return path.suffix.lower() in SUPPORTED_MEDIA_EXTENSIONS
-
-    @staticmethod
-    def _is_stream_source(source: str) -> bool:
-        url = QUrl(source)
-        return url.isValid() and bool(url.scheme())
-
-    def _selected_url_media_id(self) -> str | None:
-        row = self._urls_table.currentRow()
-        if row < 0:
-            return None
-        item = self._urls_table.item(row, 0)
-        if item is None:
-            return None
-        return item.data(Qt.UserRole)
-
-    def _selected_filesystem_media_id(self) -> str | None:
-        index = self._filesystem_view.currentIndex()
-        if not index.isValid():
-            return None
-        path = Path(self._filesystem_model.filePath(index))
-        if not path.is_file() or not self._is_supported_media_file(path):
-            return None
-        media = self._ensure_file_media_item(path)
-        return media.id
-
-    def _ensure_file_media_item(self, file_path: Path) -> MediaItem:
-        resolved = str(file_path.resolve())
-        for item in self._media_items.values():
-            if item.source == resolved:
-                return item
-        media = MediaItem.create(title=file_path.name, source=resolved)
-        self._media_items[media.id] = media
-        self._media_duration_cache.pop(media.id, None)
-        self._save_state()
-        return media
-
     @Slot()
     def _add_media_url(self) -> None:
         url, ok = QInputDialog.getText(self, "Add Stream URL", "URL (http/https/rtsp/etc):")
@@ -1275,7 +1210,7 @@ class MainWindow(QMainWindow):
         if not ok_title or not title.strip():
             title = url.strip()
 
-        media = MediaItem.create(title=title.strip(), source=url.strip())
+        media = create_stream_media_item(title, url)
         self._media_items[media.id] = media
         self._media_duration_cache.pop(media.id, None)
         self._refresh_urls_list()
@@ -1309,7 +1244,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _remove_selected_url(self) -> None:
-        media_id = self._selected_url_media_id()
+        media_id = selected_url_media_id(self._urls_table)
         if media_id is None:
             QMessageBox.information(self, "No Selection", "Select a URL first.")
             return
@@ -1328,7 +1263,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _edit_selected_url(self) -> None:
-        media_id = self._selected_url_media_id()
+        media_id = selected_url_media_id(self._urls_table)
         if media_id is None:
             QMessageBox.information(self, "No Selection", "Select a URL first.")
             return
@@ -2001,7 +1936,7 @@ class MainWindow(QMainWindow):
         ext = ""
         if media is not None:
             try:
-                ext = Path(media.source).suffix.lower()
+                ext = media_source_suffix(media.source)
             except Exception:
                 ext = ""
 
