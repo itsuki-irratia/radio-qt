@@ -15,7 +15,6 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QDateEdit,
     QFileDialog,
     QFileSystemModel,
@@ -81,7 +80,16 @@ from .scheduling import (
     schedule_entry_window_details,
 )
 from .storage import load_state, save_state
-from .ui_components import CronDialog, CronHelpDialog, FullscreenOverlay, ScheduleDialog, WaveformWidget
+from .ui_components import (
+    CronDialog,
+    CronHelpDialog,
+    FullscreenOverlay,
+    ScheduleDialog,
+    WaveformWidget,
+    refresh_cron_table,
+    refresh_schedule_table,
+    refresh_urls_table,
+)
 
 
 class MainWindow(QMainWindow):
@@ -572,55 +580,20 @@ class MainWindow(QMainWindow):
             self._append_log(f"Marked missed details omitted for {remaining} additional item(s)")
 
     def _refresh_urls_list(self) -> None:
-        self._urls_table.setRowCount(0)
-        items = sorted(self._media_items.values(), key=lambda item: item.created_at)
-        for media in items:
-            if not is_stream_source(media.source):
-                continue
-            row = self._urls_table.rowCount()
-            self._urls_table.insertRow(row)
-            title_item = QTableWidgetItem(media.title)
-            title_item.setData(Qt.UserRole, media.id)
-            self._urls_table.setItem(row, 0, title_item)
-            self._urls_table.setItem(row, 1, QTableWidgetItem(media.source))
-        self._urls_table.resizeColumnsToContents()
+        refresh_urls_table(
+            self._urls_table,
+            self._media_items,
+            is_stream_source=is_stream_source,
+        )
 
     def _refresh_cron_table(self) -> None:
-        entries = sorted(self._cron_entries, key=lambda entry: entry.created_at)
-        self._cron_table.setRowCount(len(entries))
-        for row, entry in enumerate(entries):
-            media = self._media_items.get(entry.media_id)
-            media_name = media.title if media else f"Missing ({entry.media_id[:8]})"
-            media_source = media.source if media else f"Missing media ID: {entry.media_id}"
-
-            expression_item = QTableWidgetItem(entry.expression)
-            expression_item.setData(Qt.UserRole, entry.id)
-            expression_item.setToolTip(media_source)
-            self._cron_table.setItem(row, 0, expression_item)
-
-            media_item = QTableWidgetItem(media_name)
-            media_item.setToolTip(media_source)
-            self._cron_table.setItem(row, 1, media_item)
-
-            hard_sync_selector = QComboBox(self._cron_table)
-            hard_sync_selector.addItems(["Yes", "No"])
-            hard_sync_selector.setCurrentText("Yes" if entry.hard_sync else "No")
-            hard_sync_selector.setToolTip(media_source)
-            hard_sync_selector.currentTextChanged.connect(
-                lambda value, entry_id=entry.id: self._on_cron_hard_sync_changed(entry_id, value)
-            )
-            self._cron_table.setCellWidget(row, 2, hard_sync_selector)
-
-            status_selector = QComboBox(self._cron_table)
-            status_selector.addItems(["Enabled", "Disabled"])
-            status_selector.setCurrentText("Enabled" if entry.enabled else "Disabled")
-            status_selector.setToolTip(media_source)
-            status_selector.currentTextChanged.connect(
-                lambda value, entry_id=entry.id: self._on_cron_status_changed(entry_id, value)
-            )
-            self._cron_table.setCellWidget(row, 3, status_selector)
-
-        self._cron_table.resizeColumnsToContents()
+        refresh_cron_table(
+            self._cron_table,
+            self._cron_entries,
+            self._media_items,
+            on_hard_sync_changed=self._on_cron_hard_sync_changed,
+            on_status_changed=self._on_cron_status_changed,
+        )
 
     @staticmethod
     def _cron_occurrence_entry_id(cron_id: str, start_at: datetime) -> str:
@@ -779,74 +752,21 @@ class MainWindow(QMainWindow):
 
     def _refresh_schedule_table(self) -> None:
         entries = self._visible_schedule_entries()
-        self._schedule_table.setRowCount(len(entries))
         now = datetime.now().astimezone()
-        for row, entry in enumerate(entries):
-            media = self._media_items.get(entry.media_id)
-            media_name = media.title if media else f"Missing ({entry.media_id[:8]})"
-            media_source = media.source if media else f"Missing media ID: {entry.media_id}"
-            status = entry.status.capitalize()
-            start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-            duration_label, duration_tooltip = self._duration_display_details(media, entry.duration)
-            cron_entry = self._cron_entry_by_id(entry.cron_id)
-            origin_label = (
-                f"Generated from CRON: {cron_entry.expression}"
-                if cron_entry is not None
-                else "Manual schedule"
-            )
-            window_tooltip = self._schedule_window_tooltip(entry)
-            tooltip = f"{media_source}\n{origin_label}\n{duration_tooltip}\n{window_tooltip}"
-            palette = self._schedule_entry_palette(entry, now)
-
-            start_item = QTableWidgetItem(start_label)
-            start_item.setData(Qt.UserRole, entry.id)
-            start_item.setToolTip(tooltip)
-            self._apply_item_palette(start_item, palette)
-            self._schedule_table.setItem(row, 0, start_item)
-
-            duration_item = QTableWidgetItem(duration_label)
-            duration_item.setToolTip(tooltip)
-            self._apply_item_palette(duration_item, palette)
-            self._schedule_table.setItem(row, 1, duration_item)
-
-            media_item = QTableWidgetItem(media_name)
-            media_item.setToolTip(tooltip)
-            self._apply_item_palette(media_item, palette)
-            self._schedule_table.setItem(row, 2, media_item)
-
-            cron_globally_disabled = cron_entry is not None and not cron_entry.enabled
-            is_locked = entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}
-
-            hard_sync_selector = QComboBox(self._schedule_table)
-            hard_sync_selector.addItems(["Yes", "No"])
-            hard_sync_selector.setCurrentText("Yes" if entry.hard_sync else "No")
-            hard_sync_selector.setEnabled(not is_locked)
-            hard_sync_selector.setToolTip(tooltip)
-            hard_sync_selector.currentTextChanged.connect(
-                lambda value, entry_id=entry.id: self._on_schedule_hard_sync_changed(entry_id, value)
-            )
-            self._apply_widget_palette(hard_sync_selector, palette)
-            self._schedule_table.setCellWidget(row, 3, hard_sync_selector)
-
-            status_selector = QComboBox(self._schedule_table)
-            if cron_globally_disabled:
-                status_selector.addItem("Disabled")
-            else:
-                status_selector.addItems(["Pending", "Disabled"])
-            if entry.status == SCHEDULE_STATUS_FIRED:
-                status_selector.addItem("Fired")
-            if entry.status == SCHEDULE_STATUS_MISSED:
-                status_selector.addItem("Missed")
-            status_selector.setCurrentText(status)
-            status_selector.setEnabled(not is_locked and not cron_globally_disabled)
-            status_selector.setToolTip(tooltip)
-            status_selector.currentTextChanged.connect(
-                lambda value, entry_id=entry.id: self._on_schedule_status_changed(entry_id, value)
-            )
-            self._apply_widget_palette(status_selector, palette)
-            self._schedule_table.setCellWidget(row, 4, status_selector)
-
-        self._schedule_table.resizeColumnsToContents()
+        refresh_schedule_table(
+            self._schedule_table,
+            entries,
+            self._media_items,
+            now,
+            cron_entry_by_id=self._cron_entry_by_id,
+            duration_display_details=self._duration_display_details,
+            schedule_window_tooltip=self._schedule_window_tooltip,
+            schedule_entry_palette=self._schedule_entry_palette,
+            apply_item_palette=self._apply_item_palette,
+            apply_widget_palette=self._apply_widget_palette,
+            on_hard_sync_changed=self._on_schedule_hard_sync_changed,
+            on_status_changed=self._on_schedule_status_changed,
+        )
 
     def _visible_schedule_entries(self) -> list[ScheduleEntry]:
         return [
