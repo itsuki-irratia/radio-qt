@@ -9,7 +9,7 @@ import subprocess
 from uuid import NAMESPACE_URL, uuid5
 
 from PySide6.QtCore import QDate, QDateTime, QModelIndex, QSize, Qt, QTimer, QUrl, Slot, QEvent
-from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor, QPainter
+from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -17,9 +17,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDateEdit,
-    QDateTimeEdit,
-    QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFileSystemModel,
     QGroupBox,
@@ -29,7 +26,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
-    QTextBrowser,
     QSizePolicy,
     QSlider,
     QStackedLayout,
@@ -40,7 +36,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QInputDialog,
-    QLineEdit,
 )
 
 from .cron import CronExpression, CronParseError
@@ -66,6 +61,7 @@ from .scheduling import (
     schedule_entry_window_details,
 )
 from .storage import load_state, save_state
+from .ui_components import CronDialog, CronHelpDialog, FullscreenOverlay, ScheduleDialog, WaveformWidget
 
 SUPPORTED_MEDIA_EXTENSIONS = {
     ".aac",
@@ -83,301 +79,6 @@ SUPPORTED_MEDIA_EXTENSIONS = {
 }
 
 VIDEO_EXTENSIONS = {".avi", ".mkv", ".mov", ".mp4", ".webm", ".flv"}
-
-
-class FullscreenOverlay(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowFlag(Qt.Window, True)
-        self._label = QLabel("", self)
-        self._label.setAlignment(Qt.AlignCenter)
-        self._label.setStyleSheet("color: white; background-color: #222; font-size: 36px; padding: 40px;")
-        layout = QVBoxLayout(self)
-        layout.addWidget(self._label)
-
-    def set_text(self, text: str) -> None:
-        self._label.setText(text)
-
-    def keyPressEvent(self, event) -> None:  # allow Esc to close overlay
-        from PySide6.QtGui import QKeyEvent
-        from PySide6.QtCore import Qt as _Qt
-
-        try:
-            if isinstance(event, QKeyEvent) and event.key() == _Qt.Key_Escape:
-                self.hide()
-                # notify parent to sync fullscreen state
-                if isinstance(self.parent(), MainWindow):
-                    self.parent()._exit_fullscreen_overlay()
-                return
-        except Exception:
-            pass
-        super().keyPressEvent(event)
-
-
-class WaveformWidget(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._title = "No media"
-        self._active = False
-        self._levels = [0.0] * 36
-        self.setMinimumHeight(180)
-
-        self._timer = QTimer(self)
-        self._timer.setInterval(50)
-        self._timer.timeout.connect(self._decay_levels)
-        self._timer.start()
-
-    def set_media_state(self, title: str, active: bool) -> None:
-        self._title = title
-        self._active = active
-        self.update()
-
-    def set_levels(self, levels: list[float] | None) -> None:
-        if not levels:
-            self._levels = [0.0] * len(self._levels)
-            self.update()
-            return
-        if len(levels) != len(self._levels):
-            self._levels = [0.0] * len(levels)
-        smoothed_levels = []
-        for current, incoming in zip(self._levels, levels):
-            smoothed_levels.append(max(incoming, current * 0.65))
-        self._levels = smoothed_levels
-        self.update()
-
-    def clear(self) -> None:
-        self._title = "No media"
-        self._active = False
-        self._levels = [0.0] * len(self._levels)
-        self.update()
-
-    def _decay_levels(self) -> None:
-        if not any(level > 0.002 for level in self._levels):
-            return
-        decay_factor = 0.92 if self._active else 0.82
-        self._levels = [level * decay_factor if level > 0.002 else 0.0 for level in self._levels]
-        self.update()
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#111827"))
-
-        title_color = QColor("#f9fafb") if self._active else QColor("#d1d5db")
-        subtitle_color = QColor("#9ca3af")
-        accent_color = QColor("#38bdf8") if self._active else QColor("#475569")
-        baseline_color = QColor("#1f2937")
-
-        painter.setPen(title_color)
-        painter.drawText(24, 34, self._title)
-        painter.setPen(subtitle_color)
-        painter.drawText(24, 56, "Audio waveform")
-
-        center_y = int(self.height() * 0.62)
-        painter.setPen(baseline_color)
-        painter.drawLine(24, center_y, self.width() - 24, center_y)
-
-        bars = len(self._levels)
-        gap = 4
-        available_width = max(40, self.width() - 48)
-        bar_width = max(4, int((available_width - gap * (bars - 1)) / bars))
-        max_height = max(36, int(self.height() * 0.22))
-        left = 24
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(accent_color)
-        for index, normalized in enumerate(self._levels):
-            x = left + index * (bar_width + gap)
-            bar_height = max(10, int(10 + normalized * max_height))
-            top = center_y - bar_height
-            painter.drawRoundedRect(x, top, bar_width, bar_height * 2, 2, 2)
-
-        super().paintEvent(event)
-
-
-class ScheduleDialog(QDialog):
-    def __init__(
-        self,
-        parent: QWidget | None = None,
-        initial_start_at: datetime | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Add Schedule Entry")
-        self._datetime_edit = QDateTimeEdit(self)
-        self._datetime_edit.setCalendarPopup(True)
-        self._datetime_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-        if initial_start_at is None:
-            initial_start_at = self._default_start_datetime()
-        self._datetime_edit.setDateTime(QDateTime(initial_start_at))
-        self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
-        self._hard_sync_checkbox.setChecked(True)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Start at:"))
-        layout.addWidget(self._datetime_edit)
-        layout.addWidget(self._hard_sync_checkbox)
-        layout.addWidget(buttons)
-
-    @staticmethod
-    def _default_start_datetime() -> datetime:
-        now = datetime.now().astimezone()
-        minutes_to_add = 2 if now.second > 30 else 1
-        return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
-
-    def selected_datetime(self) -> datetime:
-        dt = self._datetime_edit.dateTime().toPython()
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
-        return dt
-
-    def hard_sync(self) -> bool:
-        return self._hard_sync_checkbox.isChecked()
-
-
-class CronDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Add CRON Entry")
-        self._expression_edit = QLineEdit(self)
-        self._expression_edit.setPlaceholderText("sec min hour day month weekday")
-        self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
-        self._hard_sync_checkbox.setChecked(True)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
-        buttons.accepted.connect(self._validate_and_accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("CRON expression (with seconds):"))
-        layout.addWidget(self._expression_edit)
-        layout.addWidget(QLabel("Example: 0 */15 * * * *"))
-        layout.addWidget(QLabel("Use numeric values only. Month: 1-12. Weekday starts on Monday: 1-7."))
-        layout.addWidget(self._hard_sync_checkbox)
-        layout.addWidget(buttons)
-
-    def expression(self) -> str:
-        return self._expression_edit.text().strip()
-
-    def hard_sync(self) -> bool:
-        return self._hard_sync_checkbox.isChecked()
-
-    def _validate_and_accept(self) -> None:
-        try:
-            CronExpression.parse(self.expression())
-        except CronParseError as exc:
-            QMessageBox.warning(self, "Invalid CRON", str(exc))
-            return
-        self.accept()
-
-
-class CronHelpDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("CRON Help")
-        self.resize(760, 420)
-
-        help_html = """
-        <h3>CRON format in RadioQt</h3>
-        <p>RadioQt uses 6 fields:</p>
-        <p><code>second minute hour day-of-month month day-of-week</code></p>
-
-        <h4>Field order</h4>
-        <table border="1" cellspacing="0" cellpadding="6">
-          <tr>
-            <th><code>second</code></th>
-            <th><code>minute</code></th>
-            <th><code>hour</code></th>
-            <th><code>day-of-month</code></th>
-            <th><code>month</code></th>
-            <th><code>day-of-week</code></th>
-          </tr>
-          <tr>
-            <td><code>0-59</code></td>
-            <td><code>0-59</code></td>
-            <td><code>0-23</code></td>
-            <td><code>1-31</code></td>
-            <td><code>1-12</code></td>
-            <td><code>1-7</code></td>
-          </tr>
-        </table>
-
-        <h4>Supported syntax</h4>
-        <p><code>*</code> any value<br>
-        <code>,</code> list of values<br>
-        <code>-</code> range of values<br>
-        <code>/</code> step values</p>
-
-        <p>Use numeric values only.<br>
-        Month: <code>1-12</code><br>
-        Day-of-week starts on Monday:
-        <code>1=Monday 2=Tuesday 3=Wednesday 4=Thursday 5=Friday 6=Saturday 7=Sunday</code></p>
-
-        <h4>Examples by use</h4>
-        <table border="1" cellspacing="0" cellpadding="6">
-          <tr>
-            <th>Use</th>
-            <th>Expression</th>
-            <th>Meaning</th>
-          </tr>
-          <tr>
-            <td>Exact time</td>
-            <td><code>0 30 8 * * *</code></td>
-            <td>Every day at 08:30:00</td>
-          </tr>
-          <tr>
-            <td>Wildcard <code>*</code></td>
-            <td><code>0 * * * * *</code></td>
-            <td>Every minute, at second 0</td>
-          </tr>
-          <tr>
-            <td>List <code>,</code></td>
-            <td><code>0 0 18 * 1,6,12 *</code></td>
-            <td>Every day at 18:00:00, only in months 1, 6 and 12</td>
-          </tr>
-          <tr>
-            <td>Range <code>-</code></td>
-            <td><code>0 0 9 * * 1-5</code></td>
-            <td>Monday to Friday at 09:00:00</td>
-          </tr>
-          <tr>
-            <td>Step <code>/</code></td>
-            <td><code>0 */15 * * * *</code></td>
-            <td>Every 15 minutes</td>
-          </tr>
-          <tr>
-            <td>Specific day of month</td>
-            <td><code>30 0 12 1 * *</code></td>
-            <td>On day 1 of every month at 12:00:30</td>
-          </tr>
-          <tr>
-            <td>Specific weekday</td>
-            <td><code>0 0 6 * * 7</code></td>
-            <td>Every Sunday at 06:00:00</td>
-          </tr>
-          <tr>
-            <td>Combined range + step</td>
-            <td><code>0 0/10 9-17 * * 1-5</code></td>
-            <td>Every 10 minutes between 09:00 and 17:59, Monday to Friday</td>
-          </tr>
-        </table>
-        """
-
-        text = QTextBrowser(self)
-        text.setReadOnly(True)
-        text.setOpenExternalLinks(False)
-        text.setHtml(help_html)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
-        buttons.rejected.connect(self.reject)
-        buttons.accepted.connect(self.accept)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(text)
-        layout.addWidget(buttons)
 
 
 class MainWindow(QMainWindow):

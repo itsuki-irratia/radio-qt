@@ -34,6 +34,8 @@ Main runtime state file:
 - `radioqt/player.py`: wrapper around `QMediaPlayer`
 - `radioqt/scheduling/logic.py`: pure scheduling helpers extracted from UI logic
 - `radioqt/scheduling/runtime.py`: timer-based schedule trigger engine
+- `radioqt/ui_components/widgets.py`: reusable UI widgets extracted from `ui.py`
+- `radioqt/ui_components/dialogs.py`: dialogs extracted from `ui.py`
 - `radioqt/schedule_logic.py`: compatibility wrapper to the new scheduling package
 - `radioqt/scheduler.py`: compatibility wrapper to the new scheduling package
 - `radioqt/storage.py`: SQLite persistence and legacy JSON migration
@@ -210,6 +212,8 @@ This is the safest place to keep evolving schedule rules without mixing them wit
 
 Almost all functional behavior is in `radioqt/ui.py`.
 
+Reusable UI pieces now live in `radioqt/ui_components/`.
+
 Main UI areas:
 
 - player area:
@@ -232,6 +236,11 @@ Dialogs:
 - `ScheduleDialog`
 - `CronDialog`
 - `CronHelpDialog`
+
+Reusable widgets:
+
+- `WaveformWidget`
+- `FullscreenOverlay`
 
 ## Media Library Rules
 
@@ -519,6 +528,7 @@ These are now part of the current codebase and should be preserved:
 10. The Duration column now distinguishes formatted media duration, remote streams, missing media/files, and unknown probe failures.
 11. Runtime logs can now be exported from the Help menu for troubleshooting.
 12. Core pure scheduling computations were extracted from `ui.py` into `radioqt/scheduling/logic.py`.
+13. Reusable dialogs and widgets were extracted from `ui.py` into `radioqt/ui_components/`.
 
 ## Places Most Likely To Need Care
 
@@ -604,6 +614,7 @@ This section is intentionally operational and should be updated after important 
   - restore-from-missed behavior
   - play-from-offset behavior
 - Continue extracting remaining schedule/UI coordination from `MainWindow` now that core computations live in `radioqt/scheduling/logic.py`.
+- Continue splitting `MainWindow` responsibilities now that reusable dialogs/widgets live in `radioqt/ui_components/`.
 - Extract media library actions from `ui.py` into their own module.
 - Consider adding a small diagnostics screen for troubleshooting user reports beyond raw log export.
 
