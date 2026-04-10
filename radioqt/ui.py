@@ -75,7 +75,8 @@ from .scheduling import (
     active_schedule_entry_at,
     normalize_overdue_one_shots,
     normalized_start,
-    restore_active_missed_one_shots,
+    prepare_schedule_entries_for_play,
+    prepare_schedule_entries_for_startup,
     schedule_entry_end_at,
     schedule_entry_window_details,
 )
@@ -485,10 +486,13 @@ class MainWindow(QMainWindow):
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
         self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
         self._recalculate_schedule_durations()
-        restored_entries = self._restore_active_missed_one_shots(app_started_at)
-        normalized_entries, normalized_details = self._normalize_overdue_one_shots(
+        startup_preparation = prepare_schedule_entries_for_startup(
+            self._schedule_entries,
             app_started_at,
-            {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_FIRED},
+        )
+        normalized_details = self._normalized_missed_details(
+            app_started_at,
+            startup_preparation.normalized_entries,
         )
         self._schedule_filter_date = self._initial_schedule_filter_date()
         self._set_schedule_filter_date(self._schedule_filter_date)
@@ -505,15 +509,18 @@ class MainWindow(QMainWindow):
         self._scheduler.set_entries(self._schedule_entries)
         self._player.set_volume(self._volume_slider.value())
         self._update_player_visual_state()
-        if normalized_entries:
+        if startup_preparation.normalized_entries:
             self._append_log(
-                f"Normalized {normalized_entries} past one-shot schedule item(s) to missed on startup"
+                f"Normalized {len(startup_preparation.normalized_entries)} past one-shot schedule item(s) to missed on startup"
             )
-            self._append_normalized_missed_logs(normalized_entries, normalized_details)
+            self._append_normalized_missed_logs(
+                len(startup_preparation.normalized_entries),
+                normalized_details,
+            )
             self._save_state()
-        elif restored_entries:
+        elif startup_preparation.restored_count:
             self._append_log(
-                f"Restored {restored_entries} active one-shot schedule item(s) from missed on startup"
+                f"Restored {startup_preparation.restored_count} active one-shot schedule item(s) from missed on startup"
             )
             self._save_state()
         self._append_log(f"Loaded state from {self._state_path}")
@@ -538,17 +545,24 @@ class MainWindow(QMainWindow):
             reference_time,
             eligible_statuses,
         )
+        details = self._normalized_missed_details(reference_time, normalized_entries)
+        return len(normalized_entries), details
+
+    def _normalized_missed_details(
+        self,
+        reference_time: datetime,
+        normalized_entries: list[tuple[ScheduleEntry, datetime, datetime]],
+    ) -> list[str]:
         details: list[str] = []
         for entry, start_at, end_at in normalized_entries[:5]:
-            if len(details) < 5:
-                start_label = start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-                end_label = end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-                now_label = reference_time.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-                details.append(
-                    f"Marked missed '{self._media_log_name(entry.media_id)}': "
-                    f"start={start_label}, end={end_label}, checked_at={now_label}"
-                )
-        return len(normalized_entries), details
+            start_label = start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+            end_label = end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+            now_label = reference_time.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+            details.append(
+                f"Marked missed '{self._media_log_name(entry.media_id)}': "
+                f"start={start_label}, end={end_label}, checked_at={now_label}"
+            )
+        return details
 
     def _append_normalized_missed_logs(self, normalized: int, details: list[str]) -> None:
         for detail in details:
@@ -556,13 +570,6 @@ class MainWindow(QMainWindow):
         remaining = normalized - len(details)
         if remaining > 0:
             self._append_log(f"Marked missed details omitted for {remaining} additional item(s)")
-
-    def _restore_active_missed_one_shots(self, reference_time: datetime) -> int:
-        restored_entries = restore_active_missed_one_shots(
-            self._schedule_entries,
-            reference_time,
-        )
-        return len(restored_entries)
 
     def _refresh_urls_list(self) -> None:
         self._urls_table.setRowCount(0)
@@ -1792,17 +1799,34 @@ class MainWindow(QMainWindow):
         now = datetime.now().astimezone()
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
-        restored_entries = self._restore_active_missed_one_shots(now)
+        play_preparation = prepare_schedule_entries_for_play(
+            self._schedule_entries,
+            now,
+            automation_playing=self._automation_playing,
+        )
         self._scheduler.set_entries(self._schedule_entries)
-        if not self._automation_playing:
+        if play_preparation.started_automation:
             self._automation_playing = True
             self._set_automation_status(True)
             self._scheduler.start()
             self._append_log("Automation status changed to Playing")
-            self._mark_missed_entries_missed(now)
-        if restored_entries:
+        if play_preparation.normalized_entries:
+            normalized_details = self._normalized_missed_details(
+                now,
+                play_preparation.normalized_entries,
+            )
+            self._refresh_schedule_table()
+            self._save_state()
             self._append_log(
-                f"Restored {restored_entries} active one-shot schedule item(s) from missed"
+                f"Marked {len(play_preparation.normalized_entries)} missed one-shot schedule item(s) as missed"
+            )
+            self._append_normalized_missed_logs(
+                len(play_preparation.normalized_entries),
+                normalized_details,
+            )
+        if play_preparation.restored_count:
+            self._append_log(
+                f"Restored {play_preparation.restored_count} active one-shot schedule item(s) from missed"
             )
 
         play_request = resolve_play_request(
@@ -1940,15 +1964,6 @@ class MainWindow(QMainWindow):
             "border: 1px solid #f1aeb5; border-radius: 6px; "
             "padding: 2px 8px; font-weight: 600;"
         )
-
-    def _mark_missed_entries_missed(self, now: datetime) -> None:
-        skipped, skipped_details = self._normalize_overdue_one_shots(now, {SCHEDULE_STATUS_PENDING})
-        if not skipped:
-            return
-        self._refresh_schedule_table()
-        self._save_state()
-        self._append_log(f"Marked {skipped} missed one-shot schedule item(s) as missed")
-        self._append_normalized_missed_logs(skipped, skipped_details)
 
     @Slot(bool)
     def _on_fullscreen_toggled(self, checked: bool) -> None:

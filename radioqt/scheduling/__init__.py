@@ -8,12 +8,22 @@ from .logic import (
     sort_schedule_entries,
 )
 from .runtime import RadioScheduler
+from .state import (
+    PlaySchedulePreparation,
+    StartupSchedulePreparation,
+    prepare_schedule_entries_for_play,
+    prepare_schedule_entries_for_startup,
+)
 
 __all__ = [
+    "PlaySchedulePreparation",
     "RadioScheduler",
+    "StartupSchedulePreparation",
     "active_schedule_entry_at",
     "normalize_overdue_one_shots",
     "normalized_start",
+    "prepare_schedule_entries_for_play",
+    "prepare_schedule_entries_for_startup",
     "restore_active_missed_one_shots",
     "schedule_entry_end_at",
     "schedule_entry_window_details",

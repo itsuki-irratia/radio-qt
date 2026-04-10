@@ -39,6 +39,7 @@ Main runtime state file:
 - `radioqt/playback/orchestration.py`: playback decision helpers for schedule-trigger and active-play resolution
 - `radioqt/scheduling/logic.py`: pure scheduling helpers extracted from UI logic
 - `radioqt/scheduling/runtime.py`: timer-based schedule trigger engine
+- `radioqt/scheduling/state.py`: startup/play schedule-state preparation helpers
 - `radioqt/ui_components/widgets.py`: reusable UI widgets extracted from `ui.py`
 - `radioqt/ui_components/dialogs.py`: dialogs extracted from `ui.py`
 - `radioqt/schedule_logic.py`: compatibility wrapper to the new scheduling package
@@ -539,6 +540,7 @@ These are now part of the current codebase and should be preserved:
 16. Queue and playback-selection helpers were extracted from `ui.py` into `radioqt/playback/actions.py`.
 17. Active-play and schedule-trigger playback decisions started moving from `ui.py` into `radioqt/playback/orchestration.py`.
 18. The top-level `Play` decision tree now routes through `radioqt/playback/orchestration.py` before the UI applies logs and visual updates.
+19. Startup and Play schedule-state preparation now route through `radioqt/scheduling/state.py`.
 
 ## Places Most Likely To Need Care
 
@@ -612,7 +614,7 @@ This section is intentionally operational and should be updated after important 
 - Editing a media item or removing one can have broad side effects because schedule rows, CRON rules, queue entries, and current playback all reference the same `media_id`.
 - The UI currently exposes status and hard-sync editing directly inside tables, which is convenient but increases the chance of subtle state interactions with CRON-managed rows.
 - Logging is user-friendly now, but it is still not structured; troubleshooting complex timing issues can require inspecting the SQLite database directly.
-- Scheduling logic is no longer fully trapped in `ui.py`, but there is still significant schedule/UI coordination there.
+- Scheduling logic is no longer fully trapped in `ui.py`, and startup/play state preparation has started moving out, but there is still significant schedule/UI coordination there.
 - Media library helpers and core mutations are no longer fully trapped in `ui.py`, but dialogs, refresh orchestration, and logs still live there.
 - Queue selection helpers are no longer fully trapped in `ui.py`, and playback orchestration has started moving out, but state transitions and UI-side coordination still live there.
 
