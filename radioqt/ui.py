@@ -607,6 +607,13 @@ class MainWindow(QMainWindow):
         filter_row.addWidget(self._schedule_focus_checkbox)
         filter_row.addStretch()
 
+        self._schedule_overlap_note = QLabel(
+            "Overlap rule: the next scheduled item can cut off the current one.",
+            datetime_tab,
+        )
+        self._schedule_overlap_note.setWordWrap(True)
+        self._schedule_overlap_note.setStyleSheet("color: #6b7280; font-size: 11px;")
+
         self._schedule_table = QTableWidget(datetime_tab)
         self._schedule_table.setColumnCount(5)
         self._schedule_table.setHorizontalHeaderLabels(
@@ -625,6 +632,7 @@ class MainWindow(QMainWindow):
         buttons_row.addStretch()
 
         datetime_layout.addLayout(filter_row)
+        datetime_layout.addWidget(self._schedule_overlap_note)
         datetime_layout.addWidget(self._schedule_table)
         datetime_layout.addLayout(buttons_row)
         self._schedule_tabs.addTab(datetime_tab, "Date Time")
@@ -773,7 +781,7 @@ class MainWindow(QMainWindow):
         self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
         self._recalculate_schedule_durations()
         restored_entries = self._restore_active_missed_one_shots(app_started_at)
-        normalized_entries = self._normalize_overdue_one_shots(
+        normalized_entries, normalized_details = self._normalize_overdue_one_shots(
             app_started_at,
             {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_FIRED},
         )
@@ -796,6 +804,7 @@ class MainWindow(QMainWindow):
             self._append_log(
                 f"Normalized {normalized_entries} past one-shot schedule item(s) to missed on startup"
             )
+            self._append_normalized_missed_logs(normalized_entries, normalized_details)
             self._save_state()
         elif restored_entries:
             self._append_log(
@@ -818,8 +827,9 @@ class MainWindow(QMainWindow):
         self,
         reference_time: datetime,
         eligible_statuses: set[str],
-    ) -> int:
+    ) -> tuple[int, list[str]]:
         normalized = 0
+        details: list[str] = []
         entries = sorted(
             self._schedule_entries,
             key=lambda entry: self._normalized_start(entry.start_at),
@@ -839,7 +849,22 @@ class MainWindow(QMainWindow):
                 continue
             entry.status = SCHEDULE_STATUS_MISSED
             normalized += 1
-        return normalized
+            if len(details) < 5:
+                start_label = start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+                end_label = end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+                now_label = reference_time.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+                details.append(
+                    f"Marked missed '{self._media_log_name(entry.media_id)}': "
+                    f"start={start_label}, end={end_label}, checked_at={now_label}"
+                )
+        return normalized, details
+
+    def _append_normalized_missed_logs(self, normalized: int, details: list[str]) -> None:
+        for detail in details:
+            self._append_log(detail)
+        remaining = normalized - len(details)
+        if remaining > 0:
+            self._append_log(f"Marked missed details omitted for {remaining} additional item(s)")
 
     def _restore_active_missed_one_shots(self, reference_time: datetime) -> int:
         restored = 0
@@ -1007,7 +1032,7 @@ class MainWindow(QMainWindow):
     def _refresh_cron_runtime_window(self) -> None:
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
-        normalized_entries = self._normalize_overdue_one_shots(
+        normalized_entries, normalized_details = self._normalize_overdue_one_shots(
             datetime.now().astimezone(),
             {SCHEDULE_STATUS_PENDING},
         )
@@ -1018,6 +1043,7 @@ class MainWindow(QMainWindow):
             self._append_log(
                 f"Marked {normalized_entries} overdue one-shot schedule item(s) as missed"
             )
+            self._append_normalized_missed_logs(normalized_entries, normalized_details)
 
     def _current_schedule_entry_for_playback(self, reference_time: datetime) -> ScheduleEntry | None:
         if not self._player.is_playing() or self._player.current_media is None:
@@ -1075,14 +1101,13 @@ class MainWindow(QMainWindow):
             media_source = media.source if media else f"Missing media ID: {entry.media_id}"
             status = entry.status.capitalize()
             start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-            duration_label = self._format_duration(entry.duration)
+            duration_label, duration_tooltip = self._duration_display_details(media, entry.duration)
             cron_entry = self._cron_entry_by_id(entry.cron_id)
             origin_label = (
                 f"Generated from CRON: {cron_entry.expression}"
                 if cron_entry is not None
                 else "Manual schedule"
             )
-            duration_tooltip = self._duration_tooltip(media_source, entry.duration)
             window_tooltip = self._schedule_window_tooltip(entry)
             tooltip = f"{media_source}\n{origin_label}\n{duration_tooltip}\n{window_tooltip}"
             palette = self._schedule_entry_palette(entry, now)
@@ -1302,15 +1327,45 @@ class MainWindow(QMainWindow):
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     @staticmethod
-    def _duration_tooltip(source: str, duration_seconds: int | None) -> str:
+    def _duration_display_details(
+        media: MediaItem | None,
+        duration_seconds: int | None,
+    ) -> tuple[str, str]:
         if duration_seconds is not None:
-            return f"Duration read from media file: {MainWindow._format_duration(duration_seconds)}"
-        url = QUrl(source)
-        if url.isValid() and url.scheme() and url.scheme().lower() != "file":
-            return "Duration unavailable for remote streams/URLs"
-        return "Duration unavailable: ffprobe/ffmpeg could not read this file"
+            formatted = MainWindow._format_duration(duration_seconds)
+            return formatted, f"Duration read from media file: {formatted}"
+        if media is None:
+            return "Missing", "Duration unavailable: media item is missing"
+
+        url = QUrl(media.source)
+        if url.isValid() and url.scheme():
+            if url.scheme().lower() != "file":
+                return "Stream", "Duration unavailable for remote streams/URLs"
+            local_path = Path(url.toLocalFile()) if url.toLocalFile() else None
+        else:
+            local_path = Path(media.source).expanduser()
+
+        if local_path is None or not local_path.exists():
+            return "Missing", "Duration unavailable: local file is missing"
+        return "Unknown", "Duration unavailable: ffprobe/ffmpeg could not read this file"
 
     def _schedule_window_tooltip(self, entry: ScheduleEntry) -> str:
+        start_at, end_at, end_reason = self._schedule_entry_window_details(entry)
+        start_label = start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        if end_at is None:
+            end_label = "Open-ended"
+        else:
+            end_label = end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        return (
+            f"Computed start: {start_label}\n"
+            f"Computed end: {end_label}\n"
+            f"End reason: {end_reason}"
+        )
+
+    def _schedule_entry_window_details(
+        self,
+        entry: ScheduleEntry,
+    ) -> tuple[datetime, datetime | None, str]:
         entries = sorted(
             self._schedule_entries,
             key=lambda current_entry: self._normalized_start(current_entry.start_at),
@@ -1319,10 +1374,10 @@ class MainWindow(QMainWindow):
             (index for index, current_entry in enumerate(entries) if current_entry.id == entry.id),
             None,
         )
-        if entry_index is None:
-            return "Computed window unavailable"
-
         start_at = self._normalized_start(entry.start_at)
+        if entry_index is None:
+            return start_at, None, "Computed window unavailable"
+
         duration_end_at: datetime | None = None
         next_entry_start_at: datetime | None = None
         if entry.duration is not None:
@@ -1332,23 +1387,15 @@ class MainWindow(QMainWindow):
 
         end_at = self._schedule_entry_end_at(entries, entry_index)
         if end_at is None:
-            end_label = "Open-ended"
             end_reason = "No duration and no next scheduled item"
         else:
-            end_label = end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
             reason_parts = []
             if duration_end_at is not None and end_at == duration_end_at:
                 reason_parts.append("media duration")
             if next_entry_start_at is not None and end_at == next_entry_start_at:
                 reason_parts.append("next scheduled item")
             end_reason = " and ".join(reason_parts) if reason_parts else "computed schedule boundary"
-
-        start_label = start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-        return (
-            f"Computed start: {start_label}\n"
-            f"Computed end: {end_label}\n"
-            f"End reason: {end_reason}"
-        )
+        return start_at, end_at, end_reason
 
     def _schedule_log_summary(self, reference_time: datetime, limit: int = 5) -> str:
         entries = sorted(
@@ -1409,16 +1456,37 @@ class MainWindow(QMainWindow):
             )
             return
 
+    def _schedule_entry_to_focus(self, reference_time: datetime) -> tuple[ScheduleEntry, date] | None:
+        active_entry = self._active_schedule_entry_at(reference_time)
+        if active_entry is not None:
+            entry, start_at = active_entry
+            return entry, start_at.date()
+
+        entries = sorted(
+            self._schedule_entries,
+            key=lambda entry: self._normalized_start(entry.start_at),
+        )
+        if not entries:
+            return None
+
+        for index, entry in enumerate(entries):
+            start_at = self._normalized_start(entry.start_at)
+            if start_at >= reference_time:
+                target_entry = entries[index - 1] if index > 0 else entry
+                return target_entry, self._normalized_start(target_entry.start_at).date()
+
+        last_entry = entries[-1]
+        return last_entry, self._normalized_start(last_entry.start_at).date()
+
     def _apply_schedule_auto_focus(self, force: bool = False) -> None:
         if not self._schedule_auto_focus_enabled:
             return
 
-        active_entry = self._active_schedule_entry_at(datetime.now().astimezone())
-        if active_entry is None:
+        target_entry = self._schedule_entry_to_focus(datetime.now().astimezone())
+        if target_entry is None:
             return
 
-        entry, start_at = active_entry
-        active_date = start_at.date()
+        entry, active_date = target_entry
         if active_date != self._schedule_filter_date:
             self._set_schedule_filter_date(active_date)
             self._refresh_cron_schedule_entries({self._schedule_filter_date})
@@ -2157,6 +2225,18 @@ class MainWindow(QMainWindow):
                 0,
                 int((now - start_at).total_seconds() * 1000),
             )
+            _, end_at, end_reason = self._schedule_entry_window_details(entry)
+            end_label = (
+                end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+                if end_at is not None
+                else "Open-ended"
+            )
+            self._append_log(
+                f"Active schedule entry '{media.title}': "
+                f"start={start_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}, "
+                f"end={end_label}, end_reason={end_reason}, "
+                f"offset_ms={offset_ms}"
+            )
             self._player.play_media(media, start_position_ms=offset_ms)
             self._append_log(
                 f"Started scheduled media '{media.title}' from {self._format_duration(offset_ms // 1000)}"
@@ -2235,12 +2315,13 @@ class MainWindow(QMainWindow):
         )
 
     def _mark_missed_entries_missed(self, now: datetime) -> None:
-        skipped = self._normalize_overdue_one_shots(now, {SCHEDULE_STATUS_PENDING})
+        skipped, skipped_details = self._normalize_overdue_one_shots(now, {SCHEDULE_STATUS_PENDING})
         if not skipped:
             return
         self._refresh_schedule_table()
         self._save_state()
         self._append_log(f"Marked {skipped} missed one-shot schedule item(s) as missed")
+        self._append_normalized_missed_logs(skipped, skipped_details)
 
     @Slot(bool)
     def _on_fullscreen_toggled(self, checked: bool) -> None:

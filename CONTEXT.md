@@ -487,6 +487,9 @@ These are now part of the current codebase and should be preserved:
 5. Oversized schedule log output was reduced to a compact summary.
 6. Duration tooltip explains whether metadata was read or unavailable.
 7. Schedule tooltip shows computed start/end window and whether the end comes from media duration or the next scheduled item.
+8. The Schedule UI includes a visible overlap note explaining that the next scheduled item can cut off the current one.
+9. Diagnostic logs now include active-entry timing/offset details on `Play` and sampled details when overdue items are normalized to `missed`.
+10. The Duration column now distinguishes formatted media duration, remote streams, missing media/files, and unknown probe failures.
 
 ## Places Most Likely To Need Care
 
@@ -573,12 +576,6 @@ This section is intentionally operational and should be updated after important 
   - play-from-offset behavior
 - Extract scheduling logic from `MainWindow` into a pure-Python service module that can be tested without Qt widgets.
 - Extract media library actions from `ui.py` into their own module.
-- Consider adding explicit debug logs for:
-  - chosen active entry
-  - computed `start_at`, `end_at`, and `offset_ms`
-  - reason why an entry was marked `missed`
-- Add a dedicated overlap/conflict policy note in the UI so users know that the next scheduled item can cut off the previous one.
-- Consider distinguishing `duration unknown`, `duration probe failed`, and `remote stream duration unavailable` more explicitly in the UI model.
 - Consider adding a small diagnostics screen or log export for troubleshooting user reports.
 - Consider persisting richer queue metadata if future behavior needs to know whether a queued item came from manual queueing or from a scheduled trigger.
 
