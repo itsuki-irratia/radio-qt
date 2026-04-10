@@ -62,6 +62,13 @@ from .models import (
     SCHEDULE_STATUS_PENDING,
     ScheduleEntry,
 )
+from .playback import (
+    dequeue_next_playable_media,
+    enqueue_manual_media,
+    process_schedule_trigger,
+    resolve_media_by_id,
+    resolve_play_request,
+)
 from .player import MediaPlayerController
 from .scheduling import (
     RadioScheduler,
@@ -1022,7 +1029,7 @@ class MainWindow(QMainWindow):
     ) -> tuple[datetime, datetime | None, str]:
         return schedule_entry_window_details(self._schedule_entries, entry.id)
 
-    def _schedule_log_summary(self, reference_time: datetime, limit: int = 5) -> str:
+    def _schedule_log_summary(self, reference_time: datetime) -> str:
         entries = sorted(
             self._schedule_entries,
             key=lambda entry: self._normalized_start(entry.start_at),
@@ -1030,28 +1037,27 @@ class MainWindow(QMainWindow):
         if not entries:
             return "schedule: empty"
 
-        upcoming_entries = [
-            entry
-            for entry in entries
-            if self._normalized_start(entry.start_at) >= reference_time
-        ]
-        displayed_entries = upcoming_entries[:limit] if upcoming_entries else entries[-limit:]
-        summary_parts = []
-        for entry in displayed_entries:
-            start_label = self._normalized_start(entry.start_at).strftime("%H:%M:%S")
-            duration_label = (
-                str(entry.duration)
-                if entry.duration is not None
-                else "-"
-            )
-            summary_parts.append(
-                f"{self._media_log_name(entry.media_id)}@{start_label}/{entry.status}/dur={duration_label}"
-            )
-
-        remaining = max(0, len(upcoming_entries) - len(displayed_entries))
-        prefix = "next" if upcoming_entries else "recent"
-        suffix = f" (+{remaining} more)" if remaining else ""
-        return f"schedule {prefix}: [{', '.join(summary_parts)}]{suffix}"
+        upcoming_entry = next(
+            (
+                entry
+                for entry in entries
+                if self._normalized_start(entry.start_at) >= reference_time
+            ),
+            None,
+        )
+        target_entry = upcoming_entry if upcoming_entry is not None else entries[-1]
+        prefix = "next" if upcoming_entry is not None else "recent"
+        start_label = self._normalized_start(target_entry.start_at).strftime("%H:%M:%S")
+        duration_label = (
+            str(target_entry.duration)
+            if target_entry.duration is not None
+            else "-"
+        )
+        return (
+            f"schedule {prefix}: "
+            f"{self._media_log_name(target_entry.media_id)}@{start_label}/"
+            f"{target_entry.status}/dur={duration_label}"
+        )
 
     def _update_now_playing_label(self) -> None:
         media = self._player.current_media
@@ -1327,7 +1333,7 @@ class MainWindow(QMainWindow):
         if media_id is None:
             QMessageBox.information(self, "No Selection", "Select a media item first.")
             return
-        media = self._media_items.get(media_id)
+        media = resolve_media_by_id(self._media_items, media_id)
         if media is None:
             return
         self._player.play_media(media)
@@ -1338,10 +1344,10 @@ class MainWindow(QMainWindow):
         if media_id is None:
             QMessageBox.information(self, "No Selection", "Select a media item first.")
             return
-        media = self._media_items.get(media_id)
+        media = resolve_media_by_id(self._media_items, media_id)
         if media is None:
             return
-        self._play_queue.append(QueueItem(media_id=media_id, source="manual"))
+        enqueue_manual_media(self._play_queue, media_id)
         self._save_state()
         self._append_log(
             f"Queued media '{media.title}' ({len(self._play_queue)} item(s) pending)"
@@ -1680,44 +1686,39 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_schedule_triggered(self, entry: ScheduleEntry) -> None:
-        if not self._automation_playing:
-            if entry.one_shot and entry.status == SCHEDULE_STATUS_PENDING:
-                entry.status = SCHEDULE_STATUS_MISSED
+        current_media_name = (
+            self._player.current_media.title
+            if self._player.current_media is not None
+            else "nothing"
+        )
+        outcome = process_schedule_trigger(
+            entry,
+            self._media_items,
+            self._play_queue,
+            automation_playing=self._automation_playing,
+            player_is_playing=self._player.is_playing(),
+            current_media_name=current_media_name,
+        )
+        if outcome.kind == "ignored_stopped":
             self._append_log(f"Ignoring schedule {entry.id}: automation is stopped")
             self._refresh_schedule_table()
             self._save_state()
             return
-        media = self._media_items.get(entry.media_id)
-        if media is None:
-            if entry.one_shot:
-                entry.status = SCHEDULE_STATUS_MISSED
-            self._append_log(f"Skipping schedule {entry.id}: media '{self._media_log_name(entry.media_id)}' not found")
+        if outcome.kind == "missing_media":
+            self._append_log(
+                f"Skipping schedule {entry.id}: media '{self._media_log_name(entry.media_id)}' not found"
+            )
             self._refresh_schedule_table()
             self._save_state()
             return
-        if entry.one_shot:
-            entry.status = SCHEDULE_STATUS_FIRED
-
-        if entry.hard_sync or not self._player.is_playing():
-            if entry.hard_sync and self._player.is_playing():
-                current_media_name = (
-                    self._player.current_media.title
-                    if self._player.current_media is not None
-                    else "nothing"
-                )
+        if outcome.kind == "play_now" and outcome.media is not None:
+            if outcome.interrupted_media_name is not None:
                 self._append_log(
-                    f"Hard sync active for '{media.title}': interrupting '{current_media_name}'"
+                    f"Hard sync active for '{outcome.media.title}': interrupting '{outcome.interrupted_media_name}'"
                 )
-            self._player.play_media(media)
-        else:
-            self._play_queue.append(
-                QueueItem(
-                    media_id=media.id,
-                    source="schedule",
-                    schedule_entry_id=entry.id,
-                )
-            )
-            self._append_log(f"Player busy; queued scheduled media '{media.title}'")
+            self._player.play_media(outcome.media)
+        elif outcome.kind == "queued" and outcome.media is not None:
+            self._append_log(f"Player busy; queued scheduled media '{outcome.media.title}'")
 
         self._refresh_schedule_table()
         self._save_state()
@@ -1741,21 +1742,22 @@ class MainWindow(QMainWindow):
         self._play_next_from_queue()
 
     def _play_next_from_queue(self) -> None:
-        while self._play_queue:
-            next_item = self._play_queue.popleft()
-            next_media = self._media_items.get(next_item.media_id)
-            if next_media is None:
-                continue
+        result = dequeue_next_playable_media(self._play_queue, self._media_items)
+        if result is not None:
             self._save_state()
-            if next_item.source == "schedule":
+            if result.skipped_missing_count:
                 self._append_log(
-                    f"Playing queued scheduled media '{next_media.title}'"
+                    f"Skipped {result.skipped_missing_count} missing queued media item(s)"
+                )
+            if result.queue_item.source == "schedule":
+                self._append_log(
+                    f"Playing queued scheduled media '{result.media.title}'"
                 )
             else:
                 self._append_log(
-                    f"Playing queued manual media '{next_media.title}'"
+                    f"Playing queued manual media '{result.media.title}'"
                 )
-            self._player.play_media(next_media)
+            self._player.play_media(result.media)
             return
         self._player.clear_current_media()
         self._current_playback_position_ms = 0
@@ -1803,53 +1805,56 @@ class MainWindow(QMainWindow):
                 f"Restored {restored_entries} active one-shot schedule item(s) from missed"
             )
 
-        if self._player.is_playing():
+        play_request = resolve_play_request(
+            self._schedule_entries,
+            self._media_items,
+            now,
+            player_is_playing=self._player.is_playing(),
+            player_has_active_media=self._player.has_active_media(),
+            queue_has_items=bool(self._play_queue),
+        )
+        if play_request.kind == "already_playing":
             return
 
-        active_entry = self._active_schedule_entry_at(now)
-        if active_entry is not None:
-            entry, start_at = active_entry
-            if entry.status not in {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
+        if play_request.kind == "active_schedule" and play_request.active_schedule is not None:
+            active_play = play_request.active_schedule
+            if active_play.kind == "unsupported_status":
                 self._refresh_schedule_table()
                 self._save_state()
                 return
-            media = self._media_items.get(entry.media_id)
-            if media is None:
-                if entry.one_shot:
-                    entry.status = SCHEDULE_STATUS_MISSED
-                self._append_log(f"Play ignored: scheduled media '{self._media_log_name(entry.media_id)}' not found")
+            if active_play.kind == "missing_media":
+                self._append_log(
+                    f"Play ignored: scheduled media '{self._media_log_name(active_play.entry.media_id)}' not found"
+                )
                 self._refresh_schedule_table()
                 self._save_state()
                 return
-            if entry.one_shot and entry.status in {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_MISSED}:
-                entry.status = SCHEDULE_STATUS_FIRED
-            offset_ms = max(
-                0,
-                int((now - start_at).total_seconds() * 1000),
-            )
-            _, end_at, end_reason = self._schedule_entry_window_details(entry)
+            if active_play.kind != "play_active" or active_play.media is None or active_play.start_at is None:
+                self._refresh_schedule_table()
+                self._save_state()
+                return
             end_label = (
-                end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-                if end_at is not None
+                active_play.end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+                if active_play.end_at is not None
                 else "Open-ended"
             )
             self._append_log(
-                f"Active schedule entry '{media.title}': "
-                f"start={start_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}, "
-                f"end={end_label}, end_reason={end_reason}, "
-                f"offset_ms={offset_ms}"
+                f"Active schedule entry '{active_play.media.title}': "
+                f"start={active_play.start_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}, "
+                f"end={end_label}, end_reason={active_play.end_reason}, "
+                f"offset_ms={active_play.offset_ms}"
             )
-            self._player.play_media(media, start_position_ms=offset_ms)
+            self._player.play_media(active_play.media, start_position_ms=active_play.offset_ms)
             self._append_log(
-                f"Started scheduled media '{media.title}' from {self._format_duration(offset_ms // 1000)}"
+                f"Started scheduled media '{active_play.media.title}' from {self._format_duration(active_play.offset_ms // 1000)}"
             )
             self._refresh_schedule_table()
             self._save_state()
             return
-        if self._player.has_active_media():
+        if play_request.kind == "resume_loaded_media":
             self._player.play()
             return
-        if self._play_queue:
+        if play_request.kind == "play_queue":
             self._play_next_from_queue()
             return
         self._append_log(
