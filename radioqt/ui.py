@@ -41,13 +41,15 @@ from PySide6.QtWidgets import (
 from .cron import CronExpression, CronParseError
 from .library import (
     VIDEO_EXTENSIONS,
-    create_stream_media_item,
+    add_stream_media_item,
     is_stream_source,
     local_media_path_from_source,
     media_looks_like_video_source,
     media_source_suffix,
+    remove_media_from_library,
     selected_filesystem_media_id,
     selected_url_media_id,
+    update_stream_media_item,
 )
 from .models import (
     AppState,
@@ -1210,24 +1212,31 @@ class MainWindow(QMainWindow):
         if not ok_title or not title.strip():
             title = url.strip()
 
-        media = create_stream_media_item(title, url)
-        self._media_items[media.id] = media
-        self._media_duration_cache.pop(media.id, None)
+        media = add_stream_media_item(
+            self._media_items,
+            self._media_duration_cache,
+            title,
+            url,
+        )
         self._refresh_urls_list()
         self._save_state()
         self._append_log(f"Added stream: {title.strip()}")
 
     def _remove_media_by_id(self, media_id: str) -> None:
-        removed = self._media_items.pop(media_id, None)
-        if removed is None:
-            return
-        self._media_duration_cache.pop(media_id, None)
-
-        self._cron_entries = [entry for entry in self._cron_entries if entry.media_id != media_id]
-        self._schedule_entries = [entry for entry in self._schedule_entries if entry.media_id != media_id]
-        self._play_queue = deque(
-            [item for item in self._play_queue if item.media_id != media_id]
+        result = remove_media_from_library(
+            self._media_items,
+            self._media_duration_cache,
+            self._cron_entries,
+            self._schedule_entries,
+            self._play_queue,
+            media_id,
         )
+        if result.removed_media is None:
+            return
+
+        self._cron_entries = result.cron_entries
+        self._schedule_entries = result.schedule_entries
+        self._play_queue = result.play_queue
         if self._player.current_media is not None and self._player.current_media.id == media_id:
             self._player.clear_current_media()
             self._now_playing_label.setText("None")
@@ -1240,7 +1249,7 @@ class MainWindow(QMainWindow):
         self._refresh_cron_table()
         self._refresh_schedule_table()
         self._save_state()
-        self._append_log(f"Removed media: {removed.title}")
+        self._append_log(f"Removed media: {result.removed_media.title}")
 
     @Slot()
     def _remove_selected_url(self) -> None:
@@ -1290,9 +1299,15 @@ class MainWindow(QMainWindow):
         if not ok_title or not updated_title.strip():
             updated_title = updated_url.strip()
 
-        media.source = updated_url.strip()
-        media.title = updated_title.strip()
-        self._media_duration_cache.pop(media_id, None)
+        media = update_stream_media_item(
+            self._media_items,
+            self._media_duration_cache,
+            media_id,
+            updated_title,
+            updated_url,
+        )
+        if media is None:
+            return
         self._refresh_urls_list()
         self._refresh_schedule_table()
         self._save_state()

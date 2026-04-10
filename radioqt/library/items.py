@@ -51,7 +51,3 @@ def selected_filesystem_media_id(
 
     media, created = ensure_file_media_item(media_items, media_duration_cache, path)
     return media.id, created
-
-
-def create_stream_media_item(title: str, source: str) -> MediaItem:
-    return MediaItem.create(title=title.strip(), source=source.strip())
