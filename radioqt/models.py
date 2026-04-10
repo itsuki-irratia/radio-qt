@@ -169,11 +169,35 @@ class ScheduleEntry:
 
 
 @dataclass(slots=True)
+class QueueItem:
+    media_id: str
+    source: str = "manual"
+    schedule_entry_id: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | str) -> "QueueItem":
+        if isinstance(data, str):
+            return cls(media_id=data)
+        return cls(
+            media_id=data["media_id"],
+            source=data.get("source", "manual"),
+            schedule_entry_id=data.get("schedule_entry_id"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "media_id": self.media_id,
+            "source": self.source,
+            "schedule_entry_id": self.schedule_entry_id,
+        }
+
+
+@dataclass(slots=True)
 class AppState:
     media_items: list[MediaItem] = field(default_factory=list)
     schedule_entries: list[ScheduleEntry] = field(default_factory=list)
     cron_entries: list[CronEntry] = field(default_factory=list)
-    queue: list[str] = field(default_factory=list)
+    queue: list[QueueItem] = field(default_factory=list)
     schedule_auto_focus: bool = False
 
     @classmethod
@@ -181,7 +205,7 @@ class AppState:
         media_items = [MediaItem.from_dict(item) for item in data.get("media_items", [])]
         schedule_entries = [ScheduleEntry.from_dict(item) for item in data.get("schedule_entries", [])]
         cron_entries = [CronEntry.from_dict(item) for item in data.get("cron_entries", [])]
-        queue = list(data.get("queue", []))
+        queue = [QueueItem.from_dict(item) for item in data.get("queue", [])]
         return cls(
             media_items=media_items,
             schedule_entries=schedule_entries,
@@ -195,6 +219,6 @@ class AppState:
             "media_items": [item.to_dict() for item in self.media_items],
             "schedule_entries": [entry.to_dict() for entry in self.schedule_entries],
             "cron_entries": [entry.to_dict() for entry in self.cron_entries],
-            "queue": list(self.queue),
+            "queue": [item.to_dict() for item in self.queue],
             "schedule_auto_focus": self.schedule_auto_focus,
         }

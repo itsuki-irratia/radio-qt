@@ -382,12 +382,18 @@ Rules:
 
 ## Queue Rules
 
-Queue is a simple `deque[str]` of `media_id`.
+Queue is a `deque` of queue items with playback context.
 
 Used for:
 
 - manual queueing from the library
 - scheduled playback when player is busy and `hard_sync` is disabled
+
+Current persisted queue item shape:
+
+- `media_id`
+- `source`
+- `schedule_entry_id`
 
 When current media finishes:
 
@@ -488,8 +494,10 @@ These are now part of the current codebase and should be preserved:
 6. Duration tooltip explains whether metadata was read or unavailable.
 7. Schedule tooltip shows computed start/end window and whether the end comes from media duration or the next scheduled item.
 8. The Schedule UI includes a visible overlap note explaining that the next scheduled item can cut off the current one.
+9. Queue items now persist origin context (`manual` vs `schedule`) plus optional `schedule_entry_id`.
 9. Diagnostic logs now include active-entry timing/offset details on `Play` and sampled details when overdue items are normalized to `missed`.
 10. The Duration column now distinguishes formatted media duration, remote streams, missing media/files, and unknown probe failures.
+11. Runtime logs can now be exported from the Help menu for troubleshooting.
 
 ## Places Most Likely To Need Care
 
@@ -560,7 +568,6 @@ This section is intentionally operational and should be updated after important 
 - `QMediaPlayer` seek behavior can vary by backend/platform, so play-from-offset is implemented defensively but still depends on Qt multimedia backend reliability.
 - Schedule persistence is stateful enough that an old bad status in SQLite can affect current behavior until startup/play recovery logic corrects it.
 - The active-entry algorithm uses the earliest of `start + duration` and `next entry start`, so overlapping schedules are effectively truncated by the next entry even if the media file is longer.
-- Queue entries store only `media_id`, not the original scheduling context, so queued scheduled playback does not preserve the original schedule row identity once it moves into the queue.
 - Editing a media item or removing one can have broad side effects because schedule rows, CRON rules, queue entries, and current playback all reference the same `media_id`.
 - The UI currently exposes status and hard-sync editing directly inside tables, which is convenient but increases the chance of subtle state interactions with CRON-managed rows.
 - Logging is user-friendly now, but it is still not structured; troubleshooting complex timing issues can require inspecting the SQLite database directly.
@@ -576,8 +583,7 @@ This section is intentionally operational and should be updated after important 
   - play-from-offset behavior
 - Extract scheduling logic from `MainWindow` into a pure-Python service module that can be tested without Qt widgets.
 - Extract media library actions from `ui.py` into their own module.
-- Consider adding a small diagnostics screen or log export for troubleshooting user reports.
-- Consider persisting richer queue metadata if future behavior needs to know whether a queued item came from manual queueing or from a scheduled trigger.
+- Consider adding a small diagnostics screen for troubleshooting user reports beyond raw log export.
 
 ### Session Notes
 

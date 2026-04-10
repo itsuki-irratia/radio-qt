@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFileSystemModel,
     QGroupBox,
     QHBoxLayout,
@@ -47,6 +48,7 @@ from .models import (
     AppState,
     CronEntry,
     MediaItem,
+    QueueItem,
     SCHEDULE_STATUS_DISABLED,
     SCHEDULE_STATUS_FIRED,
     SCHEDULE_STATUS_MISSED,
@@ -386,7 +388,7 @@ class MainWindow(QMainWindow):
         self._media_duration_cache: dict[str, int | None] = {}
         self._schedule_entries: list[ScheduleEntry] = []
         self._cron_entries: list[CronEntry] = []
-        self._play_queue: deque[str] = deque()
+        self._play_queue: deque[QueueItem] = deque()
         self._last_source_panel = "filesystem"
         self._automation_playing = False
         self._schedule_auto_focus_enabled = False
@@ -517,6 +519,8 @@ class MainWindow(QMainWindow):
         menu_bar = self.menuBar()
         help_menu = menu_bar.addMenu("&Help")
         self._cron_help_action = QAction("&CRON", self)
+        self._export_logs_action = QAction("Export &Logs...", self)
+        help_menu.addAction(self._export_logs_action)
         help_menu.addAction(self._cron_help_action)
 
     def _build_library_panel(self) -> QWidget:
@@ -693,6 +697,7 @@ class MainWindow(QMainWindow):
         self._scheduler.log.connect(self._append_log)
         self._cron_refresh_timer.timeout.connect(self._refresh_cron_runtime_window)
         self._schedule_focus_timer.timeout.connect(self._refresh_schedule_auto_focus)
+        self._export_logs_action.triggered.connect(self._export_logs)
         self._cron_help_action.triggered.connect(self._show_cron_help)
         # Sync fullscreen button with video widget state
         try:
@@ -1633,7 +1638,9 @@ class MainWindow(QMainWindow):
 
         self._cron_entries = [entry for entry in self._cron_entries if entry.media_id != media_id]
         self._schedule_entries = [entry for entry in self._schedule_entries if entry.media_id != media_id]
-        self._play_queue = deque([item_id for item_id in self._play_queue if item_id != media_id])
+        self._play_queue = deque(
+            [item for item in self._play_queue if item.media_id != media_id]
+        )
         if self._player.current_media is not None and self._player.current_media.id == media_id:
             self._player.clear_current_media()
             self._now_playing_label.setText("None")
@@ -1732,7 +1739,7 @@ class MainWindow(QMainWindow):
         media = self._media_items.get(media_id)
         if media is None:
             return
-        self._play_queue.append(media_id)
+        self._play_queue.append(QueueItem(media_id=media_id, source="manual"))
         self._save_state()
         self._append_log(
             f"Queued media '{media.title}' ({len(self._play_queue)} item(s) pending)"
@@ -2101,7 +2108,13 @@ class MainWindow(QMainWindow):
                 )
             self._player.play_media(media)
         else:
-            self._play_queue.append(media.id)
+            self._play_queue.append(
+                QueueItem(
+                    media_id=media.id,
+                    source="schedule",
+                    schedule_entry_id=entry.id,
+                )
+            )
             self._append_log(f"Player busy; queued scheduled media '{media.title}'")
 
         self._refresh_schedule_table()
@@ -2127,11 +2140,19 @@ class MainWindow(QMainWindow):
 
     def _play_next_from_queue(self) -> None:
         while self._play_queue:
-            next_media_id = self._play_queue.popleft()
-            next_media = self._media_items.get(next_media_id)
+            next_item = self._play_queue.popleft()
+            next_media = self._media_items.get(next_item.media_id)
             if next_media is None:
                 continue
             self._save_state()
+            if next_item.source == "schedule":
+                self._append_log(
+                    f"Playing queued scheduled media '{next_media.title}'"
+                )
+            else:
+                self._append_log(
+                    f"Playing queued manual media '{next_media.title}'"
+                )
             self._player.play_media(next_media)
             return
         self._player.clear_current_media()
@@ -2292,6 +2313,26 @@ class MainWindow(QMainWindow):
     def _append_log(self, message: str) -> None:
         timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
         self._log_view.appendPlainText(f"[{timestamp}] {message}")
+
+    @Slot()
+    def _export_logs(self) -> None:
+        default_name = f"radioqt-log-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S')}.log"
+        target_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Logs",
+            str(Path.cwd() / default_name),
+            "Log Files (*.log);;Text Files (*.txt);;All Files (*)",
+        )
+        if not target_path:
+            return
+
+        try:
+            Path(target_path).write_text(self._log_view.toPlainText(), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Export Failed", f"Could not export logs:\n{exc}")
+            return
+
+        self._append_log(f"Exported logs to {target_path}")
 
     @Slot()
     def _show_cron_help(self) -> None:

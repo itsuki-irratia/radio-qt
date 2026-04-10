@@ -55,7 +55,9 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS queue_items (
             position INTEGER PRIMARY KEY,
-            media_id TEXT NOT NULL
+            media_id TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'manual',
+            schedule_entry_id TEXT
         );
 
         CREATE TABLE IF NOT EXISTS app_meta (
@@ -171,9 +173,13 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
         ).fetchall()
     ]
     queue = [
-        row["media_id"]
+        {
+            "media_id": row["media_id"],
+            "source": row["source"],
+            "schedule_entry_id": row["schedule_entry_id"],
+        }
         for row in connection.execute(
-            "SELECT media_id FROM queue_items ORDER BY position"
+            "SELECT media_id, source, schedule_entry_id FROM queue_items ORDER BY position"
         ).fetchall()
     ]
     return AppState.from_dict(
@@ -263,8 +269,19 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
             ],
         )
         connection.executemany(
-            "INSERT INTO queue_items (position, media_id) VALUES (?, ?)",
-            [(index, media_id) for index, media_id in enumerate(state.queue)],
+            """
+            INSERT INTO queue_items (position, media_id, source, schedule_entry_id)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (
+                    index,
+                    item.media_id,
+                    item.source,
+                    item.schedule_entry_id,
+                )
+                for index, item in enumerate(state.queue)
+            ],
         )
         connection.execute(
             """
@@ -334,6 +351,20 @@ def _migrate_schedule_entries_for_cron(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
+def _migrate_queue_items_metadata(connection: sqlite3.Connection) -> None:
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(queue_items)").fetchall()
+    }
+    if "source" not in columns:
+        connection.execute(
+            "ALTER TABLE queue_items ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"
+        )
+    if "schedule_entry_id" not in columns:
+        connection.execute("ALTER TABLE queue_items ADD COLUMN schedule_entry_id TEXT")
+    connection.commit()
+
+
 def load_state(path: Path) -> AppState:
     path.parent.mkdir(parents=True, exist_ok=True)
     legacy_json_path = path.with_suffix(".json")
@@ -342,6 +373,7 @@ def load_state(path: Path) -> AppState:
         _ensure_schema(connection)
         _migrate_enabled_fired_to_status(connection)
         _migrate_schedule_entries_for_cron(connection)
+        _migrate_queue_items_metadata(connection)
         if not _is_legacy_migration_done(connection):
             if not _database_has_data(connection) and legacy_json_path.exists():
                 legacy_state = _load_legacy_json_state(legacy_json_path)
@@ -355,4 +387,5 @@ def save_state(path: Path, state: AppState) -> None:
     with _connect(path) as connection:
         _ensure_schema(connection)
         _migrate_schedule_entries_for_cron(connection)
+        _migrate_queue_items_metadata(connection)
         _write_state(connection, state)
