@@ -56,6 +56,14 @@ from .models import (
     ScheduleEntry,
 )
 from .player import MediaPlayerController
+from .schedule_logic import (
+    active_schedule_entry_at,
+    normalize_overdue_one_shots,
+    normalized_start,
+    restore_active_missed_one_shots,
+    schedule_entry_end_at,
+    schedule_entry_window_details,
+)
 from .scheduler import RadioScheduler
 from .storage import load_state, save_state
 
@@ -833,27 +841,13 @@ class MainWindow(QMainWindow):
         reference_time: datetime,
         eligible_statuses: set[str],
     ) -> tuple[int, list[str]]:
-        normalized = 0
-        details: list[str] = []
-        entries = sorted(
+        normalized_entries = normalize_overdue_one_shots(
             self._schedule_entries,
-            key=lambda entry: self._normalized_start(entry.start_at),
+            reference_time,
+            eligible_statuses,
         )
-        for index, entry in enumerate(entries):
-            if not entry.one_shot:
-                continue
-            start_at = self._normalized_start(entry.start_at)
-            if start_at >= reference_time:
-                continue
-            if entry.status not in eligible_statuses:
-                continue
-            end_at = self._schedule_entry_end_at(entries, index)
-            if end_at is not None and reference_time < end_at:
-                continue
-            if end_at is None:
-                continue
-            entry.status = SCHEDULE_STATUS_MISSED
-            normalized += 1
+        details: list[str] = []
+        for entry, start_at, end_at in normalized_entries[:5]:
             if len(details) < 5:
                 start_label = start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
                 end_label = end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -862,7 +856,7 @@ class MainWindow(QMainWindow):
                     f"Marked missed '{self._media_log_name(entry.media_id)}': "
                     f"start={start_label}, end={end_label}, checked_at={now_label}"
                 )
-        return normalized, details
+        return len(normalized_entries), details
 
     def _append_normalized_missed_logs(self, normalized: int, details: list[str]) -> None:
         for detail in details:
@@ -872,23 +866,11 @@ class MainWindow(QMainWindow):
             self._append_log(f"Marked missed details omitted for {remaining} additional item(s)")
 
     def _restore_active_missed_one_shots(self, reference_time: datetime) -> int:
-        restored = 0
-        entries = sorted(
+        restored_entries = restore_active_missed_one_shots(
             self._schedule_entries,
-            key=lambda entry: self._normalized_start(entry.start_at),
+            reference_time,
         )
-        for index, entry in enumerate(entries):
-            if not entry.one_shot or entry.status != SCHEDULE_STATUS_MISSED:
-                continue
-            start_at = self._normalized_start(entry.start_at)
-            if start_at > reference_time:
-                continue
-            end_at = self._schedule_entry_end_at(entries, index)
-            if end_at is None or reference_time >= end_at:
-                continue
-            entry.status = SCHEDULE_STATUS_PENDING
-            restored += 1
-        return restored
+        return len(restored_entries)
 
     def _refresh_urls_list(self) -> None:
         self._urls_table.setRowCount(0)
@@ -1319,9 +1301,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _normalized_start(start_at: datetime) -> datetime:
-        if start_at.tzinfo is None:
-            return start_at.replace(tzinfo=datetime.now().astimezone().tzinfo)
-        return start_at
+        return normalized_start(start_at)
 
     @staticmethod
     def _format_duration(duration_seconds: int | None) -> str:
@@ -1371,36 +1351,7 @@ class MainWindow(QMainWindow):
         self,
         entry: ScheduleEntry,
     ) -> tuple[datetime, datetime | None, str]:
-        entries = sorted(
-            self._schedule_entries,
-            key=lambda current_entry: self._normalized_start(current_entry.start_at),
-        )
-        entry_index = next(
-            (index for index, current_entry in enumerate(entries) if current_entry.id == entry.id),
-            None,
-        )
-        start_at = self._normalized_start(entry.start_at)
-        if entry_index is None:
-            return start_at, None, "Computed window unavailable"
-
-        duration_end_at: datetime | None = None
-        next_entry_start_at: datetime | None = None
-        if entry.duration is not None:
-            duration_end_at = start_at + timedelta(seconds=max(0, entry.duration))
-        if entry_index + 1 < len(entries):
-            next_entry_start_at = self._normalized_start(entries[entry_index + 1].start_at)
-
-        end_at = self._schedule_entry_end_at(entries, entry_index)
-        if end_at is None:
-            end_reason = "No duration and no next scheduled item"
-        else:
-            reason_parts = []
-            if duration_end_at is not None and end_at == duration_end_at:
-                reason_parts.append("media duration")
-            if next_entry_start_at is not None and end_at == next_entry_start_at:
-                reason_parts.append("next scheduled item")
-            end_reason = " and ".join(reason_parts) if reason_parts else "computed schedule boundary"
-        return start_at, end_at, end_reason
+        return schedule_entry_window_details(self._schedule_entries, entry.id)
 
     def _schedule_log_summary(self, reference_time: datetime, limit: int = 5) -> str:
         entries = sorted(
@@ -2162,35 +2113,14 @@ class MainWindow(QMainWindow):
         self._update_player_visual_state()
 
     def _active_schedule_entry_at(self, now: datetime) -> tuple[ScheduleEntry, datetime] | None:
-        entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
-        for index, entry in enumerate(entries):
-            start_at = self._normalized_start(entry.start_at)
-            if now < start_at:
-                break
-
-            end_at = self._schedule_entry_end_at(entries, index)
-            if end_at is not None and now >= end_at:
-                continue
-            if entry.status == SCHEDULE_STATUS_DISABLED:
-                return None
-            return entry, start_at
-        return None
+        return active_schedule_entry_at(self._schedule_entries, now)
 
     def _schedule_entry_end_at(
         self,
         entries: list[ScheduleEntry],
         index: int,
     ) -> datetime | None:
-        entry = entries[index]
-        start_at = self._normalized_start(entry.start_at)
-        end_candidates: list[datetime] = []
-        if entry.duration is not None:
-            end_candidates.append(start_at + timedelta(seconds=max(0, entry.duration)))
-        if index + 1 < len(entries):
-            end_candidates.append(self._normalized_start(entries[index + 1].start_at))
-        if not end_candidates:
-            return None
-        return min(end_candidates)
+        return schedule_entry_end_at(entries, index)
 
     @Slot(object)
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:

@@ -5,6 +5,7 @@ from datetime import datetime
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from .models import SCHEDULE_STATUS_PENDING, ScheduleEntry
+from .schedule_logic import normalized_start
 
 
 class RadioScheduler(QObject):
@@ -19,7 +20,7 @@ class RadioScheduler(QObject):
         self._timer.timeout.connect(self._tick)
 
     def set_entries(self, entries: list[ScheduleEntry]) -> None:
-        self._entries = sorted(entries, key=self._normalized_start)
+        self._entries = sorted(entries, key=lambda entry: normalized_start(entry.start_at))
 
     def start(self) -> None:
         if not self._timer.isActive():
@@ -34,14 +35,8 @@ class RadioScheduler(QObject):
         for entry in self._entries:
             if entry.status != SCHEDULE_STATUS_PENDING:
                 continue
-            start_at = self._normalized_start(entry)
+            start_at = normalized_start(entry.start_at, now)
 
             if now >= start_at:
                 self.log.emit(f"Schedule triggered at {now.isoformat(timespec='seconds')}: {entry.id}")
                 self.schedule_triggered.emit(entry)
-
-    @staticmethod
-    def _normalized_start(entry: ScheduleEntry) -> datetime:
-        if entry.start_at.tzinfo is None:
-            return entry.start_at.replace(tzinfo=datetime.now().astimezone().tzinfo)
-        return entry.start_at

@@ -32,6 +32,7 @@ Main runtime state file:
 - `radioqt/models.py`: dataclasses and schedule status constants
 - `radioqt/cron.py`: custom 6-field CRON parser and iterator
 - `radioqt/player.py`: wrapper around `QMediaPlayer`
+- `radioqt/schedule_logic.py`: pure scheduling helpers extracted from UI logic
 - `radioqt/scheduler.py`: timer-based schedule trigger engine
 - `radioqt/storage.py`: SQLite persistence and legacy JSON migration
 - `radioqt/ui.py`: almost all application behavior and UI
@@ -184,7 +185,24 @@ Behavior:
 Important:
 
 - the scheduler itself does not resolve collisions, end times, or queue rules
-- all playback consequences live in `ui.py`
+- timing normalization is shared through `radioqt/schedule_logic.py`
+- all playback consequences still live in `ui.py`
+
+## Schedule Logic Module
+
+Implemented in `radioqt/schedule_logic.py`.
+
+This module now contains the pure scheduling computations that were previously embedded in `ui.py`:
+
+- `normalized_start(...)`
+- `sort_schedule_entries(...)`
+- `schedule_entry_end_at(...)`
+- `active_schedule_entry_at(...)`
+- `schedule_entry_window_details(...)`
+- `normalize_overdue_one_shots(...)`
+- `restore_active_missed_one_shots(...)`
+
+This is the safest place to keep evolving schedule rules without mixing them with Qt widget code.
 
 ## UI Structure
 
@@ -498,6 +516,7 @@ These are now part of the current codebase and should be preserved:
 9. Diagnostic logs now include active-entry timing/offset details on `Play` and sampled details when overdue items are normalized to `missed`.
 10. The Duration column now distinguishes formatted media duration, remote streams, missing media/files, and unknown probe failures.
 11. Runtime logs can now be exported from the Help menu for troubleshooting.
+12. Core pure scheduling computations were extracted from `ui.py` into `radioqt/schedule_logic.py`.
 
 ## Places Most Likely To Need Care
 
@@ -571,6 +590,7 @@ This section is intentionally operational and should be updated after important 
 - Editing a media item or removing one can have broad side effects because schedule rows, CRON rules, queue entries, and current playback all reference the same `media_id`.
 - The UI currently exposes status and hard-sync editing directly inside tables, which is convenient but increases the chance of subtle state interactions with CRON-managed rows.
 - Logging is user-friendly now, but it is still not structured; troubleshooting complex timing issues can require inspecting the SQLite database directly.
+- Scheduling logic is no longer fully trapped in `ui.py`, but there is still significant schedule/UI coordination there.
 
 ### High-Value TODO
 
@@ -581,7 +601,7 @@ This section is intentionally operational and should be updated after important 
   - overdue/missed normalization
   - restore-from-missed behavior
   - play-from-offset behavior
-- Extract scheduling logic from `MainWindow` into a pure-Python service module that can be tested without Qt widgets.
+- Continue extracting remaining schedule/UI coordination from `MainWindow` now that core computations live in `radioqt/schedule_logic.py`.
 - Extract media library actions from `ui.py` into their own module.
 - Consider adding a small diagnostics screen for troubleshooting user reports beyond raw log export.
 
