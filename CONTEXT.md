@@ -486,6 +486,7 @@ These are now part of the current codebase and should be preserved:
 4. Active items incorrectly persisted as `missed` are restored on startup / play.
 5. Oversized schedule log output was reduced to a compact summary.
 6. Duration tooltip explains whether metadata was read or unavailable.
+7. Schedule tooltip shows computed start/end window and whether the end comes from media duration or the next scheduled item.
 
 ## Places Most Likely To Need Care
 
@@ -551,6 +552,15 @@ This section is intentionally operational and should be updated after important 
 - Remote streams/URLs do not expose duration in the current implementation, so schedule duration may remain unknown for those items.
 - The scheduler is timer-driven and simple; if future logic becomes more complex, duplicate-trigger and state-transition bugs will need extra care.
 - Fullscreen behavior is intentionally defensive and may behave differently across platforms/backends.
+- The current CRON runtime window only materializes occurrences for yesterday, today, and tomorrow, so any future feature that expects a long visible horizon in the Date Time tab will need a wider generation strategy.
+- Manual schedule entries created in the past are immediately marked `missed`; that behavior is intentional now, but it may surprise users expecting manual backfill/recovery playback.
+- `QMediaPlayer` seek behavior can vary by backend/platform, so play-from-offset is implemented defensively but still depends on Qt multimedia backend reliability.
+- Schedule persistence is stateful enough that an old bad status in SQLite can affect current behavior until startup/play recovery logic corrects it.
+- The active-entry algorithm uses the earliest of `start + duration` and `next entry start`, so overlapping schedules are effectively truncated by the next entry even if the media file is longer.
+- Queue entries store only `media_id`, not the original scheduling context, so queued scheduled playback does not preserve the original schedule row identity once it moves into the queue.
+- Editing a media item or removing one can have broad side effects because schedule rows, CRON rules, queue entries, and current playback all reference the same `media_id`.
+- The UI currently exposes status and hard-sync editing directly inside tables, which is convenient but increases the chance of subtle state interactions with CRON-managed rows.
+- Logging is user-friendly now, but it is still not structured; troubleshooting complex timing issues can require inspecting the SQLite database directly.
 
 ### High-Value TODO
 
@@ -567,8 +577,10 @@ This section is intentionally operational and should be updated after important 
   - chosen active entry
   - computed `start_at`, `end_at`, and `offset_ms`
   - reason why an entry was marked `missed`
+- Add a dedicated overlap/conflict policy note in the UI so users know that the next scheduled item can cut off the previous one.
 - Consider distinguishing `duration unknown`, `duration probe failed`, and `remote stream duration unavailable` more explicitly in the UI model.
 - Consider adding a small diagnostics screen or log export for troubleshooting user reports.
+- Consider persisting richer queue metadata if future behavior needs to know whether a queued item came from manual queueing or from a scheduled trigger.
 
 ### Session Notes
 

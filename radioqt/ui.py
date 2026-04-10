@@ -600,6 +600,11 @@ class MainWindow(QMainWindow):
         )
         filter_row.addWidget(QLabel("Date"))
         filter_row.addWidget(self._schedule_date_selector)
+        self._schedule_focus_checkbox = QCheckBox("Focus current program")
+        self._schedule_focus_checkbox.setToolTip(
+            "Automatically keep the current schedule entry selected in the table."
+        )
+        filter_row.addWidget(self._schedule_focus_checkbox)
         filter_row.addStretch()
 
         self._schedule_table = QTableWidget(datetime_tab)
@@ -617,11 +622,6 @@ class MainWindow(QMainWindow):
         buttons_row = QHBoxLayout()
         self._add_schedule_button = QPushButton("Schedule Selected Media")
         buttons_row.addWidget(self._add_schedule_button)
-        self._schedule_focus_checkbox = QCheckBox("Focus current program")
-        self._schedule_focus_checkbox.setToolTip(
-            "Automatically keep the current schedule entry selected in the table."
-        )
-        buttons_row.addWidget(self._schedule_focus_checkbox)
         buttons_row.addStretch()
 
         datetime_layout.addLayout(filter_row)
@@ -1083,7 +1083,8 @@ class MainWindow(QMainWindow):
                 else "Manual schedule"
             )
             duration_tooltip = self._duration_tooltip(media_source, entry.duration)
-            tooltip = f"{media_source}\n{origin_label}\n{duration_tooltip}"
+            window_tooltip = self._schedule_window_tooltip(entry)
+            tooltip = f"{media_source}\n{origin_label}\n{duration_tooltip}\n{window_tooltip}"
             palette = self._schedule_entry_palette(entry, now)
 
             start_item = QTableWidgetItem(start_label)
@@ -1308,6 +1309,46 @@ class MainWindow(QMainWindow):
         if url.isValid() and url.scheme() and url.scheme().lower() != "file":
             return "Duration unavailable for remote streams/URLs"
         return "Duration unavailable: ffprobe/ffmpeg could not read this file"
+
+    def _schedule_window_tooltip(self, entry: ScheduleEntry) -> str:
+        entries = sorted(
+            self._schedule_entries,
+            key=lambda current_entry: self._normalized_start(current_entry.start_at),
+        )
+        entry_index = next(
+            (index for index, current_entry in enumerate(entries) if current_entry.id == entry.id),
+            None,
+        )
+        if entry_index is None:
+            return "Computed window unavailable"
+
+        start_at = self._normalized_start(entry.start_at)
+        duration_end_at: datetime | None = None
+        next_entry_start_at: datetime | None = None
+        if entry.duration is not None:
+            duration_end_at = start_at + timedelta(seconds=max(0, entry.duration))
+        if entry_index + 1 < len(entries):
+            next_entry_start_at = self._normalized_start(entries[entry_index + 1].start_at)
+
+        end_at = self._schedule_entry_end_at(entries, entry_index)
+        if end_at is None:
+            end_label = "Open-ended"
+            end_reason = "No duration and no next scheduled item"
+        else:
+            end_label = end_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+            reason_parts = []
+            if duration_end_at is not None and end_at == duration_end_at:
+                reason_parts.append("media duration")
+            if next_entry_start_at is not None and end_at == next_entry_start_at:
+                reason_parts.append("next scheduled item")
+            end_reason = " and ".join(reason_parts) if reason_parts else "computed schedule boundary"
+
+        start_label = start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        return (
+            f"Computed start: {start_label}\n"
+            f"Computed end: {end_label}\n"
+            f"End reason: {end_reason}"
+        )
 
     def _schedule_log_summary(self, reference_time: datetime, limit: int = 5) -> str:
         entries = sorted(
