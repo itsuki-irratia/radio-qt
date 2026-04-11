@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 import math
 from pathlib import Path
 import subprocess
+import time
 from uuid import NAMESPACE_URL, uuid5
 
 from PySide6.QtCore import QDate, QDateTime, QModelIndex, QObject, QSize, Qt, QTimer, Signal, Slot, QEvent
@@ -143,6 +144,13 @@ class MainWindow(QMainWindow):
         self._cron_refresh_timer.setInterval(30000)
         self._schedule_focus_timer = QTimer(self)
         self._schedule_focus_timer.setInterval(1000)
+        self._volume_fade_timer = QTimer(self)
+        self._volume_fade_timer.setInterval(40)
+        self._volume_fade_started_at = 0.0
+        self._volume_fade_duration_ms = 0
+        self._volume_fade_start_volume = 0
+        self._volume_fade_target_volume = 0
+        self._last_nonzero_volume = 100
 
         self._build_ui()
         self._build_menu_bar()
@@ -216,18 +224,27 @@ class MainWindow(QMainWindow):
         controls_layout = QHBoxLayout()
         self._play_button = QPushButton("Play")
         self._stop_button = QPushButton("Stop")
+        controls_layout.addWidget(self._play_button)
+        controls_layout.addWidget(self._stop_button)
+        controls_layout.addStretch()
+
+        volume_layout = QHBoxLayout()
+        self._mute_button = QPushButton("Mute")
+        self._mute_button.setCheckable(True)
+        self._fade_in_button = QPushButton("Fade In")
+        self._fade_out_button = QPushButton("Fade Out")
+        volume_layout.addWidget(self._mute_button)
+        volume_layout.addWidget(self._fade_in_button)
+        volume_layout.addWidget(self._fade_out_button)
+        volume_layout.addWidget(QLabel("Volume"))
         self._volume_slider = QSlider(Qt.Horizontal)
         self._volume_slider.setRange(0, 100)
         self._volume_slider.setValue(100)
-        controls_layout.addWidget(self._play_button)
-        controls_layout.addWidget(self._stop_button)
-        controls_layout.addWidget(QLabel("Volume"))
-        controls_layout.addWidget(self._volume_slider)
+        self._volume_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        volume_layout.addWidget(self._volume_slider, 1)
         self._volume_label = QLabel("100%")
-        controls_layout.addWidget(self._volume_label)
-        self._volume_slider.valueChanged.connect(
-            lambda v: self._volume_label.setText(f"{v}%")
-        )
+        volume_layout.addWidget(self._volume_label)
+        self._volume_slider.valueChanged.connect(self._on_volume_slider_value_changed)
 
         panels_layout = QHBoxLayout()
         panels_layout.addWidget(self._build_library_panel(), 1)
@@ -242,6 +259,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self._player_display, 2)
         root_layout.addLayout(now_playing_layout)
         root_layout.addLayout(controls_layout)
+        root_layout.addLayout(volume_layout)
         root_layout.addLayout(panels_layout, 7)
         root_layout.addWidget(self._log_view)
 
@@ -367,15 +385,13 @@ class MainWindow(QMainWindow):
         self._schedule_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self._schedule_table.customContextMenuRequested.connect(self._on_schedule_context_menu)
 
-        buttons_row = QHBoxLayout()
         self._add_schedule_button = QPushButton("Schedule Selected Media")
-        buttons_row.addWidget(self._add_schedule_button)
-        buttons_row.addStretch()
+        self._add_schedule_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         datetime_layout.addLayout(filter_row)
         datetime_layout.addWidget(self._schedule_overlap_note)
         datetime_layout.addWidget(self._schedule_table)
-        datetime_layout.addLayout(buttons_row)
+        datetime_layout.addWidget(self._add_schedule_button)
         self._schedule_tabs.addTab(datetime_tab, "Date Time")
 
         # --- CRON tab (placeholder for CRON-based scheduling) ---
@@ -423,7 +439,11 @@ class MainWindow(QMainWindow):
 
         self._play_button.clicked.connect(self._on_play_clicked)
         self._stop_button.clicked.connect(self._on_stop_clicked)
+        self._mute_button.toggled.connect(self._on_mute_toggled)
+        self._fade_in_button.clicked.connect(self._on_volume_fade_in_clicked)
+        self._fade_out_button.clicked.connect(self._on_volume_fade_out_clicked)
         self._volume_slider.valueChanged.connect(self._player.set_volume)
+        self._volume_fade_timer.timeout.connect(self._on_volume_fade_tick)
 
         self._player.media_started.connect(self._on_media_started)
         self._player.media_finished.connect(self._on_media_finished)
@@ -2183,6 +2203,110 @@ class MainWindow(QMainWindow):
         self._current_playback_position_ms = max(0, position_ms)
         self._update_now_playing_label()
 
+    @Slot(int)
+    def _on_volume_slider_value_changed(self, value: int) -> None:
+        self._volume_label.setText(f"{value}%")
+        if value > 0:
+            # Keep the "intended" non-zero volume stable while fading.
+            # Otherwise transitional values (1%, 2%, ...) can overwrite it.
+            if (
+                not self._volume_fade_timer.isActive()
+                or value == self._volume_fade_target_volume
+            ):
+                self._last_nonzero_volume = value
+            if self._mute_button.isChecked():
+                self._mute_button.blockSignals(True)
+                self._mute_button.setChecked(False)
+                self._mute_button.blockSignals(False)
+
+    def _start_volume_fade(
+        self,
+        *,
+        start_volume: int,
+        target_volume: int,
+        duration_ms: int,
+    ) -> None:
+        normalized_start = max(0, min(100, start_volume))
+        normalized_target = max(0, min(100, target_volume))
+        self._volume_fade_timer.stop()
+        self._volume_fade_start_volume = normalized_start
+        self._volume_fade_target_volume = normalized_target
+        self._volume_fade_duration_ms = max(1, duration_ms)
+        self._volume_slider.setValue(normalized_start)
+        if normalized_start == normalized_target:
+            return
+        self._volume_fade_started_at = time.monotonic()
+        self._volume_fade_timer.start()
+
+    @Slot()
+    def _on_volume_fade_tick(self) -> None:
+        elapsed_ms = max(0, int((time.monotonic() - self._volume_fade_started_at) * 1000))
+        progress = min(1.0, elapsed_ms / self._volume_fade_duration_ms)
+        next_value = int(
+            round(
+                self._volume_fade_start_volume
+                + (self._volume_fade_target_volume - self._volume_fade_start_volume) * progress
+            )
+        )
+        if self._volume_slider.value() != next_value:
+            self._volume_slider.setValue(next_value)
+        if progress < 1.0:
+            return
+        self._volume_fade_timer.stop()
+        if self._volume_fade_target_volume <= 0:
+            self._mute_button.blockSignals(True)
+            self._mute_button.setChecked(True)
+            self._mute_button.blockSignals(False)
+        elif self._mute_button.isChecked():
+            self._mute_button.blockSignals(True)
+            self._mute_button.setChecked(False)
+            self._mute_button.blockSignals(False)
+
+    @Slot(bool)
+    def _on_mute_toggled(self, checked: bool) -> None:
+        self._volume_fade_timer.stop()
+        if checked:
+            current = self._volume_slider.value()
+            if current > 0:
+                self._last_nonzero_volume = current
+            self._volume_slider.setValue(0)
+            return
+        restore_volume = self._last_nonzero_volume if self._last_nonzero_volume > 0 else 100
+        self._volume_slider.setValue(restore_volume)
+
+    @Slot()
+    def _on_volume_fade_in_clicked(self) -> None:
+        current_volume = self._volume_slider.value()
+        target_volume = current_volume
+        if current_volume <= 0:
+            target_volume = self._last_nonzero_volume if self._last_nonzero_volume > 0 else 100
+        elif current_volume <= 1 and self._last_nonzero_volume > current_volume:
+            # Recover from edge cases where slider got stuck near zero.
+            target_volume = self._last_nonzero_volume
+        if self._mute_button.isChecked():
+            self._mute_button.blockSignals(True)
+            self._mute_button.setChecked(False)
+            self._mute_button.blockSignals(False)
+        self._start_volume_fade(
+            start_volume=0,
+            target_volume=target_volume,
+            duration_ms=self._fade_in_duration_ms(),
+        )
+
+    @Slot()
+    def _on_volume_fade_out_clicked(self) -> None:
+        current_volume = self._volume_slider.value()
+        if current_volume <= 0:
+            self._mute_button.blockSignals(True)
+            self._mute_button.setChecked(True)
+            self._mute_button.blockSignals(False)
+            return
+        self._start_volume_fade(
+            start_volume=current_volume,
+            target_volume=0,
+            duration_ms=self._fade_out_duration_ms(),
+        )
+
     @Slot()
     def _on_play_clicked(self) -> None:
         now = datetime.now().astimezone()
@@ -2430,6 +2554,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         self._shutting_down = True
         self._scheduler.stop()
+        self._volume_fade_timer.stop()
         self._duration_probe_executor.shutdown(wait=False, cancel_futures=True)
         self._save_state()
         super().closeEvent(event)
