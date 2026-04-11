@@ -1734,9 +1734,6 @@ class MainWindow(QMainWindow):
             return
 
         previous_expression = cron_entry.expression
-        previous_hard_sync = cron_entry.hard_sync
-        previous_fade_in = cron_entry.fade_in
-        previous_fade_out = cron_entry.fade_out
 
         dialog = CronDialog(
             self,
@@ -1745,26 +1742,16 @@ class MainWindow(QMainWindow):
             initial_hard_sync=cron_entry.hard_sync,
             initial_fade_in=cron_entry.fade_in,
             initial_fade_out=cron_entry.fade_out,
+            expression_only=True,
         )
         if dialog.exec() != QDialog.Accepted:
             return
 
         updated_expression = dialog.expression()
-        updated_hard_sync = dialog.hard_sync()
-        updated_fade_in = dialog.fade_in()
-        updated_fade_out = dialog.fade_out()
-        if (
-            updated_expression == previous_expression
-            and updated_hard_sync == previous_hard_sync
-            and updated_fade_in == previous_fade_in
-            and updated_fade_out == previous_fade_out
-        ):
+        if updated_expression == previous_expression:
             return
 
         cron_entry.expression = updated_expression
-        cron_entry.hard_sync = updated_hard_sync
-        cron_entry.fade_in = updated_fade_in
-        cron_entry.fade_out = updated_fade_out
 
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         next_occurrence = self._next_cron_occurrence(cron_entry, datetime.now().astimezone())
@@ -1837,7 +1824,7 @@ class MainWindow(QMainWindow):
 
     def _on_schedule_hard_sync_changed(self, entry_id: str, value: str) -> None:
         updated_entry: ScheduleEntry | None = None
-        new_hard_sync = value == "Yes"
+        new_hard_sync = value == "True"
         for entry in self._schedule_entries:
             if entry.id == entry_id:
                 if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
@@ -1870,7 +1857,7 @@ class MainWindow(QMainWindow):
 
     def _on_schedule_fade_in_changed(self, entry_id: str, value: str) -> None:
         updated_entry: ScheduleEntry | None = None
-        fade_in_enabled = value == "Yes"
+        fade_in_enabled = value == "True"
         for entry in self._schedule_entries:
             if entry.id != entry_id:
                 continue
@@ -1904,7 +1891,7 @@ class MainWindow(QMainWindow):
 
     def _on_schedule_fade_out_changed(self, entry_id: str, value: str) -> None:
         updated_entry: ScheduleEntry | None = None
-        fade_out_enabled = value == "Yes"
+        fade_out_enabled = value == "True"
         for entry in self._schedule_entries:
             if entry.id != entry_id:
                 continue
@@ -1977,7 +1964,7 @@ class MainWindow(QMainWindow):
 
     def _on_cron_hard_sync_changed(self, cron_id: str, value: str) -> None:
         updated_entry: CronEntry | None = None
-        new_hard_sync = value == "Yes"
+        new_hard_sync = value == "True"
         for entry in self._cron_entries:
             if entry.id != cron_id:
                 continue
@@ -2001,7 +1988,7 @@ class MainWindow(QMainWindow):
 
     def _on_cron_fade_in_changed(self, cron_id: str, value: str) -> None:
         updated_entry: CronEntry | None = None
-        fade_in_enabled = value == "Yes"
+        fade_in_enabled = value == "True"
         for entry in self._cron_entries:
             if entry.id != cron_id:
                 continue
@@ -2025,7 +2012,7 @@ class MainWindow(QMainWindow):
 
     def _on_cron_fade_out_changed(self, cron_id: str, value: str) -> None:
         updated_entry: CronEntry | None = None
-        fade_out_enabled = value == "Yes"
+        fade_out_enabled = value == "True"
         for entry in self._cron_entries:
             if entry.id != cron_id:
                 continue

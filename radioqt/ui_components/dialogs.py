@@ -25,6 +25,15 @@ from ..cron import CronExpression, CronParseError
 
 def _cron_help_html() -> str:
     return """
+    <style>
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th, td {
+        padding: 6px;
+      }
+    </style>
     <h3>CRON format in RadioQt</h3>
     <p>RadioQt uses 6 fields:</p>
     <p><code>second minute hour day-of-month month day-of-week</code></p>
@@ -164,26 +173,31 @@ class CronDialog(QDialog):
         initial_hard_sync: bool = True,
         initial_fade_in: bool = False,
         initial_fade_out: bool = False,
+        expression_only: bool = False,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(dialog_title)
+        self.setMinimumSize(980, 640)
+        self._expression_only = bool(expression_only)
         self._expression_edit = QLineEdit(self)
         self._expression_edit.setPlaceholderText("sec min hour day month weekday")
         self._expression_edit.setText(initial_expression.strip())
-        self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
-        self._hard_sync_checkbox.setChecked(bool(initial_hard_sync))
-        self._fade_in_checkbox = QCheckBox("Fade in", self)
-        self._fade_in_checkbox.setChecked(bool(initial_fade_in))
-        self._fade_out_checkbox = QCheckBox("Fade out", self)
-        self._fade_out_checkbox.setChecked(bool(initial_fade_out))
-        self._show_examples_checkbox = QCheckBox("Show CRON Help examples", self)
+        self._hard_sync_checkbox: QCheckBox | None = None
+        self._fade_in_checkbox: QCheckBox | None = None
+        self._fade_out_checkbox: QCheckBox | None = None
+        if not self._expression_only:
+            self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
+            self._hard_sync_checkbox.setChecked(bool(initial_hard_sync))
+            self._fade_in_checkbox = QCheckBox("Fade in", self)
+            self._fade_in_checkbox.setChecked(bool(initial_fade_in))
+            self._fade_out_checkbox = QCheckBox("Fade out", self)
+            self._fade_out_checkbox.setChecked(bool(initial_fade_out))
         self._cron_examples_text = QTextBrowser(self)
         self._cron_examples_text.setReadOnly(True)
         self._cron_examples_text.setOpenExternalLinks(False)
         self._cron_examples_text.setHtml(_cron_help_html())
-        self._cron_examples_text.setVisible(False)
+        self._cron_examples_text.setVisible(True)
         self._cron_examples_text.setMinimumHeight(220)
-        self._show_examples_checkbox.toggled.connect(self._on_examples_toggled)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         buttons.accepted.connect(self._validate_and_accept)
@@ -192,28 +206,29 @@ class CronDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("CRON expression (with seconds):"))
         layout.addWidget(self._expression_edit)
-        layout.addWidget(QLabel("Use numeric values only. Month: 1-12. Weekday starts on Monday: 1-7."))
-        layout.addWidget(self._hard_sync_checkbox)
-        layout.addWidget(self._fade_in_checkbox)
-        layout.addWidget(self._fade_out_checkbox)
-        layout.addWidget(self._show_examples_checkbox)
+        if self._hard_sync_checkbox is not None:
+            layout.addWidget(self._hard_sync_checkbox)
+        if self._fade_in_checkbox is not None:
+            layout.addWidget(self._fade_in_checkbox)
+        if self._fade_out_checkbox is not None:
+            layout.addWidget(self._fade_out_checkbox)
         layout.addWidget(self._cron_examples_text)
         layout.addWidget(buttons)
-        layout.activate()
-        self._compact_size_hint = self.sizeHint()
-        self.resize(self._compact_size_hint)
+        initial_width = max(self.sizeHint().width(), 980)
+        initial_height = max(self.sizeHint().height(), 640)
+        self.resize(initial_width, initial_height)
 
     def expression(self) -> str:
         return self._expression_edit.text().strip()
 
     def hard_sync(self) -> bool:
-        return self._hard_sync_checkbox.isChecked()
+        return self._hard_sync_checkbox.isChecked() if self._hard_sync_checkbox is not None else False
 
     def fade_in(self) -> bool:
-        return self._fade_in_checkbox.isChecked()
+        return self._fade_in_checkbox.isChecked() if self._fade_in_checkbox is not None else False
 
     def fade_out(self) -> bool:
-        return self._fade_out_checkbox.isChecked()
+        return self._fade_out_checkbox.isChecked() if self._fade_out_checkbox is not None else False
 
     def _validate_and_accept(self) -> None:
         try:
@@ -222,20 +237,6 @@ class CronDialog(QDialog):
             QMessageBox.warning(self, "Invalid CRON", str(exc))
             return
         self.accept()
-
-    def _on_examples_toggled(self, checked: bool) -> None:
-        self._cron_examples_text.setVisible(checked)
-        layout = self.layout()
-        if layout is not None:
-            layout.activate()
-        if checked:
-            expanded_hint = self.sizeHint()
-            self.resize(
-                max(self.width(), expanded_hint.width()),
-                max(self.height(), expanded_hint.height()),
-            )
-            return
-        self.resize(self._compact_size_hint)
 
 
 class CronHelpDialog(QDialog):

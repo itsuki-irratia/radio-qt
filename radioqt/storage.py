@@ -7,6 +7,38 @@ import sqlite3
 from .models import AppState
 
 
+def _db_bool_to_python(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off", ""}:
+            return False
+    return default
+
+
+def _db_optional_bool_to_python(value: object) -> bool | None:
+    if value is None:
+        return None
+    return _db_bool_to_python(value, default=False)
+
+
+def _python_bool_to_db(value: bool) -> str:
+    return "True" if value else "False"
+
+
+def _python_optional_bool_to_db(value: bool | None) -> str | None:
+    if value is None:
+        return None
+    return _python_bool_to_db(value)
+
+
 def _connect(path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
@@ -28,14 +60,14 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             media_id TEXT NOT NULL,
             start_at TEXT NOT NULL,
             duration INTEGER,
-            hard_sync INTEGER NOT NULL DEFAULT 0,
-            fade_in INTEGER NOT NULL DEFAULT 0,
-            fade_out INTEGER NOT NULL DEFAULT 0,
+            hard_sync TEXT NOT NULL DEFAULT 'False',
+            fade_in TEXT NOT NULL DEFAULT 'False',
+            fade_out TEXT NOT NULL DEFAULT 'False',
             status TEXT NOT NULL DEFAULT 'pending',
             one_shot INTEGER NOT NULL DEFAULT 1,
             cron_id TEXT,
             cron_status_override TEXT,
-            cron_hard_sync_override INTEGER,
+            cron_hard_sync_override TEXT,
             position INTEGER NOT NULL
         );
 
@@ -46,9 +78,9 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             media_id TEXT NOT NULL,
             expression TEXT NOT NULL,
-            hard_sync INTEGER NOT NULL DEFAULT 0,
-            fade_in INTEGER NOT NULL DEFAULT 0,
-            fade_out INTEGER NOT NULL DEFAULT 0,
+            hard_sync TEXT NOT NULL DEFAULT 'False',
+            fade_in TEXT NOT NULL DEFAULT 'False',
+            fade_out TEXT NOT NULL DEFAULT 'False',
             enabled INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             position INTEGER NOT NULL
@@ -159,22 +191,16 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "media_id": row["media_id"],
             "start_at": row["start_at"],
             "duration": row["duration"],
-            "hard_sync": bool(row["hard_sync"]),
-            "fade_in": bool(row["fade_in"]),
-            "fade_out": bool(row["fade_out"]),
+            "hard_sync": _db_bool_to_python(row["hard_sync"]),
+            "fade_in": _db_bool_to_python(row["fade_in"]),
+            "fade_out": _db_bool_to_python(row["fade_out"]),
             "status": row["status"],
             "one_shot": bool(row["one_shot"]),
             "cron_id": row["cron_id"],
             "cron_status_override": row["cron_status_override"],
-            "cron_hard_sync_override": (
-                None if row["cron_hard_sync_override"] is None else bool(row["cron_hard_sync_override"])
-            ),
-            "cron_fade_in_override": (
-                None if row["cron_fade_in_override"] is None else bool(row["cron_fade_in_override"])
-            ),
-            "cron_fade_out_override": (
-                None if row["cron_fade_out_override"] is None else bool(row["cron_fade_out_override"])
-            ),
+            "cron_hard_sync_override": _db_optional_bool_to_python(row["cron_hard_sync_override"]),
+            "cron_fade_in_override": _db_optional_bool_to_python(row["cron_fade_in_override"]),
+            "cron_fade_out_override": _db_optional_bool_to_python(row["cron_fade_out_override"]),
         }
         for row in connection.execute(
             """
@@ -203,9 +229,9 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "id": row["id"],
             "media_id": row["media_id"],
             "expression": row["expression"],
-            "hard_sync": bool(row["hard_sync"]),
-            "fade_in": bool(row["fade_in"]),
-            "fade_out": bool(row["fade_out"]),
+            "hard_sync": _db_bool_to_python(row["hard_sync"]),
+            "fade_in": _db_bool_to_python(row["fade_in"]),
+            "fade_out": _db_bool_to_python(row["fade_out"]),
             "enabled": bool(row["enabled"]),
             "created_at": row["created_at"],
         }
@@ -285,28 +311,16 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
                     entry.media_id,
                     entry.start_at.isoformat(),
                     entry.duration,
-                    int(entry.hard_sync),
-                    int(entry.fade_in),
-                    int(entry.fade_out),
+                    _python_bool_to_db(entry.hard_sync),
+                    _python_bool_to_db(entry.fade_in),
+                    _python_bool_to_db(entry.fade_out),
                     entry.status,
                     int(entry.one_shot),
                     entry.cron_id,
                     entry.cron_status_override,
-                    (
-                        None
-                        if entry.cron_hard_sync_override is None
-                        else int(entry.cron_hard_sync_override)
-                    ),
-                    (
-                        None
-                        if entry.cron_fade_in_override is None
-                        else int(entry.cron_fade_in_override)
-                    ),
-                    (
-                        None
-                        if entry.cron_fade_out_override is None
-                        else int(entry.cron_fade_out_override)
-                    ),
+                    _python_optional_bool_to_db(entry.cron_hard_sync_override),
+                    _python_optional_bool_to_db(entry.cron_fade_in_override),
+                    _python_optional_bool_to_db(entry.cron_fade_out_override),
                     index,
                 )
                 for index, entry in enumerate(state.schedule_entries)
@@ -324,9 +338,9 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
                     entry.id,
                     entry.media_id,
                     entry.expression,
-                    int(entry.hard_sync),
-                    int(entry.fade_in),
-                    int(entry.fade_out),
+                    _python_bool_to_db(entry.hard_sync),
+                    _python_bool_to_db(entry.fade_in),
+                    _python_bool_to_db(entry.fade_out),
                     int(entry.enabled),
                     entry.created_at.isoformat(),
                     index,
@@ -437,11 +451,11 @@ def _migrate_schedule_entries_for_cron(connection: sqlite3.Connection) -> None:
     if "cron_status_override" not in columns:
         connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_status_override TEXT")
     if "cron_hard_sync_override" not in columns:
-        connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_hard_sync_override INTEGER")
+        connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_hard_sync_override TEXT")
     if "cron_fade_in_override" not in columns:
-        connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_fade_in_override INTEGER")
+        connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_fade_in_override TEXT")
     if "cron_fade_out_override" not in columns:
-        connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_fade_out_override INTEGER")
+        connection.execute("ALTER TABLE schedule_entries ADD COLUMN cron_fade_out_override TEXT")
     connection.commit()
 
 
@@ -452,11 +466,11 @@ def _migrate_schedule_entries_fade_flags(connection: sqlite3.Connection) -> None
     }
     if "fade_in" not in columns:
         connection.execute(
-            "ALTER TABLE schedule_entries ADD COLUMN fade_in INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE schedule_entries ADD COLUMN fade_in TEXT NOT NULL DEFAULT 'False'"
         )
     if "fade_out" not in columns:
         connection.execute(
-            "ALTER TABLE schedule_entries ADD COLUMN fade_out INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE schedule_entries ADD COLUMN fade_out TEXT NOT NULL DEFAULT 'False'"
         )
     connection.commit()
 
@@ -468,13 +482,257 @@ def _migrate_cron_entries_fade_flags(connection: sqlite3.Connection) -> None:
     }
     if "fade_in" not in columns:
         connection.execute(
-            "ALTER TABLE cron_entries ADD COLUMN fade_in INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE cron_entries ADD COLUMN fade_in TEXT NOT NULL DEFAULT 'False'"
         )
     if "fade_out" not in columns:
         connection.execute(
-            "ALTER TABLE cron_entries ADD COLUMN fade_out INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE cron_entries ADD COLUMN fade_out TEXT NOT NULL DEFAULT 'False'"
         )
     connection.commit()
+
+
+def _migrate_boolean_storage_to_text(connection: sqlite3.Connection) -> None:
+    truthy = "1, '1', 'true', 'TRUE', 'True', 'yes', 'YES', 'Yes', 'on', 'ON', 'On'"
+    with connection:
+        connection.execute(
+            f"""
+            UPDATE schedule_entries
+            SET hard_sync = CASE
+                WHEN hard_sync IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
+        connection.execute(
+            f"""
+            UPDATE schedule_entries
+            SET fade_in = CASE
+                WHEN fade_in IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
+        connection.execute(
+            f"""
+            UPDATE schedule_entries
+            SET fade_out = CASE
+                WHEN fade_out IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
+        connection.execute(
+            f"""
+            UPDATE schedule_entries
+            SET cron_hard_sync_override = CASE
+                WHEN cron_hard_sync_override IS NULL THEN NULL
+                WHEN cron_hard_sync_override IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
+        connection.execute(
+            f"""
+            UPDATE schedule_entries
+            SET cron_fade_in_override = CASE
+                WHEN cron_fade_in_override IS NULL THEN NULL
+                WHEN cron_fade_in_override IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
+        connection.execute(
+            f"""
+            UPDATE schedule_entries
+            SET cron_fade_out_override = CASE
+                WHEN cron_fade_out_override IS NULL THEN NULL
+                WHEN cron_fade_out_override IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
+        connection.execute(
+            f"""
+            UPDATE cron_entries
+            SET hard_sync = CASE
+                WHEN hard_sync IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
+        connection.execute(
+            f"""
+            UPDATE cron_entries
+            SET fade_in = CASE
+                WHEN fade_in IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
+        connection.execute(
+            f"""
+            UPDATE cron_entries
+            SET fade_out = CASE
+                WHEN fade_out IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
+
+
+def _migrate_boolean_column_types_to_text(connection: sqlite3.Connection) -> None:
+    schedule_columns = {
+        row[1]: str(row[2] or "").upper()
+        for row in connection.execute("PRAGMA table_info(schedule_entries)").fetchall()
+    }
+    cron_columns = {
+        row[1]: str(row[2] or "").upper()
+        for row in connection.execute("PRAGMA table_info(cron_entries)").fetchall()
+    }
+
+    schedule_target_columns = {
+        "hard_sync",
+        "fade_in",
+        "fade_out",
+        "cron_hard_sync_override",
+        "cron_fade_in_override",
+        "cron_fade_out_override",
+    }
+    cron_target_columns = {"hard_sync", "fade_in", "fade_out"}
+
+    needs_schedule_rebuild = any(
+        column in schedule_columns and "TEXT" not in schedule_columns[column]
+        for column in schedule_target_columns
+    )
+    needs_cron_rebuild = any(
+        column in cron_columns and "TEXT" not in cron_columns[column]
+        for column in cron_target_columns
+    )
+
+    if not needs_schedule_rebuild and not needs_cron_rebuild:
+        return
+
+    truthy = "1, '1', 'true', 'TRUE', 'True', 'yes', 'YES', 'Yes', 'on', 'ON', 'On'"
+    with connection:
+        if needs_schedule_rebuild:
+            connection.executescript(
+                f"""
+                CREATE TABLE schedule_entries_new (
+                    id TEXT PRIMARY KEY,
+                    media_id TEXT NOT NULL,
+                    start_at TEXT NOT NULL,
+                    duration INTEGER,
+                    hard_sync TEXT NOT NULL DEFAULT 'False',
+                    fade_in TEXT NOT NULL DEFAULT 'False',
+                    fade_out TEXT NOT NULL DEFAULT 'False',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    one_shot INTEGER NOT NULL DEFAULT 1,
+                    cron_id TEXT,
+                    cron_status_override TEXT,
+                    cron_hard_sync_override TEXT,
+                    cron_fade_in_override TEXT,
+                    cron_fade_out_override TEXT,
+                    position INTEGER NOT NULL
+                );
+
+                INSERT INTO schedule_entries_new (
+                    id,
+                    media_id,
+                    start_at,
+                    duration,
+                    hard_sync,
+                    fade_in,
+                    fade_out,
+                    status,
+                    one_shot,
+                    cron_id,
+                    cron_status_override,
+                    cron_hard_sync_override,
+                    cron_fade_in_override,
+                    cron_fade_out_override,
+                    position
+                )
+                SELECT
+                    id,
+                    media_id,
+                    start_at,
+                    duration,
+                    CASE WHEN hard_sync IN ({truthy}) THEN 'True' ELSE 'False' END,
+                    CASE WHEN fade_in IN ({truthy}) THEN 'True' ELSE 'False' END,
+                    CASE WHEN fade_out IN ({truthy}) THEN 'True' ELSE 'False' END,
+                    COALESCE(status, 'pending'),
+                    COALESCE(one_shot, 1),
+                    cron_id,
+                    cron_status_override,
+                    CASE
+                        WHEN cron_hard_sync_override IS NULL THEN NULL
+                        WHEN cron_hard_sync_override IN ({truthy}) THEN 'True'
+                        ELSE 'False'
+                    END,
+                    CASE
+                        WHEN cron_fade_in_override IS NULL THEN NULL
+                        WHEN cron_fade_in_override IN ({truthy}) THEN 'True'
+                        ELSE 'False'
+                    END,
+                    CASE
+                        WHEN cron_fade_out_override IS NULL THEN NULL
+                        WHEN cron_fade_out_override IN ({truthy}) THEN 'True'
+                        ELSE 'False'
+                    END,
+                    position
+                FROM schedule_entries;
+
+                DROP TABLE schedule_entries;
+                ALTER TABLE schedule_entries_new RENAME TO schedule_entries;
+                CREATE INDEX IF NOT EXISTS idx_schedule_entries_position
+                    ON schedule_entries(position);
+                """
+            )
+
+        if needs_cron_rebuild:
+            connection.executescript(
+                f"""
+                CREATE TABLE cron_entries_new (
+                    id TEXT PRIMARY KEY,
+                    media_id TEXT NOT NULL,
+                    expression TEXT NOT NULL,
+                    hard_sync TEXT NOT NULL DEFAULT 'False',
+                    fade_in TEXT NOT NULL DEFAULT 'False',
+                    fade_out TEXT NOT NULL DEFAULT 'False',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    position INTEGER NOT NULL
+                );
+
+                INSERT INTO cron_entries_new (
+                    id,
+                    media_id,
+                    expression,
+                    hard_sync,
+                    fade_in,
+                    fade_out,
+                    enabled,
+                    created_at,
+                    position
+                )
+                SELECT
+                    id,
+                    media_id,
+                    expression,
+                    CASE WHEN hard_sync IN ({truthy}) THEN 'True' ELSE 'False' END,
+                    CASE WHEN fade_in IN ({truthy}) THEN 'True' ELSE 'False' END,
+                    CASE WHEN fade_out IN ({truthy}) THEN 'True' ELSE 'False' END,
+                    COALESCE(enabled, 1),
+                    created_at,
+                    position
+                FROM cron_entries;
+
+                DROP TABLE cron_entries;
+                ALTER TABLE cron_entries_new RENAME TO cron_entries;
+                CREATE INDEX IF NOT EXISTS idx_cron_entries_position
+                    ON cron_entries(position);
+                """
+            )
 
 
 def _migrate_queue_items_metadata(connection: sqlite3.Connection) -> None:
@@ -501,7 +759,9 @@ def load_state(path: Path) -> AppState:
         _migrate_schedule_entries_for_cron(connection)
         _migrate_schedule_entries_fade_flags(connection)
         _migrate_cron_entries_fade_flags(connection)
+        _migrate_boolean_column_types_to_text(connection)
         _migrate_queue_items_metadata(connection)
+        _migrate_boolean_storage_to_text(connection)
         if not _is_legacy_migration_done(connection):
             if not _database_has_data(connection) and legacy_json_path.exists():
                 legacy_state = _load_legacy_json_state(legacy_json_path)
@@ -517,5 +777,7 @@ def save_state(path: Path, state: AppState) -> None:
         _migrate_schedule_entries_for_cron(connection)
         _migrate_schedule_entries_fade_flags(connection)
         _migrate_cron_entries_fade_flags(connection)
+        _migrate_boolean_column_types_to_text(connection)
         _migrate_queue_items_metadata(connection)
+        _migrate_boolean_storage_to_text(connection)
         _write_state(connection, state)
