@@ -590,6 +590,7 @@ These are now part of the current codebase and should be preserved:
 26. CRON runtime generation is constrained to today/tomorrow, capped to 100 in-memory occurrences, and refreshed dynamically.
 27. Startup loading was reorganized so the UI paints first, reducing perceived startup lag/black-screen time.
 28. Local media duration probing now uses a persistent signature cache, reducing repeated `ffprobe` calls across restarts.
+29. CRON rows can now be edited from the CRON table context menu (`Edit CRON Entry`) using the same validation rules as creation.
 
 ## Places Most Likely To Need Care
 

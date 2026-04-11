@@ -1681,6 +1681,9 @@ class MainWindow(QMainWindow):
         self._cron_table.selectRow(item.row())
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self._cron_table)
+        edit_action = QAction("Edit CRON Entry", menu)
+        edit_action.triggered.connect(self._edit_selected_cron)
+        menu.addAction(edit_action)
         remove_action = QAction("Remove CRON Entry", menu)
         remove_action.triggered.connect(self._remove_selected_cron)
         menu.addAction(remove_action)
@@ -1717,6 +1720,67 @@ class MainWindow(QMainWindow):
         self._save_state()
         self._append_log(
             f"Added CRON schedule '{entry.expression}' for media '{self._media_log_name(entry.media_id)}'"
+        )
+
+    @Slot()
+    def _edit_selected_cron(self) -> None:
+        cron_id = self._selected_cron_entry_id()
+        if cron_id is None:
+            QMessageBox.information(self, "No Selection", "Select a CRON row first.")
+            return
+
+        cron_entry = self._cron_entry_by_id(cron_id)
+        if cron_entry is None:
+            return
+
+        previous_expression = cron_entry.expression
+        previous_hard_sync = cron_entry.hard_sync
+        previous_fade_in = cron_entry.fade_in
+        previous_fade_out = cron_entry.fade_out
+
+        dialog = CronDialog(
+            self,
+            dialog_title="Edit CRON Entry",
+            initial_expression=cron_entry.expression,
+            initial_hard_sync=cron_entry.hard_sync,
+            initial_fade_in=cron_entry.fade_in,
+            initial_fade_out=cron_entry.fade_out,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        updated_expression = dialog.expression()
+        updated_hard_sync = dialog.hard_sync()
+        updated_fade_in = dialog.fade_in()
+        updated_fade_out = dialog.fade_out()
+        if (
+            updated_expression == previous_expression
+            and updated_hard_sync == previous_hard_sync
+            and updated_fade_in == previous_fade_in
+            and updated_fade_out == previous_fade_out
+        ):
+            return
+
+        cron_entry.expression = updated_expression
+        cron_entry.hard_sync = updated_hard_sync
+        cron_entry.fade_in = updated_fade_in
+        cron_entry.fade_out = updated_fade_out
+
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+        next_occurrence = self._next_cron_occurrence(cron_entry, datetime.now().astimezone())
+        if next_occurrence is not None:
+            self._set_schedule_filter_date(next_occurrence.date())
+            self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_cron_table()
+        self._refresh_schedule_table()
+        self._save_state()
+        self._append_log(
+            (
+                f"Updated CRON schedule '{previous_expression}' -> '{cron_entry.expression}' "
+                f"for media '{self._media_log_name(cron_entry.media_id)}'"
+            )
         )
 
     def _remove_selected_cron(self) -> None:

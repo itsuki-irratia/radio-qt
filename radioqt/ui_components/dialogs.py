@@ -67,15 +67,27 @@ class ScheduleDialog(QDialog):
 
 
 class CronDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        dialog_title: str = "Add CRON Entry",
+        initial_expression: str = "",
+        initial_hard_sync: bool = True,
+        initial_fade_in: bool = False,
+        initial_fade_out: bool = False,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Add CRON Entry")
+        self.setWindowTitle(dialog_title)
         self._expression_edit = QLineEdit(self)
         self._expression_edit.setPlaceholderText("sec min hour day month weekday")
+        self._expression_edit.setText(initial_expression.strip())
         self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
-        self._hard_sync_checkbox.setChecked(True)
+        self._hard_sync_checkbox.setChecked(bool(initial_hard_sync))
         self._fade_in_checkbox = QCheckBox("Fade in", self)
+        self._fade_in_checkbox.setChecked(bool(initial_fade_in))
         self._fade_out_checkbox = QCheckBox("Fade out", self)
+        self._fade_out_checkbox.setChecked(bool(initial_fade_out))
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         buttons.accepted.connect(self._validate_and_accept)
