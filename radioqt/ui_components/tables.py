@@ -40,6 +40,8 @@ def refresh_cron_table(
     media_items: dict[str, MediaItem],
     *,
     on_hard_sync_changed: Callable[[str, str], None],
+    on_fade_in_changed: Callable[[str, str], None],
+    on_fade_out_changed: Callable[[str, str], None],
     on_status_changed: Callable[[str, str], None],
 ) -> None:
     ordered_entries = sorted(entries, key=lambda entry: entry.created_at)
@@ -67,6 +69,24 @@ def refresh_cron_table(
         )
         cron_table.setCellWidget(row, 2, hard_sync_selector)
 
+        fade_in_selector = NoScrollComboBox(cron_table)
+        fade_in_selector.addItems(["Yes", "No"])
+        fade_in_selector.setCurrentText("Yes" if entry.fade_in else "No")
+        fade_in_selector.setToolTip(media_source)
+        fade_in_selector.currentTextChanged.connect(
+            lambda value, entry_id=entry.id: on_fade_in_changed(entry_id, value)
+        )
+        cron_table.setCellWidget(row, 3, fade_in_selector)
+
+        fade_out_selector = NoScrollComboBox(cron_table)
+        fade_out_selector.addItems(["Yes", "No"])
+        fade_out_selector.setCurrentText("Yes" if entry.fade_out else "No")
+        fade_out_selector.setToolTip(media_source)
+        fade_out_selector.currentTextChanged.connect(
+            lambda value, entry_id=entry.id: on_fade_out_changed(entry_id, value)
+        )
+        cron_table.setCellWidget(row, 4, fade_out_selector)
+
         status_selector = NoScrollComboBox(cron_table)
         status_selector.addItems(["Enabled", "Disabled"])
         status_selector.setCurrentText("Enabled" if entry.enabled else "Disabled")
@@ -74,7 +94,7 @@ def refresh_cron_table(
         status_selector.currentTextChanged.connect(
             lambda value, entry_id=entry.id: on_status_changed(entry_id, value)
         )
-        cron_table.setCellWidget(row, 3, status_selector)
+        cron_table.setCellWidget(row, 5, status_selector)
 
     cron_table.resizeColumnsToContents()
 

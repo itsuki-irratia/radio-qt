@@ -62,6 +62,8 @@ class CronEntry:
     media_id: str
     expression: str
     hard_sync: bool = False
+    fade_in: bool = False
+    fade_out: bool = False
     enabled: bool = True
     created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
@@ -71,12 +73,16 @@ class CronEntry:
         media_id: str,
         expression: str,
         hard_sync: bool = False,
+        fade_in: bool = False,
+        fade_out: bool = False,
     ) -> "CronEntry":
         return cls(
             id=str(uuid4()),
             media_id=media_id,
             expression=expression,
             hard_sync=hard_sync,
+            fade_in=fade_in,
+            fade_out=fade_out,
         )
 
     @classmethod
@@ -86,8 +92,10 @@ class CronEntry:
             id=data.get("id", str(uuid4())),
             media_id=data["media_id"],
             expression=data.get("expression", "").strip(),
-            hard_sync=data.get("hard_sync", False),
-            enabled=data.get("enabled", True),
+            hard_sync=bool(data.get("hard_sync", False)),
+            fade_in=bool(data.get("fade_in", False)),
+            fade_out=bool(data.get("fade_out", False)),
+            enabled=bool(data.get("enabled", True)),
             created_at=_parse_datetime(created_at_raw),
         )
 
@@ -97,6 +105,8 @@ class CronEntry:
             "media_id": self.media_id,
             "expression": self.expression,
             "hard_sync": self.hard_sync,
+            "fade_in": self.fade_in,
+            "fade_out": self.fade_out,
             "enabled": self.enabled,
             "created_at": self.created_at.isoformat(),
         }
@@ -116,6 +126,8 @@ class ScheduleEntry:
     cron_id: str | None = None
     cron_status_override: str | None = None
     cron_hard_sync_override: bool | None = None
+    cron_fade_in_override: bool | None = None
+    cron_fade_out_override: bool | None = None
 
     @classmethod
     def create(cls, media_id: str, start_at: datetime, hard_sync: bool = False) -> "ScheduleEntry":
@@ -123,6 +135,11 @@ class ScheduleEntry:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ScheduleEntry":
+        def _optional_bool(value: Any) -> bool | None:
+            if value is None:
+                return None
+            return bool(value)
+
         duration = None
         duration_raw = data.get("duration")
         if duration_raw is not None:
@@ -154,7 +171,9 @@ class ScheduleEntry:
             one_shot=data.get("one_shot", True),
             cron_id=data.get("cron_id"),
             cron_status_override=data.get("cron_status_override"),
-            cron_hard_sync_override=data.get("cron_hard_sync_override"),
+            cron_hard_sync_override=_optional_bool(data.get("cron_hard_sync_override")),
+            cron_fade_in_override=_optional_bool(data.get("cron_fade_in_override")),
+            cron_fade_out_override=_optional_bool(data.get("cron_fade_out_override")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -171,6 +190,8 @@ class ScheduleEntry:
             "cron_id": self.cron_id,
             "cron_status_override": self.cron_status_override,
             "cron_hard_sync_override": self.cron_hard_sync_override,
+            "cron_fade_in_override": self.cron_fade_in_override,
+            "cron_fade_out_override": self.cron_fade_out_override,
         }
 
 

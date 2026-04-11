@@ -70,6 +70,8 @@ class CronDialog(QDialog):
         self._expression_edit.setPlaceholderText("sec min hour day month weekday")
         self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
         self._hard_sync_checkbox.setChecked(True)
+        self._fade_in_checkbox = QCheckBox("Fade in", self)
+        self._fade_out_checkbox = QCheckBox("Fade out", self)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         buttons.accepted.connect(self._validate_and_accept)
@@ -81,6 +83,8 @@ class CronDialog(QDialog):
         layout.addWidget(QLabel("Example: 0 */15 * * * *"))
         layout.addWidget(QLabel("Use numeric values only. Month: 1-12. Weekday starts on Monday: 1-7."))
         layout.addWidget(self._hard_sync_checkbox)
+        layout.addWidget(self._fade_in_checkbox)
+        layout.addWidget(self._fade_out_checkbox)
         layout.addWidget(buttons)
 
     def expression(self) -> str:
@@ -88,6 +92,12 @@ class CronDialog(QDialog):
 
     def hard_sync(self) -> bool:
         return self._hard_sync_checkbox.isChecked()
+
+    def fade_in(self) -> bool:
+        return self._fade_in_checkbox.isChecked()
+
+    def fade_out(self) -> bool:
+        return self._fade_out_checkbox.isChecked()
 
     def _validate_and_accept(self) -> None:
         try:

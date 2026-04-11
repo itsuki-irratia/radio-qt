@@ -356,8 +356,10 @@ class MainWindow(QMainWindow):
         cron_layout = QVBoxLayout(cron_tab)
 
         self._cron_table = QTableWidget(cron_tab)
-        self._cron_table.setColumnCount(4)
-        self._cron_table.setHorizontalHeaderLabels(["CRON", "Media", "Hard Sync", "Status"])
+        self._cron_table.setColumnCount(6)
+        self._cron_table.setHorizontalHeaderLabels(
+            ["CRON", "Media", "Hard Sync", "Fade In", "Fade Out", "Status"]
+        )
         self._cron_table.horizontalHeader().setStretchLastSection(True)
         self._cron_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._cron_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -593,6 +595,8 @@ class MainWindow(QMainWindow):
             self._cron_entries,
             self._media_items,
             on_hard_sync_changed=self._on_cron_hard_sync_changed,
+            on_fade_in_changed=self._on_cron_fade_in_changed,
+            on_fade_out_changed=self._on_cron_fade_out_changed,
             on_status_changed=self._on_cron_status_changed,
         )
 
@@ -632,6 +636,14 @@ class MainWindow(QMainWindow):
             entry.hard_sync = cron_entry.hard_sync
         else:
             entry.hard_sync = entry.cron_hard_sync_override
+        if entry.cron_fade_in_override is None:
+            entry.fade_in = cron_entry.fade_in
+        else:
+            entry.fade_in = entry.cron_fade_in_override
+        if entry.cron_fade_out_override is None:
+            entry.fade_out = cron_entry.fade_out
+        else:
+            entry.fade_out = entry.cron_fade_out_override
 
         if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
             return
@@ -677,6 +689,8 @@ class MainWindow(QMainWindow):
                             media_id=cron_entry.media_id,
                             start_at=start_at,
                             hard_sync=cron_entry.hard_sync,
+                            fade_in=cron_entry.fade_in,
+                            fade_out=cron_entry.fade_out,
                             status=SCHEDULE_STATUS_PENDING,
                             one_shot=True,
                             cron_id=cron_entry.id,
@@ -1426,6 +1440,8 @@ class MainWindow(QMainWindow):
             media_id=media_id,
             expression=dialog.expression(),
             hard_sync=dialog.hard_sync(),
+            fade_in=dialog.fade_in(),
+            fade_out=dialog.fade_out(),
         )
         self._cron_entries.append(entry)
         self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
@@ -1535,6 +1551,15 @@ class MainWindow(QMainWindow):
                 continue
             if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
                 return
+            cron_entry = self._cron_entry_by_id(entry.cron_id)
+            if cron_entry is not None:
+                override_value = None if cron_entry.fade_in == fade_in_enabled else fade_in_enabled
+                if entry.cron_fade_in_override == override_value and entry.fade_in == fade_in_enabled:
+                    return
+                entry.cron_fade_in_override = override_value
+                entry.fade_in = fade_in_enabled
+                updated_entry = entry
+                break
             if entry.fade_in == fade_in_enabled:
                 return
             entry.fade_in = fade_in_enabled
@@ -1560,6 +1585,15 @@ class MainWindow(QMainWindow):
                 continue
             if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
                 return
+            cron_entry = self._cron_entry_by_id(entry.cron_id)
+            if cron_entry is not None:
+                override_value = None if cron_entry.fade_out == fade_out_enabled else fade_out_enabled
+                if entry.cron_fade_out_override == override_value and entry.fade_out == fade_out_enabled:
+                    return
+                entry.cron_fade_out_override = override_value
+                entry.fade_out = fade_out_enabled
+                updated_entry = entry
+                break
             if entry.fade_out == fade_out_enabled:
                 return
             entry.fade_out = fade_out_enabled
@@ -1638,6 +1672,54 @@ class MainWindow(QMainWindow):
         self._save_state()
         self._append_log(
             f"Set CRON hard sync for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
+        )
+
+    def _on_cron_fade_in_changed(self, cron_id: str, value: str) -> None:
+        updated_entry: CronEntry | None = None
+        fade_in_enabled = value == "Yes"
+        for entry in self._cron_entries:
+            if entry.id != cron_id:
+                continue
+            if entry.fade_in == fade_in_enabled:
+                return
+            entry.fade_in = fade_in_enabled
+            updated_entry = entry
+            break
+
+        if updated_entry is None:
+            return
+
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_schedule_table()
+        self._save_state()
+        self._append_log(
+            f"Set CRON fade in for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
+        )
+
+    def _on_cron_fade_out_changed(self, cron_id: str, value: str) -> None:
+        updated_entry: CronEntry | None = None
+        fade_out_enabled = value == "Yes"
+        for entry in self._cron_entries:
+            if entry.id != cron_id:
+                continue
+            if entry.fade_out == fade_out_enabled:
+                return
+            entry.fade_out = fade_out_enabled
+            updated_entry = entry
+            break
+
+        if updated_entry is None:
+            return
+
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
+        self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_schedule_table()
+        self._save_state()
+        self._append_log(
+            f"Set CRON fade out for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
         )
 
     def _on_cron_status_changed(self, cron_id: str, value: str) -> None:

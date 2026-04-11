@@ -89,6 +89,8 @@ Defined in `radioqt/models.py`.
   - `cron_id`
   - `cron_status_override`
   - `cron_hard_sync_override`
+  - `cron_fade_in_override`
+  - `cron_fade_out_override`
 
 Status constants:
 
@@ -99,7 +101,7 @@ Status constants:
 
 ### `CronEntry`
 
-- fields: `id`, `media_id`, `expression`, `hard_sync`, `enabled`, `created_at`
+- fields: `id`, `media_id`, `expression`, `hard_sync`, `fade_in`, `fade_out`, `enabled`, `created_at`
 
 ### `AppState`
 
@@ -138,6 +140,7 @@ Schema migration helpers:
 - old `enabled` / `fired` schedule fields are migrated into `status`
 - CRON-related schedule columns are added if missing
 - schedule fade columns (`fade_in` / `fade_out`) are added if missing
+- CRON entry fade columns (`fade_in` / `fade_out`) are added if missing
 
 ## CRON Semantics
 
@@ -292,6 +295,8 @@ CRON tab:
   - CRON
   - Media
   - Hard Sync
+  - Fade In
+  - Fade Out
   - Status
 
 Auto-focus:
@@ -320,13 +325,15 @@ Runtime generation window:
 
 CRON overrides:
 
-- generated occurrences inherit `media_id`, `hard_sync`, `cron_id`
-- per-occurrence status/hard-sync overrides are possible through:
+- generated occurrences inherit `media_id`, `hard_sync`, `fade_in`, `fade_out`, `cron_id`
+- per-occurrence status/hard-sync/fade overrides are possible through:
   - `cron_status_override`
   - `cron_hard_sync_override`
-- fade values are currently per-schedule-entry fields on `ScheduleEntry`
-  - generated CRON occurrences default to `fade_in=False` / `fade_out=False`
-  - they can be edited in the Date Time table and are persisted on those generated rows
+  - `cron_fade_in_override`
+  - `cron_fade_out_override`
+- fade values remain editable in Date Time for generated rows and now behave like hard-sync overrides:
+  - if the edited value matches the CRON rule, override is cleared
+  - if it differs, per-occurrence override is stored
 
 Protection:
 
