@@ -61,7 +61,11 @@ Startup path:
 
 Important environment behavior in `radioqt/main.py`:
 
-- `QT_MEDIA_BACKEND` defaults to `ffmpeg`
+- backend can be selected with `RADIOQT_MEDIA_BACKEND`:
+  - `auto` (default): let Qt choose backend
+  - `ffmpeg`, `gstreamer`, etc.: force explicit backend
+- backend detection scans both PySide6 plugin path and common system plugin roots (`/usr/lib/qt6/plugins`, `/usr/lib/qt/plugins`)
+- if a requested backend is unavailable, startup falls back to `ffmpeg` when that plugin is present
 - on Linux, hardware decoding is disabled by default unless `RADIOQT_DISABLE_HW_DECODING=0`
 - disabling hardware decode is a stability workaround for VAAPI issues
 
@@ -331,8 +335,10 @@ CRON-generated schedule entries:
 
 Runtime generation window:
 
-- the app refreshes CRON entries for `yesterday`, `today`, and `tomorrow`
-- the selected filter date may also trigger generation for that date
+- the app refreshes CRON entries only for `today` and `tomorrow`
+- CRON-generated rows outside that window are purged from in-memory schedule state
+- runtime CRON occurrences are capped to `100` entries in memory
+- remaining occurrences are loaded dynamically on refresh as time advances
 
 CRON overrides:
 
@@ -357,9 +363,9 @@ Schedule durations are recalculated in `_recalculate_schedule_durations()`.
 Current behavior:
 
 - `duration` comes from media metadata only
-- it is probed with `ffprobe`
-- fallback is parsing `ffmpeg -i` output
-- if both fail, duration is `None`
+- it is probed with external `ffprobe`
+- probing is asynchronous in background (does not block scheduler/play button/UI)
+- if probe fails or times out, duration is `None`
 - remote URLs are treated as having no duration
 
 Important recent fix:
@@ -440,6 +446,7 @@ Rules:
 - otherwise:
   - one-shot becomes `fired`
   - if `hard_sync` is true, current playback is interrupted
+  - scheduled playback start uses `start_position_ms` based on `now - start_at` to reduce late-start drift
   - if `hard_sync` is false and player is busy, media is queued
 
 ## Queue Rules
@@ -538,7 +545,7 @@ This part has broad `try/except` guards because Qt backend behavior can differ b
 
 ## Known Operational Constraints
 
-- only PySide6 is declared as a dependency; `ffprobe` / `ffmpeg` are assumed to exist if local duration probing should work
+- only PySide6 is declared as a runtime dependency
 - stream URLs do not get duration metadata
 - a lot of business logic lives in one large `ui.py`, so regressions often come from there
 - scheduler tick logic is simple and depends on up-to-date in-memory schedule entries
@@ -632,11 +639,12 @@ This section is intentionally operational and should be updated after important 
 
 - `radioqt/ui.py` is the main risk area because UI code, schedule rules, playback decisions, persistence coordination, and log behavior are all mixed in one file.
 - There are no automated tests yet, so scheduling regressions are easy to introduce.
-- Local duration probing depends on external `ffprobe` / `ffmpeg` binaries being available on the system.
+- Local duration probing depends on external `ffprobe` binary availability.
+- Probing duration with an auxiliary `QMediaPlayer` caused SIGSEGV on at least one Linux setup, so probing currently avoids that path.
 - Remote streams/URLs do not expose duration in the current implementation, so schedule duration may remain unknown for those items.
 - The scheduler is timer-driven and simple; if future logic becomes more complex, duplicate-trigger and state-transition bugs will need extra care.
 - Fullscreen behavior is intentionally defensive and may behave differently across platforms/backends.
-- The current CRON runtime window only materializes occurrences for yesterday, today, and tomorrow, so any future feature that expects a long visible horizon in the Date Time tab will need a wider generation strategy.
+- The current CRON runtime window only materializes occurrences for today and tomorrow, so any future feature that expects a long visible horizon in the Date Time tab will need a wider generation strategy.
 - Manual schedule entries created in the past are immediately marked `missed`; that behavior is intentional now, but it may surprise users expecting manual backfill/recovery playback.
 - `QMediaPlayer` seek behavior can vary by backend/platform, so play-from-offset is implemented defensively but still depends on Qt multimedia backend reliability.
 - Schedule persistence is stateful enough that an old bad status in SQLite can affect current behavior until startup/play recovery logic corrects it.
@@ -678,7 +686,8 @@ This section is intentionally operational and should be updated after important 
 - If a user says "duration is wrong", inspect:
   - `_recalculate_schedule_durations()`
   - `_media_duration_seconds()`
-  - `_probe_with_ffprobe()`
+  - `_request_media_duration_probe()`
+  - `_on_media_duration_probed()`
   - whether the source is a local file or remote URL
 - If a change seems correct in code but not in the running app, make sure the user has restarted the process so the new Python code is loaded.
 

@@ -1,0 +1,13 @@
+# System packages (not pip packages)
+# Install with your distro package manager.
+#
+# Arch / Manjaro example:
+#   sudo pacman -S --needed qt6-multimedia qt6-multimedia-ffmpeg qt6-multimedia-gstreamer gstreamer
+#
+# Required runtime:
+qt6-multimedia
+qt6-multimedia-ffmpeg
+
+# Optional backend (use with RADIOQT_MEDIA_BACKEND=gstreamer):
+qt6-multimedia-gstreamer
+gstreamer

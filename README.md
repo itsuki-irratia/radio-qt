@@ -10,6 +10,7 @@ RadioQt is a Python + Qt multimedia player for radio automation workflows:
 
 - Python 3.10+
 - Qt multimedia backend available on your system
+- System multimedia packages (see `requirements-system.txt`)
 
 ## Setup
 
@@ -45,6 +46,18 @@ If `state/radio_state.json` exists from an older version, it is migrated automat
 - If a media source is missing, the app logs the skip and continues.
 
 ## Linux troubleshooting
+
+- If you want to use the GStreamer backend on Arch/Manjaro, install:
+
+```bash
+sudo pacman -S --needed qt6-multimedia qt6-multimedia-ffmpeg qt6-multimedia-gstreamer gstreamer
+```
+
+- Then run:
+
+```bash
+RADIOQT_MEDIA_BACKEND=gstreamer python -m radioqt
+```
 
 - If you see repeated VAAPI decode errors (`invalid VAContextID`, `hardware accelerator failed to decode picture`), run with software decoding:
 
