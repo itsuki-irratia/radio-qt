@@ -23,6 +23,94 @@ from PySide6.QtWidgets import (
 from ..cron import CronExpression, CronParseError
 
 
+def _cron_help_html() -> str:
+    return """
+    <h3>CRON format in RadioQt</h3>
+    <p>RadioQt uses 6 fields:</p>
+    <p><code>second minute hour day-of-month month day-of-week</code></p>
+
+    <h4>Field order</h4>
+    <table border="1" cellspacing="0" cellpadding="6">
+      <tr>
+        <th><code>second</code></th>
+        <th><code>minute</code></th>
+        <th><code>hour</code></th>
+        <th><code>day-of-month</code></th>
+        <th><code>month</code></th>
+        <th><code>day-of-week</code></th>
+      </tr>
+      <tr>
+        <td><code>0-59</code></td>
+        <td><code>0-59</code></td>
+        <td><code>0-23</code></td>
+        <td><code>1-31</code></td>
+        <td><code>1-12</code></td>
+        <td><code>1-7</code></td>
+      </tr>
+    </table>
+
+    <h4>Supported syntax</h4>
+    <p><code>*</code> any value<br>
+    <code>,</code> list of values<br>
+    <code>-</code> range of values<br>
+    <code>/</code> step values</p>
+
+    <p>Use numeric values only.<br>
+    Month: <code>1-12</code><br>
+    Day-of-week starts on Monday:
+    <code>1=Monday 2=Tuesday 3=Wednesday 4=Thursday 5=Friday 6=Saturday 7=Sunday</code></p>
+
+    <h4>Examples by use</h4>
+    <table border="1" cellspacing="0" cellpadding="6">
+      <tr>
+        <th>Use</th>
+        <th>Expression</th>
+        <th>Meaning</th>
+      </tr>
+      <tr>
+        <td>Exact time</td>
+        <td><code>0 30 8 * * *</code></td>
+        <td>Every day at 08:30:00</td>
+      </tr>
+      <tr>
+        <td>Wildcard <code>*</code></td>
+        <td><code>0 * * * * *</code></td>
+        <td>Every minute, at second 0</td>
+      </tr>
+      <tr>
+        <td>List <code>,</code></td>
+        <td><code>0 0 18 * 1,6,12 *</code></td>
+        <td>Every day at 18:00:00, only in months 1, 6 and 12</td>
+      </tr>
+      <tr>
+        <td>Range <code>-</code></td>
+        <td><code>0 0 9 * * 1-5</code></td>
+        <td>Monday to Friday at 09:00:00</td>
+      </tr>
+      <tr>
+        <td>Step <code>/</code></td>
+        <td><code>0 */15 * * * *</code></td>
+        <td>Every 15 minutes</td>
+      </tr>
+      <tr>
+        <td>Specific day of month</td>
+        <td><code>30 0 12 1 * *</code></td>
+        <td>On day 1 of every month at 12:00:30</td>
+      </tr>
+      <tr>
+        <td>Specific weekday</td>
+        <td><code>0 0 6 * * 7</code></td>
+        <td>Every Sunday at 06:00:00</td>
+      </tr>
+      <tr>
+        <td>Combined range + step</td>
+        <td><code>0 0/10 9-17 * * 1-5</code></td>
+        <td>Every 10 minutes between 09:00 and 17:59, Monday to Friday</td>
+      </tr>
+    </table>
+    """
+
+
 class ScheduleDialog(QDialog):
     def __init__(
         self,
@@ -88,6 +176,14 @@ class CronDialog(QDialog):
         self._fade_in_checkbox.setChecked(bool(initial_fade_in))
         self._fade_out_checkbox = QCheckBox("Fade out", self)
         self._fade_out_checkbox.setChecked(bool(initial_fade_out))
+        self._show_examples_checkbox = QCheckBox("Show CRON Help examples", self)
+        self._cron_examples_text = QTextBrowser(self)
+        self._cron_examples_text.setReadOnly(True)
+        self._cron_examples_text.setOpenExternalLinks(False)
+        self._cron_examples_text.setHtml(_cron_help_html())
+        self._cron_examples_text.setVisible(False)
+        self._cron_examples_text.setMinimumHeight(220)
+        self._show_examples_checkbox.toggled.connect(self._on_examples_toggled)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         buttons.accepted.connect(self._validate_and_accept)
@@ -96,12 +192,16 @@ class CronDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("CRON expression (with seconds):"))
         layout.addWidget(self._expression_edit)
-        layout.addWidget(QLabel("Example: 0 */15 * * * *"))
         layout.addWidget(QLabel("Use numeric values only. Month: 1-12. Weekday starts on Monday: 1-7."))
         layout.addWidget(self._hard_sync_checkbox)
         layout.addWidget(self._fade_in_checkbox)
         layout.addWidget(self._fade_out_checkbox)
+        layout.addWidget(self._show_examples_checkbox)
+        layout.addWidget(self._cron_examples_text)
         layout.addWidget(buttons)
+        layout.activate()
+        self._compact_size_hint = self.sizeHint()
+        self.resize(self._compact_size_hint)
 
     def expression(self) -> str:
         return self._expression_edit.text().strip()
@@ -123,6 +223,20 @@ class CronDialog(QDialog):
             return
         self.accept()
 
+    def _on_examples_toggled(self, checked: bool) -> None:
+        self._cron_examples_text.setVisible(checked)
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        if checked:
+            expanded_hint = self.sizeHint()
+            self.resize(
+                max(self.width(), expanded_hint.width()),
+                max(self.height(), expanded_hint.height()),
+            )
+            return
+        self.resize(self._compact_size_hint)
+
 
 class CronHelpDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -130,96 +244,10 @@ class CronHelpDialog(QDialog):
         self.setWindowTitle("CRON Help")
         self.resize(760, 420)
 
-        help_html = """
-        <h3>CRON format in RadioQt</h3>
-        <p>RadioQt uses 6 fields:</p>
-        <p><code>second minute hour day-of-month month day-of-week</code></p>
-
-        <h4>Field order</h4>
-        <table border="1" cellspacing="0" cellpadding="6">
-          <tr>
-            <th><code>second</code></th>
-            <th><code>minute</code></th>
-            <th><code>hour</code></th>
-            <th><code>day-of-month</code></th>
-            <th><code>month</code></th>
-            <th><code>day-of-week</code></th>
-          </tr>
-          <tr>
-            <td><code>0-59</code></td>
-            <td><code>0-59</code></td>
-            <td><code>0-23</code></td>
-            <td><code>1-31</code></td>
-            <td><code>1-12</code></td>
-            <td><code>1-7</code></td>
-          </tr>
-        </table>
-
-        <h4>Supported syntax</h4>
-        <p><code>*</code> any value<br>
-        <code>,</code> list of values<br>
-        <code>-</code> range of values<br>
-        <code>/</code> step values</p>
-
-        <p>Use numeric values only.<br>
-        Month: <code>1-12</code><br>
-        Day-of-week starts on Monday:
-        <code>1=Monday 2=Tuesday 3=Wednesday 4=Thursday 5=Friday 6=Saturday 7=Sunday</code></p>
-
-        <h4>Examples by use</h4>
-        <table border="1" cellspacing="0" cellpadding="6">
-          <tr>
-            <th>Use</th>
-            <th>Expression</th>
-            <th>Meaning</th>
-          </tr>
-          <tr>
-            <td>Exact time</td>
-            <td><code>0 30 8 * * *</code></td>
-            <td>Every day at 08:30:00</td>
-          </tr>
-          <tr>
-            <td>Wildcard <code>*</code></td>
-            <td><code>0 * * * * *</code></td>
-            <td>Every minute, at second 0</td>
-          </tr>
-          <tr>
-            <td>List <code>,</code></td>
-            <td><code>0 0 18 * 1,6,12 *</code></td>
-            <td>Every day at 18:00:00, only in months 1, 6 and 12</td>
-          </tr>
-          <tr>
-            <td>Range <code>-</code></td>
-            <td><code>0 0 9 * * 1-5</code></td>
-            <td>Monday to Friday at 09:00:00</td>
-          </tr>
-          <tr>
-            <td>Step <code>/</code></td>
-            <td><code>0 */15 * * * *</code></td>
-            <td>Every 15 minutes</td>
-          </tr>
-          <tr>
-            <td>Specific day of month</td>
-            <td><code>30 0 12 1 * *</code></td>
-            <td>On day 1 of every month at 12:00:30</td>
-          </tr>
-          <tr>
-            <td>Specific weekday</td>
-            <td><code>0 0 6 * * 7</code></td>
-            <td>Every Sunday at 06:00:00</td>
-          </tr>
-          <tr>
-            <td>Combined range + step</td>
-            <td><code>0 0/10 9-17 * * 1-5</code></td>
-            <td>Every 10 minutes between 09:00 and 17:59, Monday to Friday</td>
-          </tr>
-        </table>
-        """
-
         text = QTextBrowser(self)
         text.setReadOnly(True)
         text.setOpenExternalLinks(False)
-        text.setHtml(help_html)
+        text.setHtml(_cron_help_html())
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         buttons.rejected.connect(self.reject)
