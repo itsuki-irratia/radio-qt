@@ -261,18 +261,23 @@ class MainWindow(QMainWindow):
         panels_layout.addWidget(self._build_library_panel(), 1)
         panels_layout.addWidget(self._build_schedule_panel(), 1)
 
-        self._log_view = QPlainTextEdit(root)
+        self._logs_group = QGroupBox("Logs", root)
+        logs_layout = QVBoxLayout(self._logs_group)
+        logs_layout.setContentsMargins(8, 8, 8, 8)
+
+        self._log_view = QPlainTextEdit(self._logs_group)
         self._log_view.setReadOnly(True)
         self._log_view.setMaximumBlockCount(2000)
         self._log_view.setPlaceholderText("Runtime events...")
         self._log_view.setMinimumHeight(80)
+        logs_layout.addWidget(self._log_view)
 
         root_layout.addWidget(self._player_display, 2)
         root_layout.addLayout(now_playing_layout)
         root_layout.addLayout(controls_layout)
         root_layout.addLayout(volume_layout)
         root_layout.addLayout(panels_layout, 7)
-        root_layout.addWidget(self._log_view)
+        root_layout.addWidget(self._logs_group)
 
         self.setCentralWidget(root)
         # Fullscreen overlay for audio-only playback
@@ -283,6 +288,11 @@ class MainWindow(QMainWindow):
         file_menu = menu_bar.addMenu("&File")
         self._configuration_action = QAction("&Configuration...", self)
         file_menu.addAction(self._configuration_action)
+        view_menu = menu_bar.addMenu("&View")
+        self._toggle_logs_action = QAction("&Logs", self)
+        self._toggle_logs_action.setCheckable(True)
+        self._toggle_logs_action.setChecked(True)
+        view_menu.addAction(self._toggle_logs_action)
         help_menu = menu_bar.addMenu("&Help")
         self._cron_help_action = QAction("&CRON", self)
         self._export_logs_action = QAction("Export &Logs...", self)
@@ -469,6 +479,7 @@ class MainWindow(QMainWindow):
         self._cron_refresh_timer.timeout.connect(self._refresh_cron_runtime_window)
         self._schedule_focus_timer.timeout.connect(self._refresh_schedule_auto_focus)
         self._configuration_action.triggered.connect(self._open_configuration_dialog)
+        self._toggle_logs_action.toggled.connect(self._set_logs_visible)
         self._export_logs_action.triggered.connect(self._export_logs)
         self._cron_help_action.triggered.connect(self._show_cron_help)
         # Sync fullscreen button with video widget state
@@ -2460,6 +2471,10 @@ class MainWindow(QMainWindow):
     def _append_log(self, message: str) -> None:
         timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
         self._log_view.appendPlainText(f"[{timestamp}] {message}")
+
+    @Slot(bool)
+    def _set_logs_visible(self, visible: bool) -> None:
+        self._logs_group.setVisible(bool(visible))
 
     @Slot()
     def _export_logs(self) -> None:
