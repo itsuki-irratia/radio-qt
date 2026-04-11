@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDateEdit,
+    QDialog,
     QFileDialog,
     QFileSystemModel,
     QGroupBox,
@@ -328,9 +329,9 @@ class MainWindow(QMainWindow):
         self._schedule_overlap_note.setStyleSheet("color: #6b7280; font-size: 11px;")
 
         self._schedule_table = QTableWidget(datetime_tab)
-        self._schedule_table.setColumnCount(5)
+        self._schedule_table.setColumnCount(7)
         self._schedule_table.setHorizontalHeaderLabels(
-            ["Start Time", "Duration", "Media", "Hard Sync", "Status"]
+            ["Start Time", "Duration", "Media", "Hard Sync", "Fade In", "Fade Out", "Status"]
         )
         self._schedule_table.horizontalHeader().setStretchLastSection(True)
         self._schedule_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -765,6 +766,8 @@ class MainWindow(QMainWindow):
             apply_item_palette=self._apply_item_palette,
             apply_widget_palette=self._apply_widget_palette,
             on_hard_sync_changed=self._on_schedule_hard_sync_changed,
+            on_fade_in_changed=self._on_schedule_fade_in_changed,
+            on_fade_out_changed=self._on_schedule_fade_out_changed,
             on_status_changed=self._on_schedule_status_changed,
         )
 
@@ -1522,6 +1525,56 @@ class MainWindow(QMainWindow):
         state = "enabled" if updated_entry.hard_sync else "disabled"
         self._append_log(
             f"Set hard sync for media '{self._media_log_name(updated_entry.media_id)}' to {state}"
+        )
+
+    def _on_schedule_fade_in_changed(self, entry_id: str, value: str) -> None:
+        updated_entry: ScheduleEntry | None = None
+        fade_in_enabled = value == "Yes"
+        for entry in self._schedule_entries:
+            if entry.id != entry_id:
+                continue
+            if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
+                return
+            if entry.fade_in == fade_in_enabled:
+                return
+            entry.fade_in = fade_in_enabled
+            updated_entry = entry
+            break
+
+        if updated_entry is None:
+            return
+
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_schedule_table()
+        self._save_state()
+        state = "enabled" if updated_entry.fade_in else "disabled"
+        self._append_log(
+            f"Set fade in for media '{self._media_log_name(updated_entry.media_id)}' to {state}"
+        )
+
+    def _on_schedule_fade_out_changed(self, entry_id: str, value: str) -> None:
+        updated_entry: ScheduleEntry | None = None
+        fade_out_enabled = value == "Yes"
+        for entry in self._schedule_entries:
+            if entry.id != entry_id:
+                continue
+            if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
+                return
+            if entry.fade_out == fade_out_enabled:
+                return
+            entry.fade_out = fade_out_enabled
+            updated_entry = entry
+            break
+
+        if updated_entry is None:
+            return
+
+        self._scheduler.set_entries(self._schedule_entries)
+        self._refresh_schedule_table()
+        self._save_state()
+        state = "enabled" if updated_entry.fade_out else "disabled"
+        self._append_log(
+            f"Set fade out for media '{self._media_log_name(updated_entry.media_id)}' to {state}"
         )
 
     def _on_schedule_status_changed(self, entry_id: str, value: str) -> None:

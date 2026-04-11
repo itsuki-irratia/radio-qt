@@ -92,6 +92,8 @@ def refresh_schedule_table(
     apply_item_palette: Callable[[QTableWidgetItem, tuple | None], None],
     apply_widget_palette: Callable[[QWidget, tuple | None], None],
     on_hard_sync_changed: Callable[[str, str], None],
+    on_fade_in_changed: Callable[[str, str], None],
+    on_fade_out_changed: Callable[[str, str], None],
     on_status_changed: Callable[[str, str], None],
 ) -> None:
     schedule_table.setRowCount(len(entries))
@@ -142,6 +144,28 @@ def refresh_schedule_table(
         apply_widget_palette(hard_sync_selector, palette)
         schedule_table.setCellWidget(row, 3, hard_sync_selector)
 
+        fade_in_selector = NoScrollComboBox(schedule_table)
+        fade_in_selector.addItems(["Yes", "No"])
+        fade_in_selector.setCurrentText("Yes" if entry.fade_in else "No")
+        fade_in_selector.setEnabled(not is_locked)
+        fade_in_selector.setToolTip(tooltip)
+        fade_in_selector.currentTextChanged.connect(
+            lambda value, entry_id=entry.id: on_fade_in_changed(entry_id, value)
+        )
+        apply_widget_palette(fade_in_selector, palette)
+        schedule_table.setCellWidget(row, 4, fade_in_selector)
+
+        fade_out_selector = NoScrollComboBox(schedule_table)
+        fade_out_selector.addItems(["Yes", "No"])
+        fade_out_selector.setCurrentText("Yes" if entry.fade_out else "No")
+        fade_out_selector.setEnabled(not is_locked)
+        fade_out_selector.setToolTip(tooltip)
+        fade_out_selector.currentTextChanged.connect(
+            lambda value, entry_id=entry.id: on_fade_out_changed(entry_id, value)
+        )
+        apply_widget_palette(fade_out_selector, palette)
+        schedule_table.setCellWidget(row, 5, fade_out_selector)
+
         status_selector = NoScrollComboBox(schedule_table)
         if cron_globally_disabled:
             status_selector.addItem("Disabled")
@@ -158,6 +182,6 @@ def refresh_schedule_table(
             lambda value, entry_id=entry.id: on_status_changed(entry_id, value)
         )
         apply_widget_palette(status_selector, palette)
-        schedule_table.setCellWidget(row, 4, status_selector)
+        schedule_table.setCellWidget(row, 6, status_selector)
 
     schedule_table.resizeColumnsToContents()

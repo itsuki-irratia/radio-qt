@@ -109,6 +109,8 @@ class ScheduleEntry:
     start_at: datetime
     duration: int | None = None
     hard_sync: bool = False
+    fade_in: bool = False
+    fade_out: bool = False
     status: str = SCHEDULE_STATUS_PENDING
     one_shot: bool = True
     cron_id: str | None = None
@@ -146,6 +148,8 @@ class ScheduleEntry:
             start_at=_parse_datetime(data["start_at"]),
             duration=duration,
             hard_sync=data.get("hard_sync", False),
+            fade_in=bool(data.get("fade_in", False)),
+            fade_out=bool(data.get("fade_out", False)),
             status=status,
             one_shot=data.get("one_shot", True),
             cron_id=data.get("cron_id"),
@@ -160,6 +164,8 @@ class ScheduleEntry:
             "start_at": self.start_at.isoformat(),
             "duration": self.duration,
             "hard_sync": self.hard_sync,
+            "fade_in": self.fade_in,
+            "fade_out": self.fade_out,
             "status": self.status,
             "one_shot": self.one_shot,
             "cron_id": self.cron_id,

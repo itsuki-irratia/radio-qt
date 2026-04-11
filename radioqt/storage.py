@@ -29,6 +29,8 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             start_at TEXT NOT NULL,
             duration INTEGER,
             hard_sync INTEGER NOT NULL DEFAULT 0,
+            fade_in INTEGER NOT NULL DEFAULT 0,
+            fade_out INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'pending',
             one_shot INTEGER NOT NULL DEFAULT 1,
             cron_id TEXT,
@@ -129,6 +131,8 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "start_at": row["start_at"],
             "duration": row["duration"],
             "hard_sync": bool(row["hard_sync"]),
+            "fade_in": bool(row["fade_in"]),
+            "fade_out": bool(row["fade_out"]),
             "status": row["status"],
             "one_shot": bool(row["one_shot"]),
             "cron_id": row["cron_id"],
@@ -145,6 +149,8 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
                 start_at,
                 duration,
                 hard_sync,
+                fade_in,
+                fade_out,
                 status,
                 one_shot,
                 cron_id,
@@ -218,6 +224,8 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
                 start_at,
                 duration,
                 hard_sync,
+                fade_in,
+                fade_out,
                 status,
                 one_shot,
                 cron_id,
@@ -225,7 +233,7 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
                 cron_hard_sync_override,
                 position
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -234,6 +242,8 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
                     entry.start_at.isoformat(),
                     entry.duration,
                     int(entry.hard_sync),
+                    int(entry.fade_in),
+                    int(entry.fade_out),
                     entry.status,
                     int(entry.one_shot),
                     entry.cron_id,
@@ -351,6 +361,22 @@ def _migrate_schedule_entries_for_cron(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
+def _migrate_schedule_entries_fade_flags(connection: sqlite3.Connection) -> None:
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(schedule_entries)").fetchall()
+    }
+    if "fade_in" not in columns:
+        connection.execute(
+            "ALTER TABLE schedule_entries ADD COLUMN fade_in INTEGER NOT NULL DEFAULT 0"
+        )
+    if "fade_out" not in columns:
+        connection.execute(
+            "ALTER TABLE schedule_entries ADD COLUMN fade_out INTEGER NOT NULL DEFAULT 0"
+        )
+    connection.commit()
+
+
 def _migrate_queue_items_metadata(connection: sqlite3.Connection) -> None:
     columns = {
         row[1]
@@ -373,6 +399,7 @@ def load_state(path: Path) -> AppState:
         _ensure_schema(connection)
         _migrate_enabled_fired_to_status(connection)
         _migrate_schedule_entries_for_cron(connection)
+        _migrate_schedule_entries_fade_flags(connection)
         _migrate_queue_items_metadata(connection)
         if not _is_legacy_migration_done(connection):
             if not _database_has_data(connection) and legacy_json_path.exists():
@@ -387,5 +414,6 @@ def save_state(path: Path, state: AppState) -> None:
     with _connect(path) as connection:
         _ensure_schema(connection)
         _migrate_schedule_entries_for_cron(connection)
+        _migrate_schedule_entries_fade_flags(connection)
         _migrate_queue_items_metadata(connection)
         _write_state(connection, state)
