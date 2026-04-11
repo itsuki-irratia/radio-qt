@@ -82,6 +82,8 @@ Defined in `radioqt/models.py`.
   - `start_at`
   - `duration`
   - `hard_sync`
+  - `fade_in`
+  - `fade_out`
   - `status`
   - `one_shot`
   - `cron_id`
@@ -135,6 +137,7 @@ Schema migration helpers:
 
 - old `enabled` / `fired` schedule fields are migrated into `status`
 - CRON-related schedule columns are added if missing
+- schedule fade columns (`fade_in` / `fade_out`) are added if missing
 
 ## CRON Semantics
 
@@ -278,6 +281,8 @@ Date Time tab:
   - Duration
   - Media
   - Hard Sync
+  - Fade In
+  - Fade Out
   - Status
 
 CRON tab:
@@ -319,6 +324,9 @@ CRON overrides:
 - per-occurrence status/hard-sync overrides are possible through:
   - `cron_status_override`
   - `cron_hard_sync_override`
+- fade values are currently per-schedule-entry fields on `ScheduleEntry`
+  - generated CRON occurrences default to `fade_in=False` / `fade_out=False`
+  - they can be edited in the Date Time table and are persisted on those generated rows
 
 Protection:
 
@@ -543,6 +551,8 @@ These are now part of the current codebase and should be preserved:
 18. The top-level `Play` decision tree now routes through `radioqt/playback/orchestration.py` before the UI applies logs and visual updates.
 19. Startup and Play schedule-state preparation now route through `radioqt/scheduling/state.py`.
 20. URL, CRON, and Schedule table rendering now route through `radioqt/ui_components/tables.py`.
+21. Schedule rows now expose `Fade In` / `Fade Out` toggles (persisted in SQLite on `schedule_entries`).
+22. Table combo boxes ignore mouse-wheel events to avoid accidental dropdown value changes.
 
 ## Places Most Likely To Need Care
 
@@ -615,6 +625,7 @@ This section is intentionally operational and should be updated after important 
 - The active-entry algorithm uses the earliest of `start + duration` and `next entry start`, so overlapping schedules are effectively truncated by the next entry even if the media file is longer.
 - Editing a media item or removing one can have broad side effects because schedule rows, CRON rules, queue entries, and current playback all reference the same `media_id`.
 - The UI currently exposes status and hard-sync editing directly inside tables, which is convenient but increases the chance of subtle state interactions with CRON-managed rows.
+- `fade_in` / `fade_out` are currently stored and editable on schedule rows, but playback fade ramps are not implemented in the runtime player behavior.
 - Logging is user-friendly now, but it is still not structured; troubleshooting complex timing issues can require inspecting the SQLite database directly.
 - Scheduling logic is no longer fully trapped in `ui.py`, and startup/play state preparation has started moving out, but there is still significant schedule/UI coordination there.
 - Table rendering is no longer fully trapped in `ui.py`, but refresh orchestration and selection behavior still live there.
