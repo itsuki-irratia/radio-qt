@@ -82,6 +82,7 @@ from .scheduling import (
 )
 from .storage import load_state, save_state
 from .ui_components import (
+    ConfigurationDialog,
     CronDialog,
     CronHelpDialog,
     FullscreenOverlay,
@@ -113,6 +114,8 @@ class MainWindow(QMainWindow):
         self._last_source_panel = "filesystem"
         self._automation_playing = False
         self._schedule_auto_focus_enabled = False
+        self._fade_in_duration_seconds = 5
+        self._fade_out_duration_seconds = 5
         self._fullscreen_active = False
         self._schedule_filter_date = datetime.now().astimezone().date()
         self._current_playback_position_ms = 0
@@ -227,6 +230,9 @@ class MainWindow(QMainWindow):
 
     def _build_menu_bar(self) -> None:
         menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("&File")
+        self._configuration_action = QAction("&Configuration...", self)
+        file_menu.addAction(self._configuration_action)
         help_menu = menu_bar.addMenu("&Help")
         self._cron_help_action = QAction("&CRON", self)
         self._export_logs_action = QAction("Export &Logs...", self)
@@ -409,6 +415,7 @@ class MainWindow(QMainWindow):
         self._scheduler.log.connect(self._append_log)
         self._cron_refresh_timer.timeout.connect(self._refresh_cron_runtime_window)
         self._schedule_focus_timer.timeout.connect(self._refresh_schedule_auto_focus)
+        self._configuration_action.triggered.connect(self._open_configuration_dialog)
         self._export_logs_action.triggered.connect(self._export_logs)
         self._cron_help_action.triggered.connect(self._show_cron_help)
         # Sync fullscreen button with video widget state
@@ -495,6 +502,8 @@ class MainWindow(QMainWindow):
         self._cron_entries = state.cron_entries
         self._play_queue = deque(state.queue)
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
+        self._fade_in_duration_seconds = max(1, state.fade_in_duration_seconds)
+        self._fade_out_duration_seconds = max(1, state.fade_out_duration_seconds)
         self._refresh_cron_schedule_entries(self._runtime_cron_dates() | {self._schedule_filter_date})
         self._recalculate_schedule_durations()
         startup_preparation = prepare_schedule_entries_for_startup(
@@ -543,8 +552,16 @@ class MainWindow(QMainWindow):
             cron_entries=self._cron_entries,
             queue=list(self._play_queue),
             schedule_auto_focus=self._schedule_auto_focus_enabled,
+            fade_in_duration_seconds=self._fade_in_duration_seconds,
+            fade_out_duration_seconds=self._fade_out_duration_seconds,
         )
         save_state(self._state_path, state)
+
+    def _fade_in_duration_ms(self) -> int:
+        return max(1, self._fade_in_duration_seconds) * 1000
+
+    def _fade_out_duration_ms(self) -> int:
+        return max(1, self._fade_out_duration_seconds) * 1000
 
     def _normalize_overdue_one_shots(
         self,
@@ -611,6 +628,20 @@ class MainWindow(QMainWindow):
             if entry.id == cron_id:
                 return entry
         return None
+
+    def _schedule_entry_by_id(self, entry_id: str | None) -> ScheduleEntry | None:
+        if entry_id is None:
+            return None
+        for entry in self._schedule_entries:
+            if entry.id == entry_id:
+                return entry
+        return None
+
+    @staticmethod
+    def _entry_duration_ms(entry: ScheduleEntry | None) -> int | None:
+        if entry is None or entry.duration is None or entry.duration <= 0:
+            return None
+        return entry.duration * 1000
 
     def _is_schedule_entry_protected_from_removal(self, entry: ScheduleEntry) -> bool:
         cron_entry = self._cron_entry_by_id(entry.cron_id)
@@ -1778,7 +1809,14 @@ class MainWindow(QMainWindow):
                 self._append_log(
                     f"Hard sync active for '{outcome.media.title}': interrupting '{outcome.interrupted_media_name}'"
                 )
-            self._player.play_media(outcome.media)
+            self._player.play_media(
+                outcome.media,
+                fade_in=entry.fade_in,
+                fade_out=entry.fade_out,
+                expected_duration_ms=self._entry_duration_ms(entry),
+                fade_in_duration_ms=self._fade_in_duration_ms(),
+                fade_out_duration_ms=self._fade_out_duration_ms(),
+            )
         elif outcome.kind == "queued" and outcome.media is not None:
             self._append_log(f"Player busy; queued scheduled media '{outcome.media.title}'")
 
@@ -1819,7 +1857,19 @@ class MainWindow(QMainWindow):
                 self._append_log(
                     f"Playing queued manual media '{result.media.title}'"
                 )
-            self._player.play_media(result.media)
+            queued_schedule_entry = (
+                self._schedule_entry_by_id(result.queue_item.schedule_entry_id)
+                if result.queue_item.source == "schedule"
+                else None
+            )
+            self._player.play_media(
+                result.media,
+                fade_in=queued_schedule_entry.fade_in if queued_schedule_entry is not None else False,
+                fade_out=queued_schedule_entry.fade_out if queued_schedule_entry is not None else False,
+                expected_duration_ms=self._entry_duration_ms(queued_schedule_entry),
+                fade_in_duration_ms=self._fade_in_duration_ms(),
+                fade_out_duration_ms=self._fade_out_duration_ms(),
+            )
             return
         self._player.clear_current_media()
         self._current_playback_position_ms = 0
@@ -1923,7 +1973,15 @@ class MainWindow(QMainWindow):
                 f"end={end_label}, end_reason={active_play.end_reason}, "
                 f"offset_ms={active_play.offset_ms}"
             )
-            self._player.play_media(active_play.media, start_position_ms=active_play.offset_ms)
+            self._player.play_media(
+                active_play.media,
+                start_position_ms=active_play.offset_ms,
+                fade_in=active_play.entry.fade_in,
+                fade_out=active_play.entry.fade_out,
+                expected_duration_ms=self._entry_duration_ms(active_play.entry),
+                fade_in_duration_ms=self._fade_in_duration_ms(),
+                fade_out_duration_ms=self._fade_out_duration_ms(),
+            )
             self._append_log(
                 f"Started scheduled media '{active_play.media.title}' from {self._format_duration(active_play.offset_ms // 1000)}"
             )
@@ -2003,6 +2061,32 @@ class MainWindow(QMainWindow):
     def _show_cron_help(self) -> None:
         dialog = CronHelpDialog(self)
         dialog.exec()
+
+    @Slot()
+    def _open_configuration_dialog(self) -> None:
+        dialog = ConfigurationDialog(
+            self,
+            fade_in_duration_seconds=self._fade_in_duration_seconds,
+            fade_out_duration_seconds=self._fade_out_duration_seconds,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        next_fade_in_duration = max(1, dialog.fade_in_duration_seconds())
+        next_fade_out_duration = max(1, dialog.fade_out_duration_seconds())
+        if (
+            next_fade_in_duration == self._fade_in_duration_seconds
+            and next_fade_out_duration == self._fade_out_duration_seconds
+        ):
+            return
+
+        self._fade_in_duration_seconds = next_fade_in_duration
+        self._fade_out_duration_seconds = next_fade_out_duration
+        self._save_state()
+        self._append_log(
+            f"Updated configuration: fade in={self._fade_in_duration_seconds}s, "
+            f"fade out={self._fade_out_duration_seconds}s"
+        )
 
     def _set_automation_status(self, is_playing: bool) -> None:
         if is_playing:

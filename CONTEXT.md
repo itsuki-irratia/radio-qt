@@ -110,6 +110,8 @@ Status constants:
 - `cron_entries`
 - `queue`
 - `schedule_auto_focus`
+- `fade_in_duration_seconds`
+- `fade_out_duration_seconds`
 
 ## Persistence
 
@@ -130,6 +132,8 @@ Important notes:
 - `app_meta` stores:
   - `legacy_json_migrated`
   - `schedule_auto_focus`
+  - `fade_in_duration_seconds`
+  - `fade_out_duration_seconds`
 
 Legacy migration:
 
@@ -243,12 +247,19 @@ Main UI areas:
   - Date Time tab
   - CRON tab
 - runtime log view
+- menu:
+  - File:
+    - Configuration...
+  - Help:
+    - Export Logs...
+    - CRON
 
 Dialogs:
 
 - `ScheduleDialog`
 - `CronDialog`
 - `CronHelpDialog`
+- `ConfigurationDialog`
 
 Reusable widgets:
 
@@ -632,7 +643,9 @@ This section is intentionally operational and should be updated after important 
 - The active-entry algorithm uses the earliest of `start + duration` and `next entry start`, so overlapping schedules are effectively truncated by the next entry even if the media file is longer.
 - Editing a media item or removing one can have broad side effects because schedule rows, CRON rules, queue entries, and current playback all reference the same `media_id`.
 - The UI currently exposes status and hard-sync editing directly inside tables, which is convenient but increases the chance of subtle state interactions with CRON-managed rows.
-- `fade_in` / `fade_out` are currently stored and editable on schedule rows, but playback fade ramps are not implemented in the runtime player behavior.
+- `fade_in` / `fade_out` are applied in runtime playback with configurable durations (seconds) from `File -> Configuration...`:
+  - `fade_in`: volume ramps from 0 to the current program volume
+  - `fade_out`: volume ramps from current program volume to 0 near the end when duration is known
 - Logging is user-friendly now, but it is still not structured; troubleshooting complex timing issues can require inspecting the SQLite database directly.
 - Scheduling logic is no longer fully trapped in `ui.py`, and startup/play state preparation has started moving out, but there is still significant schedule/UI coordination there.
 - Table rendering is no longer fully trapped in `ui.py`, but refresh orchestration and selection behavior still live there.

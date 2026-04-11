@@ -115,6 +115,24 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
     schedule_auto_focus = (
         schedule_auto_focus_row is not None and schedule_auto_focus_row["value"] == "1"
     )
+    fade_in_duration_row = connection.execute(
+        "SELECT value FROM app_meta WHERE key = 'fade_in_duration_seconds'"
+    ).fetchone()
+    fade_out_duration_row = connection.execute(
+        "SELECT value FROM app_meta WHERE key = 'fade_out_duration_seconds'"
+    ).fetchone()
+    try:
+        fade_in_duration_seconds = max(
+            1, int(fade_in_duration_row["value"] if fade_in_duration_row is not None else 5)
+        )
+    except (TypeError, ValueError):
+        fade_in_duration_seconds = 5
+    try:
+        fade_out_duration_seconds = max(
+            1, int(fade_out_duration_row["value"] if fade_out_duration_row is not None else 5)
+        )
+    except (TypeError, ValueError):
+        fade_out_duration_seconds = 5
     media_items = [
         {
             "id": row["id"],
@@ -207,6 +225,8 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "cron_entries": cron_entries,
             "queue": queue,
             "schedule_auto_focus": schedule_auto_focus,
+            "fade_in_duration_seconds": fade_in_duration_seconds,
+            "fade_out_duration_seconds": fade_out_duration_seconds,
         }
     )
 
@@ -326,6 +346,22 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
             ("1" if state.schedule_auto_focus else "0",),
+        )
+        connection.execute(
+            """
+            INSERT INTO app_meta(key, value)
+            VALUES('fade_in_duration_seconds', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (str(max(1, state.fade_in_duration_seconds)),),
+        )
+        connection.execute(
+            """
+            INSERT INTO app_meta(key, value)
+            VALUES('fade_out_duration_seconds', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (str(max(1, state.fade_out_duration_seconds)),),
         )
 
 

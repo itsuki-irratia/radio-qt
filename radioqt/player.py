@@ -11,6 +11,8 @@ from .models import MediaItem
 
 
 class MediaPlayerController(QObject):
+    _DEFAULT_FADE_DURATION_MS = 5000
+
     media_started = Signal(object)
     media_finished = Signal()
     playback_state_changed = Signal(object)
@@ -26,22 +28,50 @@ class MediaPlayerController(QObject):
         self._media_player.setAudioOutput(self._audio_output)
         self._media_player.setAudioBufferOutput(self._audio_buffer_output)
         self._media_player.playbackStateChanged.connect(self._on_playback_state_changed)
-        self._media_player.positionChanged.connect(self.playback_position_changed.emit)
+        self._media_player.positionChanged.connect(self._on_position_changed)
         self._media_player.errorOccurred.connect(self._on_error)
         self._media_player.mediaStatusChanged.connect(self._on_media_status_changed)
         self._audio_buffer_output.audioBufferReceived.connect(self._on_audio_buffer_received)
         self.current_media: MediaItem | None = None
         self._pending_seek_ms: int | None = None
+        self._base_volume_percent = 100
+        self._fade_multiplier = 1.0
+        self._fade_in_enabled = False
+        self._fade_out_enabled = False
+        self._fade_session_start_position_ms = 0
+        self._expected_duration_ms: int | None = None
+        self._fade_in_duration_ms = self._DEFAULT_FADE_DURATION_MS
+        self._fade_out_duration_ms = self._DEFAULT_FADE_DURATION_MS
+        self._apply_effective_volume()
 
     def set_video_output(self, widget: QVideoWidget) -> None:
         self._media_player.setVideoOutput(widget)
 
-    def play_media(self, media: MediaItem, start_position_ms: int = 0) -> None:
+    def play_media(
+        self,
+        media: MediaItem,
+        start_position_ms: int = 0,
+        *,
+        fade_in: bool = False,
+        fade_out: bool = False,
+        expected_duration_ms: int | None = None,
+        fade_in_duration_ms: int = _DEFAULT_FADE_DURATION_MS,
+        fade_out_duration_ms: int = _DEFAULT_FADE_DURATION_MS,
+    ) -> None:
         source_url = self._resolve_source(media.source)
         if source_url is None:
             self.playback_error.emit(f"Cannot resolve media source: {media.source}")
             return
-        self._pending_seek_ms = max(0, start_position_ms)
+        normalized_start_position_ms = max(0, start_position_ms)
+        self._configure_fade_for_new_media(
+            start_position_ms=normalized_start_position_ms,
+            fade_in=fade_in,
+            fade_out=fade_out,
+            expected_duration_ms=expected_duration_ms,
+            fade_in_duration_ms=fade_in_duration_ms,
+            fade_out_duration_ms=fade_out_duration_ms,
+        )
+        self._pending_seek_ms = normalized_start_position_ms
         self.current_media = media
         self._media_player.setSource(source_url)
         if self._pending_seek_ms > 0:
@@ -55,16 +85,19 @@ class MediaPlayerController(QObject):
 
     def stop(self) -> None:
         self._media_player.stop()
+        self._reset_fade_state()
 
     def clear_current_media(self) -> None:
         self._media_player.stop()
         self._media_player.setSource(QUrl())
         self.current_media = None
         self._pending_seek_ms = None
+        self._reset_fade_state()
         self.audio_levels_changed.emit(None)
 
     def set_volume(self, volume: int) -> None:
-        self._audio_output.setVolume(max(0, min(volume, 100)) / 100.0)
+        self._base_volume_percent = max(0, min(volume, 100))
+        self._apply_effective_volume()
 
     def is_playing(self) -> bool:
         return self._media_player.playbackState() == QMediaPlayer.PlayingState
@@ -74,6 +107,68 @@ class MediaPlayerController(QObject):
 
     def current_position_ms(self) -> int:
         return max(0, self._media_player.position())
+
+    def _configure_fade_for_new_media(
+        self,
+        *,
+        start_position_ms: int,
+        fade_in: bool,
+        fade_out: bool,
+        expected_duration_ms: int | None,
+        fade_in_duration_ms: int,
+        fade_out_duration_ms: int,
+    ) -> None:
+        normalized_duration_ms = None
+        if expected_duration_ms is not None and expected_duration_ms > 0:
+            normalized_duration_ms = expected_duration_ms
+        normalized_fade_in_duration_ms = max(1, int(fade_in_duration_ms))
+        normalized_fade_out_duration_ms = max(1, int(fade_out_duration_ms))
+
+        self._fade_in_enabled = bool(fade_in)
+        self._fade_out_enabled = bool(fade_out) and normalized_duration_ms is not None
+        self._fade_session_start_position_ms = max(0, start_position_ms)
+        self._expected_duration_ms = normalized_duration_ms
+        self._fade_in_duration_ms = normalized_fade_in_duration_ms
+        self._fade_out_duration_ms = normalized_fade_out_duration_ms
+        self._update_fade_multiplier_for_position(
+            self._fade_session_start_position_ms,
+            force_apply=True,
+        )
+
+    def _reset_fade_state(self) -> None:
+        self._fade_in_enabled = False
+        self._fade_out_enabled = False
+        self._fade_session_start_position_ms = 0
+        self._expected_duration_ms = None
+        self._fade_in_duration_ms = self._DEFAULT_FADE_DURATION_MS
+        self._fade_out_duration_ms = self._DEFAULT_FADE_DURATION_MS
+        self._fade_multiplier = 1.0
+        self._apply_effective_volume()
+
+    def _update_fade_multiplier_for_position(
+        self,
+        position_ms: int,
+        *,
+        force_apply: bool = False,
+    ) -> None:
+        multiplier = 1.0
+        current_position_ms = max(0, position_ms)
+        if self._fade_in_enabled:
+            elapsed_ms = max(0, current_position_ms - self._fade_session_start_position_ms)
+            multiplier = min(multiplier, elapsed_ms / self._fade_in_duration_ms)
+        if self._fade_out_enabled and self._expected_duration_ms is not None:
+            remaining_ms = max(0, self._expected_duration_ms - current_position_ms)
+            if remaining_ms <= self._fade_out_duration_ms:
+                multiplier = min(multiplier, remaining_ms / self._fade_out_duration_ms)
+        multiplier = max(0.0, min(1.0, multiplier))
+        if not force_apply and abs(multiplier - self._fade_multiplier) < 1e-6:
+            return
+        self._fade_multiplier = multiplier
+        self._apply_effective_volume()
+
+    def _apply_effective_volume(self) -> None:
+        effective = (self._base_volume_percent / 100.0) * self._fade_multiplier
+        self._audio_output.setVolume(max(0.0, min(1.0, effective)))
 
     @staticmethod
     def _resolve_source(source: str) -> QUrl | None:
@@ -104,6 +199,11 @@ class MediaPlayerController(QObject):
     @Slot(QMediaPlayer.PlaybackState)
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
         self.playback_state_changed.emit(state)
+
+    @Slot(int)
+    def _on_position_changed(self, position_ms: int) -> None:
+        self._update_fade_multiplier_for_position(position_ms)
+        self.playback_position_changed.emit(position_ms)
 
     def _on_error(self, *_: object) -> None:
         self.playback_error.emit(self._media_player.errorString())

@@ -7,9 +7,11 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFormLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QSpinBox,
     QTextBrowser,
     QVBoxLayout,
     QDateTimeEdit,
@@ -212,3 +214,50 @@ class CronHelpDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(text)
         layout.addWidget(buttons)
+
+
+class ConfigurationDialog(QDialog):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        fade_in_duration_seconds: int,
+        fade_out_duration_seconds: int,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Configuration")
+
+        self._fade_in_spinbox = QSpinBox(self)
+        self._fade_in_spinbox.setRange(1, 120)
+        self._fade_in_spinbox.setValue(max(1, fade_in_duration_seconds))
+        self._fade_in_spinbox.setSuffix(" s")
+
+        self._fade_out_spinbox = QSpinBox(self)
+        self._fade_out_spinbox.setRange(1, 120)
+        self._fade_out_spinbox.setValue(max(1, fade_out_duration_seconds))
+        self._fade_out_spinbox.setSuffix(" s")
+
+        form = QFormLayout()
+        form.addRow("Fade in duration:", self._fade_in_spinbox)
+        form.addRow("Fade out duration:", self._fade_out_spinbox)
+
+        hint = QLabel(
+            "These values are used when schedule rows have Fade In / Fade Out enabled.",
+            self,
+        )
+        hint.setWordWrap(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(hint)
+        layout.addWidget(buttons)
+
+    def fade_in_duration_seconds(self) -> int:
+        return self._fade_in_spinbox.value()
+
+    def fade_out_duration_seconds(self) -> int:
+        return self._fade_out_spinbox.value()

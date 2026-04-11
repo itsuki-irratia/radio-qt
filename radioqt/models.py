@@ -226,9 +226,18 @@ class AppState:
     cron_entries: list[CronEntry] = field(default_factory=list)
     queue: list[QueueItem] = field(default_factory=list)
     schedule_auto_focus: bool = False
+    fade_in_duration_seconds: int = 5
+    fade_out_duration_seconds: int = 5
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppState":
+        def _safe_positive_int(value: Any, default: int) -> int:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return default
+            return max(1, parsed)
+
         media_items = [MediaItem.from_dict(item) for item in data.get("media_items", [])]
         schedule_entries = [ScheduleEntry.from_dict(item) for item in data.get("schedule_entries", [])]
         cron_entries = [CronEntry.from_dict(item) for item in data.get("cron_entries", [])]
@@ -239,6 +248,8 @@ class AppState:
             cron_entries=cron_entries,
             queue=queue,
             schedule_auto_focus=bool(data.get("schedule_auto_focus", False)),
+            fade_in_duration_seconds=_safe_positive_int(data.get("fade_in_duration_seconds"), 5),
+            fade_out_duration_seconds=_safe_positive_int(data.get("fade_out_duration_seconds"), 5),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -248,4 +259,6 @@ class AppState:
             "cron_entries": [entry.to_dict() for entry in self.cron_entries],
             "queue": [item.to_dict() for item in self.queue],
             "schedule_auto_focus": self.schedule_auto_focus,
+            "fade_in_duration_seconds": self.fade_in_duration_seconds,
+            "fade_out_duration_seconds": self.fade_out_duration_seconds,
         }
