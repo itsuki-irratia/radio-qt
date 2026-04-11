@@ -10,7 +10,7 @@ import time
 from uuid import NAMESPACE_URL, uuid5
 
 from PySide6.QtCore import QDate, QDateTime, QModelIndex, QObject, QSize, Qt, QTimer, Signal, Slot, QEvent
-from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor
+from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -214,21 +214,21 @@ class MainWindow(QMainWindow):
         self._player_display_layout.setCurrentWidget(self._waveform_widget)
 
         self._now_playing_label = QLabel("None", root)
-        self._automation_status_label = QLabel(root)
-        self._set_automation_status(self._automation_playing)
 
         now_playing_layout = QHBoxLayout()
-        now_playing_layout.addWidget(self._automation_status_label)
         now_playing_layout.addWidget(self._now_playing_label)
         now_playing_layout.addStretch()
 
         controls_layout = QHBoxLayout()
         self._play_button = QPushButton("")
         self._play_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self._play_button.setIconSize(QSize(20, 20))
         self._play_button.setToolTip("Play")
         self._stop_button = QPushButton("")
         self._stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
+        self._stop_button.setIconSize(QSize(20, 20))
         self._stop_button.setToolTip("Stop")
+        self._set_automation_status(self._automation_playing)
         controls_layout.addWidget(self._play_button)
         controls_layout.addWidget(self._stop_button)
         controls_layout.addStretch()
@@ -2529,19 +2529,33 @@ class MainWindow(QMainWindow):
 
     def _set_automation_status(self, is_playing: bool) -> None:
         if is_playing:
-            self._automation_status_label.setText("Automation: Playing")
-            self._automation_status_label.setStyleSheet(
-                "color: #0f5132; background-color: #d1e7dd; "
-                "border: 1px solid #75b798; border-radius: 6px; "
-                "padding: 2px 8px; font-weight: 600;"
+            self._play_button.setIcon(
+                self._tinted_standard_icon(QStyle.SP_MediaPlay, QColor("#198754"))
             )
+            self._stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
             return
-        self._automation_status_label.setText("Automation: Stopped")
-        self._automation_status_label.setStyleSheet(
-            "color: #842029; background-color: #f8d7da; "
-            "border: 1px solid #f1aeb5; border-radius: 6px; "
-            "padding: 2px 8px; font-weight: 600;"
+        self._play_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self._stop_button.setIcon(
+            self._tinted_standard_icon(QStyle.SP_MediaStop, QColor("#dc3545"))
         )
+
+    def _tinted_standard_icon(
+        self,
+        standard_pixmap: QStyle.StandardPixmap,
+        color: QColor,
+    ) -> QIcon:
+        base_icon = self.style().standardIcon(standard_pixmap)
+        base_pixmap = base_icon.pixmap(20, 20)
+        if base_pixmap.isNull():
+            return base_icon
+        tinted = QPixmap(base_pixmap.size())
+        tinted.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(tinted)
+        painter.drawPixmap(0, 0, base_pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(tinted.rect(), color)
+        painter.end()
+        return QIcon(tinted)
 
     @Slot(bool)
     def _on_fullscreen_toggled(self, checked: bool) -> None:
