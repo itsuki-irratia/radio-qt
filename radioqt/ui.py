@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QSizePolicy,
     QSlider,
+    QStyle,
     QStackedLayout,
     QTabWidget,
     QTableWidget,
@@ -222,17 +223,27 @@ class MainWindow(QMainWindow):
         now_playing_layout.addStretch()
 
         controls_layout = QHBoxLayout()
-        self._play_button = QPushButton("Play")
-        self._stop_button = QPushButton("Stop")
+        self._play_button = QPushButton("")
+        self._play_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self._play_button.setToolTip("Play")
+        self._stop_button = QPushButton("")
+        self._stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
+        self._stop_button.setToolTip("Stop")
         controls_layout.addWidget(self._play_button)
         controls_layout.addWidget(self._stop_button)
         controls_layout.addStretch()
 
         volume_layout = QHBoxLayout()
-        self._mute_button = QPushButton("Mute")
+        self._mute_button = QPushButton("")
         self._mute_button.setCheckable(True)
-        self._fade_in_button = QPushButton("Fade In")
-        self._fade_out_button = QPushButton("Fade Out")
+        self._mute_button.setToolTip("Mute")
+        self._mute_button.setIcon(self.style().standardIcon(QStyle.SP_MediaVolume))
+        self._fade_in_button = QPushButton("")
+        self._fade_in_button.setToolTip("Fade In")
+        self._fade_in_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowUp))
+        self._fade_out_button = QPushButton("")
+        self._fade_out_button.setToolTip("Fade Out")
+        self._fade_out_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowDown))
         volume_layout.addWidget(self._mute_button)
         volume_layout.addWidget(self._fade_in_button)
         volume_layout.addWidget(self._fade_out_button)
@@ -2265,6 +2276,11 @@ class MainWindow(QMainWindow):
     @Slot(bool)
     def _on_mute_toggled(self, checked: bool) -> None:
         self._volume_fade_timer.stop()
+        self._mute_button.setIcon(
+            self.style().standardIcon(
+                QStyle.SP_MediaVolumeMuted if checked else QStyle.SP_MediaVolume
+            )
+        )
         if checked:
             current = self._volume_slider.value()
             if current > 0:
