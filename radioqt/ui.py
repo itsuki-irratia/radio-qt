@@ -95,13 +95,14 @@ from .ui_components import (
 
 
 class _DurationProbeDispatcher(QObject):
-    probe_finished = Signal(str, str, object)
+    probe_finished = Signal(str, str, object, object)
 
 
 class MainWindow(QMainWindow):
     _CRON_RUNTIME_MAX_OCCURRENCES = 100
     _CRON_RUNTIME_MAX_RECENT_OCCURRENCES = 20
     _CRON_RUNTIME_LOOKBACK = timedelta(hours=1)
+    _DURATION_PROBE_CACHE_MAX_ENTRIES = 2000
 
     def __init__(self) -> None:
         super().__init__()
@@ -116,6 +117,7 @@ class MainWindow(QMainWindow):
         self._state_path = Path.cwd() / "state" / "radio_state.db"
         self._media_items: dict[str, MediaItem] = {}
         self._media_duration_cache: dict[str, int | None] = {}
+        self._duration_probe_cache: dict[str, int | None] = {}
         self._media_duration_pending: set[str] = set()
         self._schedule_entries: list[ScheduleEntry] = []
         self._cron_entries: list[CronEntry] = []
@@ -518,6 +520,7 @@ class MainWindow(QMainWindow):
         state = load_state(self._state_path)
         self._media_items = {item.id: item for item in state.media_items}
         self._media_duration_cache.clear()
+        self._duration_probe_cache = self._sanitize_duration_probe_cache(state.duration_probe_cache)
         self._media_duration_pending.clear()
         self._schedule_entries = state.schedule_entries
         self._cron_entries = state.cron_entries
@@ -583,6 +586,7 @@ class MainWindow(QMainWindow):
             schedule_auto_focus=self._schedule_auto_focus_enabled,
             fade_in_duration_seconds=self._fade_in_duration_seconds,
             fade_out_duration_seconds=self._fade_out_duration_seconds,
+            duration_probe_cache=self._duration_probe_cache,
         )
         save_state(self._state_path, state)
 
@@ -591,6 +595,67 @@ class MainWindow(QMainWindow):
 
     def _fade_out_duration_ms(self) -> int:
         return max(1, self._fade_out_duration_seconds) * 1000
+
+    @classmethod
+    def _sanitize_duration_probe_cache(
+        cls,
+        raw_cache: dict[str, int | None] | None,
+    ) -> dict[str, int | None]:
+        if not isinstance(raw_cache, dict):
+            return {}
+        normalized: dict[str, int | None] = {}
+        for key, value in raw_cache.items():
+            if not isinstance(key, str) or not key:
+                continue
+            if value is None:
+                normalized[key] = None
+                continue
+            try:
+                normalized[key] = max(0, int(value))
+            except (TypeError, ValueError):
+                continue
+
+        while len(normalized) > cls._DURATION_PROBE_CACHE_MAX_ENTRIES:
+            oldest_key = next(iter(normalized))
+            normalized.pop(oldest_key, None)
+        return normalized
+
+    def _duration_probe_cache_lookup(self, probe_key: str) -> tuple[bool, int | None]:
+        if probe_key not in self._duration_probe_cache:
+            return False, None
+        duration = self._duration_probe_cache.pop(probe_key)
+        self._duration_probe_cache[probe_key] = duration
+        return True, duration
+
+    def _store_duration_probe_cache(self, probe_key: str, duration: int | None) -> None:
+        if probe_key in self._duration_probe_cache:
+            current = self._duration_probe_cache.pop(probe_key)
+            if current == duration:
+                self._duration_probe_cache[probe_key] = current
+                return
+        self._duration_probe_cache[probe_key] = duration
+        while len(self._duration_probe_cache) > self._DURATION_PROBE_CACHE_MAX_ENTRIES:
+            oldest_key = next(iter(self._duration_probe_cache))
+            self._duration_probe_cache.pop(oldest_key, None)
+
+    @classmethod
+    def _duration_probe_cache_key_from_path(cls, path: Path) -> str | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        try:
+            resolved = str(path.resolve())
+        except OSError:
+            resolved = str(path)
+        return f"{resolved}|{stat.st_mtime_ns}|{stat.st_size}"
+
+    @classmethod
+    def _duration_probe_cache_key_from_source(cls, source: str) -> str | None:
+        path = local_media_path_from_source(source)
+        if path is None or not path.is_file():
+            return None
+        return cls._duration_probe_cache_key_from_path(path)
 
     def _normalize_overdue_one_shots(
         self,
@@ -966,22 +1031,37 @@ class MainWindow(QMainWindow):
             self._media_duration_cache[media_id] = None
             return None
 
-        self._request_media_duration_probe(media_id, media.source)
+        probe_key = self._duration_probe_cache_key_from_path(local_path)
+        if probe_key is not None:
+            cached, cached_duration = self._duration_probe_cache_lookup(probe_key)
+            if cached:
+                self._media_duration_cache[media_id] = cached_duration
+                return cached_duration
+
+        self._request_media_duration_probe(media_id, media.source, probe_key=probe_key)
         return None
 
-    def _request_media_duration_probe(self, media_id: str, source: str) -> None:
+    def _request_media_duration_probe(
+        self,
+        media_id: str,
+        source: str,
+        *,
+        probe_key: str | None = None,
+    ) -> None:
         if media_id in self._media_duration_pending or self._shutting_down:
             return
+        requested_probe_key = probe_key or self._duration_probe_cache_key_from_source(source)
         self._media_duration_pending.add(media_id)
         future = self._duration_probe_executor.submit(
             self._probe_media_duration_seconds,
             source,
         )
         future.add_done_callback(
-            lambda task, requested_media_id=media_id, requested_source=source: (
+            lambda task, requested_media_id=media_id, requested_source=source, requested_key=requested_probe_key: (
                 self._emit_duration_probe_result(
                     requested_media_id,
                     requested_source,
+                    requested_key,
                     task,
                 )
             )
@@ -991,6 +1071,7 @@ class MainWindow(QMainWindow):
         self,
         media_id: str,
         source: str,
+        probe_key: str | None,
         task: Future[int | None],
     ) -> None:
         if self._shutting_down:
@@ -1000,12 +1081,18 @@ class MainWindow(QMainWindow):
         except Exception:
             duration = None
         try:
-            self._duration_probe_dispatcher.probe_finished.emit(media_id, source, duration)
+            self._duration_probe_dispatcher.probe_finished.emit(media_id, source, probe_key, duration)
         except RuntimeError:
             return
 
-    @Slot(str, str, object)
-    def _on_media_duration_probed(self, media_id: str, source: str, duration: object) -> None:
+    @Slot(str, str, object, object)
+    def _on_media_duration_probed(
+        self,
+        media_id: str,
+        source: str,
+        probe_key: object,
+        duration: object,
+    ) -> None:
         self._media_duration_pending.discard(media_id)
         if self._shutting_down:
             return
@@ -1020,11 +1107,26 @@ class MainWindow(QMainWindow):
             self._media_duration_seconds(media_id)
             return
 
+        requested_probe_key = probe_key if isinstance(probe_key, str) and probe_key else None
+        current_probe_key = self._duration_probe_cache_key_from_source(media.source)
+        if (
+            requested_probe_key is not None
+            and current_probe_key is not None
+            and requested_probe_key != current_probe_key
+        ):
+            self._media_duration_cache.pop(media_id, None)
+            self._media_duration_seconds(media_id)
+            return
+
         resolved_duration: int | None
         if isinstance(duration, int):
             resolved_duration = max(0, duration)
         else:
             resolved_duration = None
+
+        effective_probe_key = requested_probe_key or current_probe_key
+        if effective_probe_key is not None:
+            self._store_duration_probe_cache(effective_probe_key, resolved_duration)
 
         previous_duration = self._media_duration_cache.get(media_id, object())
         self._media_duration_cache[media_id] = resolved_duration

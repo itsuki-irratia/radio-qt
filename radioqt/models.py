@@ -228,6 +228,7 @@ class AppState:
     schedule_auto_focus: bool = False
     fade_in_duration_seconds: int = 5
     fade_out_duration_seconds: int = 5
+    duration_probe_cache: dict[str, int | None] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppState":
@@ -242,6 +243,19 @@ class AppState:
         schedule_entries = [ScheduleEntry.from_dict(item) for item in data.get("schedule_entries", [])]
         cron_entries = [CronEntry.from_dict(item) for item in data.get("cron_entries", [])]
         queue = [QueueItem.from_dict(item) for item in data.get("queue", [])]
+        duration_probe_cache_raw = data.get("duration_probe_cache", {})
+        duration_probe_cache: dict[str, int | None] = {}
+        if isinstance(duration_probe_cache_raw, dict):
+            for key, raw_value in duration_probe_cache_raw.items():
+                if not isinstance(key, str) or not key:
+                    continue
+                if raw_value is None:
+                    duration_probe_cache[key] = None
+                    continue
+                try:
+                    duration_probe_cache[key] = max(0, int(raw_value))
+                except (TypeError, ValueError):
+                    continue
         return cls(
             media_items=media_items,
             schedule_entries=schedule_entries,
@@ -250,6 +264,7 @@ class AppState:
             schedule_auto_focus=bool(data.get("schedule_auto_focus", False)),
             fade_in_duration_seconds=_safe_positive_int(data.get("fade_in_duration_seconds"), 5),
             fade_out_duration_seconds=_safe_positive_int(data.get("fade_out_duration_seconds"), 5),
+            duration_probe_cache=duration_probe_cache,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -261,4 +276,5 @@ class AppState:
             "schedule_auto_focus": self.schedule_auto_focus,
             "fade_in_duration_seconds": self.fade_in_duration_seconds,
             "fade_out_duration_seconds": self.fade_out_duration_seconds,
+            "duration_probe_cache": self.duration_probe_cache,
         }

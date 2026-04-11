@@ -121,6 +121,9 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
     fade_out_duration_row = connection.execute(
         "SELECT value FROM app_meta WHERE key = 'fade_out_duration_seconds'"
     ).fetchone()
+    duration_probe_cache_row = connection.execute(
+        "SELECT value FROM app_meta WHERE key = 'duration_probe_cache'"
+    ).fetchone()
     try:
         fade_in_duration_seconds = max(
             1, int(fade_in_duration_row["value"] if fade_in_duration_row is not None else 5)
@@ -133,6 +136,12 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
         )
     except (TypeError, ValueError):
         fade_out_duration_seconds = 5
+    try:
+        duration_probe_cache = json.loads(
+            duration_probe_cache_row["value"] if duration_probe_cache_row is not None else "{}"
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        duration_probe_cache = {}
     media_items = [
         {
             "id": row["id"],
@@ -227,6 +236,7 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "schedule_auto_focus": schedule_auto_focus,
             "fade_in_duration_seconds": fade_in_duration_seconds,
             "fade_out_duration_seconds": fade_out_duration_seconds,
+            "duration_probe_cache": duration_probe_cache,
         }
     )
 
@@ -362,6 +372,14 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
             (str(max(1, state.fade_out_duration_seconds)),),
+        )
+        connection.execute(
+            """
+            INSERT INTO app_meta(key, value)
+            VALUES('duration_probe_cache', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (json.dumps(state.duration_probe_cache, separators=(",", ":")),),
         )
 
 
