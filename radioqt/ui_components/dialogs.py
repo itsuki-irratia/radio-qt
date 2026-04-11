@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import QDateTime
+from PySide6.QtCore import QDateTime, Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QTextBrowser,
     QVBoxLayout,
     QDateTimeEdit,
@@ -226,6 +228,7 @@ class ConfigurationDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Configuration")
+        self.resize(460, 220)
 
         self._fade_in_spinbox = QSpinBox(self)
         self._fade_in_spinbox.setRange(1, 120)
@@ -237,9 +240,27 @@ class ConfigurationDialog(QDialog):
         self._fade_out_spinbox.setValue(max(1, fade_out_duration_seconds))
         self._fade_out_spinbox.setSuffix(" s")
 
-        form = QFormLayout()
-        form.addRow("Fade in duration:", self._fade_in_spinbox)
-        form.addRow("Fade out duration:", self._fade_out_spinbox)
+        self._properties_table = QTableWidget(self)
+        self._properties_table.setColumnCount(2)
+        self._properties_table.setRowCount(2)
+        self._properties_table.setHorizontalHeaderLabels(["Property", "Value"])
+        self._properties_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._properties_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._properties_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._properties_table.setAlternatingRowColors(True)
+        self._properties_table.verticalHeader().setVisible(False)
+        self._properties_table.horizontalHeader().setStretchLastSection(True)
+
+        fade_in_item = QTableWidgetItem("Fade in duration")
+        fade_in_item.setFlags(fade_in_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        fade_out_item = QTableWidgetItem("Fade out duration")
+        fade_out_item.setFlags(fade_out_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+        self._properties_table.setItem(0, 0, fade_in_item)
+        self._properties_table.setCellWidget(0, 1, self._fade_in_spinbox)
+        self._properties_table.setItem(1, 0, fade_out_item)
+        self._properties_table.setCellWidget(1, 1, self._fade_out_spinbox)
+        self._properties_table.resizeColumnsToContents()
 
         hint = QLabel(
             "These values are used when schedule rows have Fade In / Fade Out enabled.",
@@ -252,7 +273,7 @@ class ConfigurationDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
+        layout.addWidget(self._properties_table)
         layout.addWidget(hint)
         layout.addWidget(buttons)
 
