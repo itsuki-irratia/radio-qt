@@ -9,6 +9,11 @@ from PySide6.QtWidgets import QComboBox, QTableWidget, QTableWidgetItem, QWidget
 from ..models import CronEntry, MediaItem, ScheduleEntry, SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED
 
 
+class NoScrollComboBox(QComboBox):
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+
 def refresh_urls_table(
     urls_table: QTableWidget,
     media_items: dict[str, MediaItem],
@@ -53,7 +58,7 @@ def refresh_cron_table(
         media_item.setToolTip(media_source)
         cron_table.setItem(row, 1, media_item)
 
-        hard_sync_selector = QComboBox(cron_table)
+        hard_sync_selector = NoScrollComboBox(cron_table)
         hard_sync_selector.addItems(["Yes", "No"])
         hard_sync_selector.setCurrentText("Yes" if entry.hard_sync else "No")
         hard_sync_selector.setToolTip(media_source)
@@ -62,7 +67,7 @@ def refresh_cron_table(
         )
         cron_table.setCellWidget(row, 2, hard_sync_selector)
 
-        status_selector = QComboBox(cron_table)
+        status_selector = NoScrollComboBox(cron_table)
         status_selector.addItems(["Enabled", "Disabled"])
         status_selector.setCurrentText("Enabled" if entry.enabled else "Disabled")
         status_selector.setToolTip(media_source)
@@ -126,7 +131,7 @@ def refresh_schedule_table(
         cron_globally_disabled = cron_entry is not None and not cron_entry.enabled
         is_locked = entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}
 
-        hard_sync_selector = QComboBox(schedule_table)
+        hard_sync_selector = NoScrollComboBox(schedule_table)
         hard_sync_selector.addItems(["Yes", "No"])
         hard_sync_selector.setCurrentText("Yes" if entry.hard_sync else "No")
         hard_sync_selector.setEnabled(not is_locked)
@@ -137,7 +142,7 @@ def refresh_schedule_table(
         apply_widget_palette(hard_sync_selector, palette)
         schedule_table.setCellWidget(row, 3, hard_sync_selector)
 
-        status_selector = QComboBox(schedule_table)
+        status_selector = NoScrollComboBox(schedule_table)
         if cron_globally_disabled:
             status_selector.addItem("Disabled")
         else:
