@@ -259,6 +259,7 @@ class ConfigurationDialog(QDialog):
         *,
         fade_in_duration_seconds: int,
         fade_out_duration_seconds: int,
+        font_size_points: int,
         library_tabs: list[LibraryTab],
         supported_extensions: list[str],
     ) -> None:
@@ -273,6 +274,9 @@ class ConfigurationDialog(QDialog):
         self._fade_duration_spinbox = QSpinBox(self)
         self._fade_duration_spinbox.setRange(1, 120)
         self._fade_duration_spinbox.setValue(shared_initial_duration)
+        self._font_size_spinbox = QSpinBox(self)
+        self._font_size_spinbox.setRange(6, 72)
+        self._font_size_spinbox.setValue(max(6, int(font_size_points)))
         self._configured_library_tabs: list[LibraryTab] = list(library_tabs)
         self._configured_supported_extensions: list[str] = list(supported_extensions)
 
@@ -288,7 +292,7 @@ class ConfigurationDialog(QDialog):
         general_layout = QVBoxLayout(general_page)
         self._properties_table = QTableWidget(self)
         self._properties_table.setColumnCount(2)
-        self._properties_table.setRowCount(1)
+        self._properties_table.setRowCount(2)
         self._properties_table.setHorizontalHeaderLabels(["Property", "Value"])
         self._properties_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._properties_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -299,9 +303,13 @@ class ConfigurationDialog(QDialog):
 
         fade_duration_item = QTableWidgetItem("Fade In / Fade Out in seconds")
         fade_duration_item.setFlags(fade_duration_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        font_size_item = QTableWidgetItem("Font size (pt)")
+        font_size_item.setFlags(font_size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
         self._properties_table.setItem(0, 0, fade_duration_item)
         self._properties_table.setCellWidget(0, 1, self._fade_duration_spinbox)
+        self._properties_table.setItem(1, 0, font_size_item)
+        self._properties_table.setCellWidget(1, 1, self._font_size_spinbox)
         self._properties_table.resizeColumnsToContents()
         general_layout.addWidget(self._properties_table)
         general_layout.addStretch()
@@ -378,6 +386,9 @@ class ConfigurationDialog(QDialog):
 
     def fade_duration_seconds(self) -> int:
         return self._fade_duration_spinbox.value()
+
+    def font_size_points(self) -> int:
+        return self._font_size_spinbox.value()
 
     def library_tabs(self) -> list[LibraryTab]:
         collected_settings = self._collect_settings_values(show_warning=False)

@@ -37,6 +37,7 @@ def _normalize_extensions(raw_values: Any) -> list[str]:
 @dataclass(slots=True)
 class AppConfig:
     fade_duration_seconds: int = 5
+    font_size: int | None = None
     library_tabs: list[LibraryTab] = field(default_factory=list)
     supported_extensions: list[str] = field(default_factory=lambda: list(DEFAULT_SUPPORTED_EXTENSIONS))
 
@@ -47,8 +48,18 @@ class AppConfig:
             fade_in_legacy = _safe_positive_int(data.get("fade_in_duration_seconds"), 5)
             fade_out_legacy = _safe_positive_int(data.get("fade_out_duration_seconds"), 5)
             fade_duration_seconds = max(fade_in_legacy, fade_out_legacy)
+
+        font_size: int | None = None
+        font_payload = data.get("font")
+        if isinstance(font_payload, dict) and "size" in font_payload:
+            font_size = _safe_positive_int(font_payload.get("size"), 10)
+        elif "font_size" in data:
+            # Backward-compatible support for legacy flat key.
+            font_size = _safe_positive_int(data.get("font_size"), 10)
+
         return cls(
             fade_duration_seconds=fade_duration_seconds,
+            font_size=font_size,
             library_tabs=[
                 LibraryTab.from_dict(item)
                 for item in data.get("library_tabs", [])
@@ -58,8 +69,12 @@ class AppConfig:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        normalized_font_size = max(1, self.font_size if self.font_size is not None else 10)
         return {
             "fade": max(1, self.fade_duration_seconds),
+            "font": {
+                "size": normalized_font_size,
+            },
             "library_tabs": [tab.to_dict() for tab in self.library_tabs],
             "supported_extensions": _normalize_extensions(self.supported_extensions),
         }
@@ -110,6 +125,34 @@ def _parse_settings_yaml(raw_text: str) -> dict[str, Any]:
             except ValueError:
                 pass
             continue
+        if line.startswith("font_size:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["font_size"] = int(raw_value)
+            except ValueError:
+                pass
+            continue
+        if line.startswith("font:"):
+            font_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                index += 1
+                if ":" not in detail:
+                    continue
+                key, value = detail.split(":", 1)
+                normalized_key = key.strip()
+                raw_value = value.strip()
+                if normalized_key == "size":
+                    try:
+                        font_data["size"] = int(raw_value)
+                    except ValueError:
+                        continue
+            if font_data:
+                data["font"] = font_data
+            continue
         if line.startswith("supported_extensions:"):
             extensions: list[str] = []
             while index < len(lines):
@@ -156,6 +199,9 @@ def _dump_settings_yaml(config: AppConfig) -> str:
     payload = config.to_dict()
     lines: list[str] = []
     lines.append(f"fade: {int(payload['fade'])}")
+    font_payload = payload.get("font", {})
+    lines.append("font:")
+    lines.append(f"  size: {int(font_payload.get('size', 10))}")
     lines.append("library_tabs:")
     for tab in payload["library_tabs"]:
         title = _string_as_yaml(str(tab.get("title", "")))

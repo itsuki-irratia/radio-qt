@@ -1,4 +1,6 @@
 fade: 5
+font:
+  size: 16
 library_tabs:
   - title: "Downloads"
     path: "/home/zital/Downloads"

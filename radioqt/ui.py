@@ -16,6 +16,7 @@ from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QDateEdit,
     QDialog,
@@ -146,6 +147,7 @@ class MainWindow(QMainWindow):
         self._schedule_filter_date = datetime.now().astimezone().date()
         self._current_playback_position_ms = 0
         self._shutting_down = False
+        self._font_size_points = self._default_font_size_points()
 
         self._player = MediaPlayerController(self)
         self._scheduler = RadioScheduler(parent=self)
@@ -178,20 +180,16 @@ class MainWindow(QMainWindow):
         self._schedule_focus_timer.start()
 
     @staticmethod
-    def _make_tab_label(text: str, marker_color: str) -> QWidget:
+    def _make_tab_marker(marker_color: str) -> QWidget:
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        text_label = QLabel(text, container)
+        layout.setSpacing(0)
         marker = QLabel(container)
-        marker.setFixedSize(QSize(10, 10))
+        marker.setFixedSize(QSize(8, 8))
         marker.setStyleSheet(
             f"background-color: {marker_color}; border: 1px solid rgba(0, 0, 0, 0.25);"
         )
-
-        layout.addWidget(text_label)
         layout.addWidget(marker)
         return container
 
@@ -568,11 +566,11 @@ class MainWindow(QMainWindow):
 
         cron_layout.addWidget(self._cron_table)
         cron_layout.addLayout(cron_buttons_row)
-        cron_tab_index = self._schedule_tabs.addTab(cron_tab, "")
+        cron_tab_index = self._schedule_tabs.addTab(cron_tab, "CRON")
         self._schedule_tabs.tabBar().setTabButton(
             cron_tab_index,
             self._schedule_tabs.tabBar().ButtonPosition.RightSide,
-            self._make_tab_label("CRON", "#ffd166"),
+            self._make_tab_marker("#ffd166"),
         )
 
         layout.addWidget(self._schedule_tabs)
@@ -708,6 +706,9 @@ class MainWindow(QMainWindow):
         shared_fade_seconds = max(1, app_config.fade_duration_seconds)
         self._fade_in_duration_seconds = shared_fade_seconds
         self._fade_out_duration_seconds = shared_fade_seconds
+        if app_config.font_size is not None:
+            self._font_size_points = max(1, app_config.font_size)
+        self._apply_global_font_size(self._font_size_points)
         loaded_schedule_count = len(self._schedule_entries)
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
@@ -784,6 +785,7 @@ class MainWindow(QMainWindow):
     def _save_settings(self) -> None:
         app_config = AppConfig(
             fade_duration_seconds=max(self._fade_in_duration_seconds, self._fade_out_duration_seconds),
+            font_size=self._font_size_points,
             library_tabs=list(self._library_tab_configs),
             supported_extensions=list(self._supported_extensions),
         )
@@ -791,11 +793,16 @@ class MainWindow(QMainWindow):
 
     def _load_or_initialize_app_config(self, state: AppState) -> AppConfig:
         if self._settings_path.exists():
-            return load_app_config(self._settings_path)
+            config = load_app_config(self._settings_path)
+            if config.font_size is None:
+                config.font_size = self._font_size_points
+                save_app_config(self._settings_path, config)
+            return config
 
         # Seed initial YAML config from legacy DB settings if available.
         seeded_config = AppConfig(
             fade_duration_seconds=max(1, state.fade_in_duration_seconds, state.fade_out_duration_seconds),
+            font_size=self._font_size_points,
             library_tabs=list(state.library_tabs),
             supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
         )
@@ -820,6 +827,28 @@ class MainWindow(QMainWindow):
                 shutil.copy2(self._legacy_state_json_path, target_legacy_json_path)
             except OSError:
                 pass
+
+    @staticmethod
+    def _default_font_size_points() -> int:
+        app = QApplication.instance()
+        if app is None:
+            return 10
+        point_size = app.font().pointSize()
+        if point_size <= 0:
+            return 10
+        return int(point_size)
+
+    def _apply_global_font_size(self, font_size_points: int) -> None:
+        normalized_size = max(1, int(font_size_points))
+        app = QApplication.instance()
+        if app is None:
+            self._font_size_points = normalized_size
+            return
+        font = app.font()
+        if font.pointSize() != normalized_size:
+            font.setPointSize(normalized_size)
+            app.setFont(font)
+        self._font_size_points = normalized_size
 
     def _fade_in_duration_ms(self) -> int:
         return max(1, self._fade_in_duration_seconds) * 1000
@@ -2684,6 +2713,7 @@ class MainWindow(QMainWindow):
             self,
             fade_in_duration_seconds=self._fade_in_duration_seconds,
             fade_out_duration_seconds=self._fade_out_duration_seconds,
+            font_size_points=self._font_size_points,
             library_tabs=self._library_tab_configs,
             supported_extensions=self._supported_extensions,
         )
@@ -2691,21 +2721,25 @@ class MainWindow(QMainWindow):
             return
 
         next_shared_fade_duration = max(1, dialog.fade_duration_seconds())
+        next_font_size_points = max(1, dialog.font_size_points())
         next_library_tabs = dialog.library_tabs()
         next_supported_extensions = self._normalize_supported_extensions(dialog.supported_extensions())
         fade_changed = not (
             next_shared_fade_duration == self._fade_in_duration_seconds
             and next_shared_fade_duration == self._fade_out_duration_seconds
         )
+        font_size_changed = next_font_size_points != self._font_size_points
         library_tabs_changed = next_library_tabs != self._library_tab_configs
         supported_extensions_changed = next_supported_extensions != self._supported_extensions
 
-        if not fade_changed and not library_tabs_changed and not supported_extensions_changed:
+        if not fade_changed and not font_size_changed and not library_tabs_changed and not supported_extensions_changed:
             return
 
         if fade_changed:
             self._fade_in_duration_seconds = next_shared_fade_duration
             self._fade_out_duration_seconds = next_shared_fade_duration
+        if font_size_changed:
+            self._apply_global_font_size(next_font_size_points)
         if supported_extensions_changed:
             self._supported_extensions = next_supported_extensions
             self._apply_supported_extensions_to_filesystem_models()
@@ -2716,6 +2750,7 @@ class MainWindow(QMainWindow):
         self._append_log(
             f"Updated settings: fade in={self._fade_in_duration_seconds}s, "
             f"fade out={self._fade_out_duration_seconds}s, "
+            f"font={self._font_size_points}pt, "
             f"custom library tabs={len(self._library_tab_configs)}, "
             f"extensions={','.join(self._supported_extensions)}"
         )
