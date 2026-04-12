@@ -188,12 +188,23 @@ class MainWindow(QMainWindow):
             return False
         return media_looks_like_video_source(media.source)
 
+    @staticmethod
+    def _player_media_label(media: MediaItem) -> str:
+        local_path = local_media_path_from_source(media.source)
+        if local_path is not None:
+            expanded = local_path.expanduser()
+            try:
+                return str(expanded.resolve())
+            except OSError:
+                return str(expanded)
+        return media.title
+
     def _update_player_visual_state(self) -> None:
         media = self._player.current_media
         if self._media_looks_like_video(media):
             self._player_display_layout.setCurrentWidget(self._video_widget)
             return
-        title = media.title if media is not None else "No media"
+        title = self._player_media_label(media) if media is not None else "No media"
         self._waveform_widget.set_media_state(title, self._player.is_playing())
         self._player_display_layout.setCurrentWidget(self._waveform_widget)
 
@@ -220,13 +231,13 @@ class MainWindow(QMainWindow):
         now_playing_layout.addStretch()
 
         controls_layout = QHBoxLayout()
+        control_button_size = QSize(36, 36)
+        control_button_icon_size = QSize(20, 20)
         self._play_button = QPushButton("")
         self._play_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
-        self._play_button.setIconSize(QSize(20, 20))
         self._play_button.setToolTip("Play")
         self._stop_button = QPushButton("")
         self._stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
-        self._stop_button.setIconSize(QSize(20, 20))
         self._stop_button.setToolTip("Stop")
         self._set_automation_status(self._automation_playing)
         controls_layout.addWidget(self._play_button)
@@ -244,6 +255,15 @@ class MainWindow(QMainWindow):
         self._fade_out_button = QPushButton("")
         self._fade_out_button.setToolTip("Fade Out")
         self._fade_out_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowDown))
+        for button in (
+            self._play_button,
+            self._stop_button,
+            self._mute_button,
+            self._fade_in_button,
+            self._fade_out_button,
+        ):
+            button.setFixedSize(control_button_size)
+            button.setIconSize(control_button_icon_size)
         volume_layout.addWidget(self._mute_button)
         volume_layout.addWidget(self._fade_in_button)
         volume_layout.addWidget(self._fade_out_button)
@@ -388,7 +408,7 @@ class MainWindow(QMainWindow):
         filter_row.addStretch()
 
         self._schedule_overlap_note = QLabel(
-            "Overlap rule: the next scheduled item can cut off the current one.",
+            "The next scheduled item can cut off the current one.",
             datetime_tab,
         )
         self._schedule_overlap_note.setWordWrap(True)
@@ -1311,8 +1331,9 @@ class MainWindow(QMainWindow):
             self._now_playing_label.setText("None")
             return
         elapsed_seconds = max(0, self._current_playback_position_ms // 1000)
+        media_label = self._player_media_label(media)
         self._now_playing_label.setText(
-            f"{media.title} - {self._format_duration(elapsed_seconds)}"
+            f"{media_label} - {self._format_duration(elapsed_seconds)}"
         )
 
     def _focus_schedule_entry(self, entry_id: str, force: bool = False) -> None:
@@ -2576,7 +2597,7 @@ class MainWindow(QMainWindow):
                     # fallback to making the main window fullscreen
                     self.showFullScreen()
             else:
-                title = media.title if media is not None else "Now Playing"
+                title = self._player_media_label(media) if media is not None else "Now Playing"
                 self._fullscreen_overlay.set_text(title)
                 self._fullscreen_overlay.showFullScreen()
         else:
