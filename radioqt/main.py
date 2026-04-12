@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from PySide6.QtCore import QLibraryInfo
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from .ui import MainWindow
@@ -115,11 +116,26 @@ def _parse_cli_args(argv: list[str]) -> tuple[Path, list[str]]:
     return config_dir, [argv[0], *qt_args]
 
 
+def _application_icon() -> QIcon | None:
+    icon_path = Path(__file__).resolve().parent / "radioqt.svg"
+    if not icon_path.is_file():
+        return None
+    icon = QIcon(str(icon_path))
+    if icon.isNull():
+        return None
+    return icon
+
+
 def run() -> int:
     config_dir, qt_argv = _parse_cli_args(sys.argv)
     _configure_multimedia_runtime()
     app = QApplication(qt_argv)
+    app_icon = _application_icon()
+    if app_icon is not None:
+        app.setWindowIcon(app_icon)
     window = MainWindow(config_dir=config_dir)
+    if app_icon is not None:
+        window.setWindowIcon(app_icon)
     window.show()
     return app.exec()
 
