@@ -220,11 +220,31 @@ class QueueItem:
 
 
 @dataclass(slots=True)
+class LibraryTab:
+    title: str
+    path: str
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LibraryTab":
+        return cls(
+            title=str(data.get("title", "")).strip(),
+            path=str(data.get("path", "")).strip(),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "path": self.path,
+        }
+
+
+@dataclass(slots=True)
 class AppState:
     media_items: list[MediaItem] = field(default_factory=list)
     schedule_entries: list[ScheduleEntry] = field(default_factory=list)
     cron_entries: list[CronEntry] = field(default_factory=list)
     queue: list[QueueItem] = field(default_factory=list)
+    library_tabs: list[LibraryTab] = field(default_factory=list)
     schedule_auto_focus: bool = False
     logs_visible: bool = True
     fade_in_duration_seconds: int = 5
@@ -244,6 +264,11 @@ class AppState:
         schedule_entries = [ScheduleEntry.from_dict(item) for item in data.get("schedule_entries", [])]
         cron_entries = [CronEntry.from_dict(item) for item in data.get("cron_entries", [])]
         queue = [QueueItem.from_dict(item) for item in data.get("queue", [])]
+        library_tabs = [
+            LibraryTab.from_dict(item)
+            for item in data.get("library_tabs", [])
+            if isinstance(item, dict)
+        ]
         duration_probe_cache_raw = data.get("duration_probe_cache", {})
         duration_probe_cache: dict[str, int | None] = {}
         if isinstance(duration_probe_cache_raw, dict):
@@ -262,6 +287,7 @@ class AppState:
             schedule_entries=schedule_entries,
             cron_entries=cron_entries,
             queue=queue,
+            library_tabs=library_tabs,
             schedule_auto_focus=bool(data.get("schedule_auto_focus", False)),
             logs_visible=bool(data.get("logs_visible", True)),
             fade_in_duration_seconds=_safe_positive_int(data.get("fade_in_duration_seconds"), 5),
@@ -275,6 +301,7 @@ class AppState:
             "schedule_entries": [entry.to_dict() for entry in self.schedule_entries],
             "cron_entries": [entry.to_dict() for entry in self.cron_entries],
             "queue": [item.to_dict() for item in self.queue],
+            "library_tabs": [tab.to_dict() for tab in self.library_tabs],
             "schedule_auto_focus": self.schedule_auto_focus,
             "logs_visible": self.logs_visible,
             "fade_in_duration_seconds": self.fade_in_duration_seconds,

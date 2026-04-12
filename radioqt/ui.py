@@ -56,6 +56,7 @@ from .library import (
 from .models import (
     AppState,
     CronEntry,
+    LibraryTab,
     MediaItem,
     QueueItem,
     SCHEDULE_STATUS_DISABLED,
@@ -124,6 +125,9 @@ class MainWindow(QMainWindow):
         self._schedule_entries: list[ScheduleEntry] = []
         self._cron_entries: list[CronEntry] = []
         self._play_queue: deque[QueueItem] = deque()
+        self._library_tab_configs: list[LibraryTab] = []
+        self._library_tab_sources: dict[QWidget, tuple[str, QTreeView | None, QFileSystemModel | None]] = {}
+        self._custom_library_tab_widgets: list[QWidget] = []
         self._last_source_panel = "filesystem"
         self._automation_playing = False
         self._schedule_auto_focus_enabled = False
@@ -307,7 +311,7 @@ class MainWindow(QMainWindow):
     def _build_menu_bar(self) -> None:
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("&File")
-        self._configuration_action = QAction("&Configuration...", self)
+        self._configuration_action = QAction("&Settings...", self)
         file_menu.addAction(self._configuration_action)
         view_menu = menu_bar.addMenu("&View")
         self._toggle_logs_action = QAction("&Logs", self)
@@ -327,34 +331,26 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
 
         self._library_tabs = QTabWidget(group)
+        self._library_tab_sources = {}
+        self._custom_library_tab_widgets = []
 
         # --- Filesystem tab ---
-        filesystem_tab = QWidget()
-        filesystem_layout = QVBoxLayout(filesystem_tab)
-        filesystem_layout.setContentsMargins(8, 8, 8, 8)
-
-        root_path = "/"
-        self._filesystem_model = QFileSystemModel(group)
-        self._filesystem_model.setRootPath(root_path)
-
-        self._filesystem_view = QTreeView(filesystem_tab)
-        self._filesystem_view.setModel(self._filesystem_model)
-        self._filesystem_view.setRootIndex(self._filesystem_model.index(root_path))
-        self._filesystem_view.setSelectionMode(QAbstractItemView.SingleSelection)
-        self._filesystem_view.setAlternatingRowColors(True)
-        self._filesystem_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        for column in (1, 2, 3):
-            self._filesystem_view.hideColumn(column)
-        filesystem_layout.addWidget(self._filesystem_view)
-
-        self._library_tabs.addTab(filesystem_tab, "Filesystem")
+        self._filesystem_tab_widget, self._filesystem_view, self._filesystem_model = (
+            self._create_filesystem_tab_widget("/", self._library_tabs)
+        )
+        self._library_tabs.addTab(self._filesystem_tab_widget, "Filesystem")
+        self._library_tab_sources[self._filesystem_tab_widget] = (
+            "filesystem",
+            self._filesystem_view,
+            self._filesystem_model,
+        )
 
         # --- Streamings tab ---
-        streamings_tab = QWidget()
-        streamings_layout = QVBoxLayout(streamings_tab)
+        self._streamings_tab_widget = QWidget()
+        streamings_layout = QVBoxLayout(self._streamings_tab_widget)
         streamings_layout.setContentsMargins(8, 8, 8, 8)
 
-        self._urls_table = QTableWidget(streamings_tab)
+        self._urls_table = QTableWidget(self._streamings_tab_widget)
         self._urls_table.setColumnCount(2)
         self._urls_table.setHorizontalHeaderLabels(["Title", "URL"])
         self._urls_table.horizontalHeader().setStretchLastSection(True)
@@ -372,10 +368,84 @@ class MainWindow(QMainWindow):
         buttons_row.addWidget(self._add_url_button)
         streamings_layout.addLayout(buttons_row)
 
-        self._library_tabs.addTab(streamings_tab, "Streamings")
+        self._library_tabs.addTab(self._streamings_tab_widget, "Streamings")
+        self._library_tab_sources[self._streamings_tab_widget] = ("urls", None, None)
 
         layout.addWidget(self._library_tabs)
         return group
+
+    @staticmethod
+    def _normalize_library_tab_path(path: str) -> str:
+        expanded = Path(path).expanduser()
+        try:
+            return str(expanded.resolve())
+        except OSError:
+            return str(expanded)
+
+    def _create_filesystem_tab_widget(
+        self,
+        root_path: str,
+        parent: QWidget,
+    ) -> tuple[QWidget, QTreeView, QFileSystemModel]:
+        filesystem_tab = QWidget(parent)
+        filesystem_layout = QVBoxLayout(filesystem_tab)
+        filesystem_layout.setContentsMargins(8, 8, 8, 8)
+
+        normalized_root = self._normalize_library_tab_path(root_path)
+        filesystem_model = QFileSystemModel(filesystem_tab)
+        root_index = filesystem_model.setRootPath(normalized_root)
+
+        filesystem_view = QTreeView(filesystem_tab)
+        filesystem_view.setModel(filesystem_model)
+        if not root_index.isValid():
+            root_index = filesystem_model.setRootPath("/")
+        filesystem_view.setRootIndex(root_index)
+        filesystem_view.setSelectionMode(QAbstractItemView.SingleSelection)
+        filesystem_view.setAlternatingRowColors(True)
+        filesystem_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        for column in (1, 2, 3):
+            filesystem_view.hideColumn(column)
+        filesystem_layout.addWidget(filesystem_view)
+
+        return filesystem_tab, filesystem_view, filesystem_model
+
+    def _rebuild_custom_library_tabs(self) -> None:
+        current_widget = self._library_tabs.currentWidget()
+
+        for custom_tab in self._custom_library_tab_widgets:
+            tab_index = self._library_tabs.indexOf(custom_tab)
+            if tab_index >= 0:
+                self._library_tabs.removeTab(tab_index)
+            self._library_tab_sources.pop(custom_tab, None)
+            custom_tab.deleteLater()
+        self._custom_library_tab_widgets = []
+
+        valid_custom_tabs: list[LibraryTab] = []
+
+        for tab_config in self._library_tab_configs:
+            title = tab_config.title.strip()
+            path = self._normalize_library_tab_path(tab_config.path)
+            if not title:
+                continue
+            if not Path(path).is_dir():
+                continue
+
+            tab_widget, filesystem_view, filesystem_model = self._create_filesystem_tab_widget(
+                path,
+                self._library_tabs,
+            )
+            self._library_tabs.addTab(tab_widget, title)
+            self._custom_library_tab_widgets.append(tab_widget)
+            self._library_tab_sources[tab_widget] = ("filesystem", filesystem_view, filesystem_model)
+            valid_custom_tabs.append(LibraryTab(title=title, path=path))
+
+        self._library_tab_configs = valid_custom_tabs
+        if current_widget is not None:
+            current_index = self._library_tabs.indexOf(current_widget)
+            if current_index >= 0:
+                self._library_tabs.setCurrentIndex(current_index)
+
+        self._on_library_tab_changed(self._library_tabs.currentIndex())
 
     def _build_schedule_panel(self) -> QWidget:
         group = QGroupBox("Schedule")
@@ -580,6 +650,7 @@ class MainWindow(QMainWindow):
         self._schedule_entries = state.schedule_entries
         self._cron_entries = state.cron_entries
         self._play_queue = deque(state.queue)
+        self._library_tab_configs = list(state.library_tabs)
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
         self._logs_visible = state.logs_visible
         self._fade_in_duration_seconds = max(1, state.fade_in_duration_seconds)
@@ -604,6 +675,7 @@ class MainWindow(QMainWindow):
         self._toggle_logs_action.setChecked(self._logs_visible)
         self._toggle_logs_action.blockSignals(False)
         self._set_logs_visible(self._logs_visible)
+        self._rebuild_custom_library_tabs()
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
         runtime_pruned_count = max(0, loaded_schedule_count - len(self._schedule_entries))
@@ -643,6 +715,7 @@ class MainWindow(QMainWindow):
             schedule_entries=self._schedule_entries,
             cron_entries=self._cron_entries,
             queue=list(self._play_queue),
+            library_tabs=self._library_tab_configs,
             schedule_auto_focus=self._schedule_auto_focus_enabled,
             logs_visible=self._logs_visible,
             fade_in_duration_seconds=self._fade_in_duration_seconds,
@@ -1403,13 +1476,27 @@ class MainWindow(QMainWindow):
             return f"missing:{media_id[:8]}"
         return media.title
 
+    def _current_library_tab_descriptor(
+        self,
+    ) -> tuple[str, QTreeView | None, QFileSystemModel | None]:
+        current_widget = self._library_tabs.currentWidget()
+        if current_widget is None:
+            return "filesystem", self._filesystem_view, self._filesystem_model
+        return self._library_tab_sources.get(
+            current_widget,
+            ("filesystem", self._filesystem_view, self._filesystem_model),
+        )
+
     def _selected_media_id(self) -> str | None:
-        if self._last_source_panel == "urls":
+        panel_kind, filesystem_view, filesystem_model = self._current_library_tab_descriptor()
+        if panel_kind == "urls":
             return selected_url_media_id(self._urls_table)
 
+        if filesystem_view is None or filesystem_model is None:
+            return None
         media_id, created = selected_filesystem_media_id(
-            self._filesystem_view,
-            self._filesystem_model,
+            filesystem_view,
+            filesystem_model,
             self._media_items,
             self._media_duration_cache,
         )
@@ -1472,7 +1559,12 @@ class MainWindow(QMainWindow):
 
     @Slot(int)
     def _on_library_tab_changed(self, index: int) -> None:
-        self._last_source_panel = "urls" if index == 1 else "filesystem"
+        tab_widget = self._library_tabs.widget(index) if index >= 0 else None
+        if tab_widget is None:
+            self._last_source_panel = "filesystem"
+            return
+        panel_kind, _, _ = self._library_tab_sources.get(tab_widget, ("filesystem", None, None))
+        self._last_source_panel = "urls" if panel_kind == "urls" else "filesystem"
 
     @Slot()
     def _add_media_url(self) -> None:
@@ -2533,23 +2625,33 @@ class MainWindow(QMainWindow):
             self,
             fade_in_duration_seconds=self._fade_in_duration_seconds,
             fade_out_duration_seconds=self._fade_out_duration_seconds,
+            library_tabs=self._library_tab_configs,
         )
         if dialog.exec() != QDialog.Accepted:
             return
 
         next_shared_fade_duration = max(1, dialog.fade_duration_seconds())
-        if (
+        next_library_tabs = dialog.library_tabs()
+        fade_changed = not (
             next_shared_fade_duration == self._fade_in_duration_seconds
             and next_shared_fade_duration == self._fade_out_duration_seconds
-        ):
+        )
+        library_tabs_changed = next_library_tabs != self._library_tab_configs
+
+        if not fade_changed and not library_tabs_changed:
             return
 
-        self._fade_in_duration_seconds = next_shared_fade_duration
-        self._fade_out_duration_seconds = next_shared_fade_duration
+        if fade_changed:
+            self._fade_in_duration_seconds = next_shared_fade_duration
+            self._fade_out_duration_seconds = next_shared_fade_duration
+        if library_tabs_changed:
+            self._library_tab_configs = next_library_tabs
+            self._rebuild_custom_library_tabs()
         self._save_state()
         self._append_log(
-            f"Updated configuration: fade in={self._fade_in_duration_seconds}s, "
-            f"fade out={self._fade_out_duration_seconds}s"
+            f"Updated settings: fade in={self._fade_in_duration_seconds}s, "
+            f"fade out={self._fade_out_duration_seconds}s, "
+            f"custom library tabs={len(self._library_tab_configs)}"
         )
 
     def _set_automation_status(self, is_playing: bool) -> None:

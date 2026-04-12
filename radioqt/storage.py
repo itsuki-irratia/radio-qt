@@ -151,6 +151,9 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
         "SELECT value FROM app_meta WHERE key = 'logs_visible'"
     ).fetchone()
     logs_visible = logs_visible_row is None or logs_visible_row["value"] == "1"
+    library_tabs_row = connection.execute(
+        "SELECT value FROM app_meta WHERE key = 'library_tabs'"
+    ).fetchone()
     fade_in_duration_row = connection.execute(
         "SELECT value FROM app_meta WHERE key = 'fade_in_duration_seconds'"
     ).fetchone()
@@ -178,6 +181,12 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
         )
     except (TypeError, ValueError, json.JSONDecodeError):
         duration_probe_cache = {}
+    try:
+        library_tabs = json.loads(
+            library_tabs_row["value"] if library_tabs_row is not None else "[]"
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        library_tabs = []
     media_items = [
         {
             "id": row["id"],
@@ -263,6 +272,7 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "schedule_entries": schedule_entries,
             "cron_entries": cron_entries,
             "queue": queue,
+            "library_tabs": library_tabs,
             "schedule_auto_focus": schedule_auto_focus,
             "logs_visible": logs_visible,
             "fade_in_duration_seconds": fade_in_duration_seconds,
@@ -383,6 +393,14 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
             ("1" if state.logs_visible else "0",),
+        )
+        connection.execute(
+            """
+            INSERT INTO app_meta(key, value)
+            VALUES('library_tabs', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (json.dumps([tab.to_dict() for tab in state.library_tabs], separators=(",", ":")),),
         )
         connection.execute(
             """
