@@ -15,7 +15,10 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QListWidget,
     QSpinBox,
+    QStackedWidget,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -286,6 +289,15 @@ class ConfigurationDialog(QDialog):
         self._fade_duration_spinbox.setValue(shared_initial_duration)
         self._configured_library_tabs: list[LibraryTab] = list(library_tabs)
 
+        self._settings_sections_list = QListWidget(self)
+        self._settings_sections_list.addItem("General Settings")
+        self._settings_sections_list.addItem("Custom Paths")
+        self._settings_sections_list.setFixedWidth(190)
+
+        self._settings_pages = QStackedWidget(self)
+
+        general_page = QWidget(self)
+        general_layout = QVBoxLayout(general_page)
         self._properties_table = QTableWidget(self)
         self._properties_table.setColumnCount(2)
         self._properties_table.setRowCount(1)
@@ -303,8 +315,12 @@ class ConfigurationDialog(QDialog):
         self._properties_table.setItem(0, 0, fade_duration_item)
         self._properties_table.setCellWidget(0, 1, self._fade_duration_spinbox)
         self._properties_table.resizeColumnsToContents()
+        general_layout.addWidget(self._properties_table)
+        general_layout.addStretch()
 
-        self._library_tabs_table = QTableWidget(self)
+        custom_paths_page = QWidget(self)
+        custom_paths_layout = QVBoxLayout(custom_paths_page)
+        self._library_tabs_table = QTableWidget(custom_paths_page)
         self._library_tabs_table.setColumnCount(2)
         self._library_tabs_table.setHorizontalHeaderLabels(["Title", "Path"])
         self._library_tabs_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -317,34 +333,41 @@ class ConfigurationDialog(QDialog):
             self._append_library_tab_row(tab.title, tab.path)
 
         library_tabs_buttons = QHBoxLayout()
-        self._add_library_tab_button = QPushButton("Add Tab", self)
-        self._remove_library_tab_button = QPushButton("Remove Selected", self)
-        self._browse_library_path_button = QPushButton("Browse Path...", self)
+        self._add_library_tab_button = QPushButton("Add Tab", custom_paths_page)
+        self._browse_library_path_button = QPushButton("Browse Path...", custom_paths_page)
+        self._remove_library_tab_button = QPushButton(custom_paths_page)
+        self._remove_library_tab_button.setToolTip("Remove selected tab")
+        self._remove_library_tab_button.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
         self._add_library_tab_button.clicked.connect(self._add_library_tab_row)
         self._remove_library_tab_button.clicked.connect(self._remove_selected_library_tab_row)
         self._browse_library_path_button.clicked.connect(self._browse_selected_library_tab_path)
         library_tabs_buttons.addWidget(self._add_library_tab_button)
-        library_tabs_buttons.addWidget(self._remove_library_tab_button)
         library_tabs_buttons.addWidget(self._browse_library_path_button)
+        library_tabs_buttons.addWidget(self._remove_library_tab_button)
         library_tabs_buttons.addStretch()
+        custom_paths_layout.addWidget(self._library_tabs_table, 1)
+        custom_paths_layout.addLayout(library_tabs_buttons)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
-        buttons.accepted.connect(self._validate_and_accept)
-        buttons.rejected.connect(self.reject)
+        self._settings_pages.addWidget(general_page)
+        self._settings_pages.addWidget(custom_paths_page)
+        self._settings_sections_list.currentRowChanged.connect(self._on_settings_section_changed)
+        self._settings_sections_list.setCurrentRow(0)
+
+        settings_layout = QHBoxLayout()
+        settings_layout.addWidget(self._settings_sections_list)
+        settings_layout.addWidget(self._settings_pages, 1)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Playback", self))
-        layout.addWidget(self._properties_table)
-        layout.addWidget(QLabel("Media Library Tabs (Title + Path)", self))
-        layout.addWidget(self._library_tabs_table, 1)
-        layout.addLayout(library_tabs_buttons)
-        layout.addWidget(buttons)
+        layout.addLayout(settings_layout, 1)
 
     def fade_duration_seconds(self) -> int:
         return self._fade_duration_spinbox.value()
 
     def library_tabs(self) -> list[LibraryTab]:
-        return list(self._configured_library_tabs)
+        configured_tabs = self._collect_library_tabs(show_warning=False)
+        if configured_tabs is None:
+            return list(self._configured_library_tabs)
+        return configured_tabs
 
     @staticmethod
     def _normalize_directory_path(raw_path: str) -> str:
@@ -371,6 +394,20 @@ class ConfigurationDialog(QDialog):
         current_row = self._library_tabs_table.currentRow()
         if current_row < 0:
             return
+        title_item = self._library_tabs_table.item(current_row, 0)
+        path_item = self._library_tabs_table.item(current_row, 1)
+        title = title_item.text().strip() if title_item is not None else ""
+        path = path_item.text().strip() if path_item is not None else ""
+        details = title or path or f"row {current_row + 1}"
+        result = QMessageBox.question(
+            self,
+            "Confirm Removal",
+            f"Remove custom path '{details}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if result != QMessageBox.Yes:
+            return
         self._library_tabs_table.removeRow(current_row)
 
     def _browse_selected_library_tab_path(self) -> None:
@@ -391,7 +428,7 @@ class ConfigurationDialog(QDialog):
             current_path_item.setText(normalized_path)
         self._library_tabs_table.resizeColumnsToContents()
 
-    def _validate_and_accept(self) -> None:
+    def _collect_library_tabs(self, *, show_warning: bool) -> list[LibraryTab] | None:
         configured_tabs: list[LibraryTab] = []
         for row in range(self._library_tabs_table.rowCount()):
             title_item = self._library_tabs_table.item(row, 0)
@@ -401,21 +438,41 @@ class ConfigurationDialog(QDialog):
             if not title and not path:
                 continue
             if not title or not path:
-                QMessageBox.warning(
-                    self,
-                    "Invalid Tab Configuration",
-                    f"Row {row + 1}: both Title and Path are required.",
-                )
+                if show_warning:
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Tab Configuration",
+                        f"Row {row + 1}: both Title and Path are required.",
+                    )
                 return
             normalized_path = self._normalize_directory_path(path)
             if not Path(normalized_path).is_dir():
-                QMessageBox.warning(
-                    self,
-                    "Invalid Tab Path",
-                    f"Row {row + 1}: path does not exist or is not a directory:\n{normalized_path}",
-                )
+                if show_warning:
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Tab Path",
+                        f"Row {row + 1}: path does not exist or is not a directory:\n{normalized_path}",
+                    )
                 return
             configured_tabs.append(LibraryTab(title=title, path=normalized_path))
+        return configured_tabs
 
+    def _on_settings_section_changed(self, index: int) -> None:
+        if 0 <= index < self._settings_pages.count():
+            self._settings_pages.setCurrentIndex(index)
+
+    def reject(self) -> None:
+        configured_tabs = self._collect_library_tabs(show_warning=True)
+        if configured_tabs is None:
+            return
         self._configured_library_tabs = configured_tabs
-        self.accept()
+        super().accept()
+
+    def closeEvent(self, event) -> None:
+        configured_tabs = self._collect_library_tabs(show_warning=True)
+        if configured_tabs is None:
+            event.ignore()
+            return
+        self._configured_library_tabs = configured_tabs
+        self.setResult(QDialog.Accepted)
+        event.accept()
