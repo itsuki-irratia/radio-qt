@@ -407,13 +407,6 @@ class MainWindow(QMainWindow):
         filter_row.addWidget(self._schedule_focus_checkbox)
         filter_row.addStretch()
 
-        self._schedule_overlap_note = QLabel(
-            "The next scheduled item can cut off the current one.",
-            datetime_tab,
-        )
-        self._schedule_overlap_note.setWordWrap(True)
-        self._schedule_overlap_note.setStyleSheet("color: #6b7280; font-size: 11px;")
-
         self._schedule_table = QTableWidget(datetime_tab)
         self._schedule_table.setColumnCount(7)
         self._schedule_table.setHorizontalHeaderLabels(
@@ -430,7 +423,6 @@ class MainWindow(QMainWindow):
         self._add_schedule_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         datetime_layout.addLayout(filter_row)
-        datetime_layout.addWidget(self._schedule_overlap_note)
         datetime_layout.addWidget(self._schedule_table)
         datetime_layout.addWidget(self._add_schedule_button)
         self._schedule_tabs.addTab(datetime_tab, "Date Time")
