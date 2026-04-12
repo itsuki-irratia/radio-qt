@@ -83,17 +83,10 @@ class WaveformWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#111827"))
 
-        title_color = QColor("#f9fafb") if self._active else QColor("#d1d5db")
-        subtitle_color = QColor("#9ca3af")
         accent_color = QColor("#38bdf8") if self._active else QColor("#475569")
         baseline_color = QColor("#1f2937")
 
-        painter.setPen(title_color)
-        painter.drawText(24, 34, self._title)
-        painter.setPen(subtitle_color)
-        painter.drawText(24, 56, "Audio waveform")
-
-        center_y = int(self.height() * 0.62)
+        center_y = int(self.height() * 0.5)
         painter.setPen(baseline_color)
         painter.drawLine(24, center_y, self.width() - 24, center_y)
 
