@@ -279,8 +279,8 @@ class MainWindow(QMainWindow):
         self._volume_slider.valueChanged.connect(self._on_volume_slider_value_changed)
 
         panels_layout = QHBoxLayout()
-        panels_layout.addWidget(self._build_library_panel(), 1)
-        panels_layout.addWidget(self._build_schedule_panel(), 1)
+        panels_layout.addWidget(self._build_library_panel(), 7)
+        panels_layout.addWidget(self._build_schedule_panel(), 13)
 
         self._logs_group = QGroupBox("Logs", root)
         logs_layout = QVBoxLayout(self._logs_group)
