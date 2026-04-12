@@ -413,7 +413,7 @@ class MainWindow(QMainWindow):
         self._schedule_table.setHorizontalHeaderLabels(
             ["Start Time", "Duration", "Media", "Hard Sync", "Fade In", "Fade Out", "Status"]
         )
-        self._schedule_table.horizontalHeader().setStretchLastSection(True)
+        self._schedule_table.horizontalHeader().setStretchLastSection(False)
         self._schedule_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._schedule_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._schedule_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
         self._cron_table.setHorizontalHeaderLabels(
             ["CRON", "Media", "Hard Sync", "Fade In", "Fade Out", "Status"]
         )
-        self._cron_table.horizontalHeader().setStretchLastSection(True)
+        self._cron_table.horizontalHeader().setStretchLastSection(False)
         self._cron_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._cron_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._cron_table.setEditTriggers(QAbstractItemView.NoEditTriggers)

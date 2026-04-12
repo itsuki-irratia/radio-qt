@@ -13,6 +13,18 @@ class NoScrollComboBox(QComboBox):
     def wheelEvent(self, event) -> None:
         event.ignore()
 
+def _apply_comfortable_column_widths(
+    table: QTableWidget,
+    minimum_widths: list[int],
+    *,
+    extra_padding: int = 24,
+) -> None:
+    for column, min_width in enumerate(minimum_widths):
+        if column >= table.columnCount():
+            break
+        content_width = table.columnWidth(column)
+        table.setColumnWidth(column, max(min_width, content_width + extra_padding))
+
 
 def refresh_urls_table(
     urls_table: QTableWidget,
@@ -97,6 +109,10 @@ def refresh_cron_table(
         cron_table.setCellWidget(row, 5, status_selector)
 
     cron_table.resizeColumnsToContents()
+    _apply_comfortable_column_widths(
+        cron_table,
+        [220, 260, 120, 110, 110, 130],
+    )
 
 
 def refresh_schedule_table(
@@ -205,3 +221,7 @@ def refresh_schedule_table(
         schedule_table.setCellWidget(row, 6, status_selector)
 
     schedule_table.resizeColumnsToContents()
+    _apply_comfortable_column_widths(
+        schedule_table,
+        [220, 140, 280, 120, 110, 110, 130],
+    )
