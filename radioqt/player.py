@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from array import array
 from pathlib import Path
+import time
 
-from PySide6.QtCore import QObject, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat, QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
@@ -32,6 +33,9 @@ class MediaPlayerController(QObject):
         self._media_player.errorOccurred.connect(self._on_error)
         self._media_player.mediaStatusChanged.connect(self._on_media_status_changed)
         self._audio_buffer_output.audioBufferReceived.connect(self._on_audio_buffer_received)
+        self._fade_tick_timer = QTimer(self)
+        self._fade_tick_timer.setInterval(100)
+        self._fade_tick_timer.timeout.connect(self._on_fade_tick)
         self.current_media: MediaItem | None = None
         self._pending_seek_ms: int | None = None
         self._base_volume_percent = 100
@@ -42,6 +46,8 @@ class MediaPlayerController(QObject):
         self._expected_duration_ms: int | None = None
         self._fade_in_duration_ms = self._DEFAULT_FADE_DURATION_MS
         self._fade_out_duration_ms = self._DEFAULT_FADE_DURATION_MS
+        self._fade_timeline_position_ms = 0
+        self._fade_timeline_last_tick_monotonic: float | None = None
         self._apply_effective_volume()
 
     def set_video_output(self, widget: QVideoWidget) -> None:
@@ -131,6 +137,12 @@ class MediaPlayerController(QObject):
         self._expected_duration_ms = normalized_duration_ms
         self._fade_in_duration_ms = normalized_fade_in_duration_ms
         self._fade_out_duration_ms = normalized_fade_out_duration_ms
+        self._fade_timeline_position_ms = self._fade_session_start_position_ms
+        self._fade_timeline_last_tick_monotonic = time.monotonic()
+        if self._fade_in_enabled or self._fade_out_enabled:
+            self._fade_tick_timer.start()
+        else:
+            self._fade_tick_timer.stop()
         self._update_fade_multiplier_for_position(
             self._fade_session_start_position_ms,
             force_apply=True,
@@ -143,6 +155,9 @@ class MediaPlayerController(QObject):
         self._expected_duration_ms = None
         self._fade_in_duration_ms = self._DEFAULT_FADE_DURATION_MS
         self._fade_out_duration_ms = self._DEFAULT_FADE_DURATION_MS
+        self._fade_timeline_position_ms = 0
+        self._fade_timeline_last_tick_monotonic = None
+        self._fade_tick_timer.stop()
         self._fade_multiplier = 1.0
         self._apply_effective_volume()
 
@@ -209,12 +224,51 @@ class MediaPlayerController(QObject):
 
     @Slot(QMediaPlayer.PlaybackState)
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
+        if state == QMediaPlayer.PlayingState and (self._fade_in_enabled or self._fade_out_enabled):
+            self._fade_timeline_last_tick_monotonic = time.monotonic()
+            if not self._fade_tick_timer.isActive():
+                self._fade_tick_timer.start()
+        elif state != QMediaPlayer.PlayingState:
+            self._fade_tick_timer.stop()
+            self._fade_timeline_last_tick_monotonic = None
         self.playback_state_changed.emit(state)
 
     @Slot(int)
     def _on_position_changed(self, position_ms: int) -> None:
-        self._update_fade_multiplier_for_position(position_ms)
+        normalized_position_ms = max(0, int(position_ms))
+        if normalized_position_ms > self._fade_timeline_position_ms:
+            self._fade_timeline_position_ms = normalized_position_ms
+        self._update_fade_multiplier_for_position(self._fade_timeline_position_ms)
         self.playback_position_changed.emit(position_ms)
+
+    @Slot()
+    def _on_fade_tick(self) -> None:
+        if not (self._fade_in_enabled or self._fade_out_enabled):
+            self._fade_tick_timer.stop()
+            return
+        if self._media_player.playbackState() != QMediaPlayer.PlayingState:
+            self._fade_timeline_last_tick_monotonic = time.monotonic()
+            return
+
+        now = time.monotonic()
+        previous_tick = self._fade_timeline_last_tick_monotonic
+        self._fade_timeline_last_tick_monotonic = now
+        if previous_tick is None:
+            return
+
+        elapsed_ms = max(0, int((now - previous_tick) * 1000))
+        if elapsed_ms <= 0:
+            return
+
+        reported_position_ms = max(0, self._media_player.position())
+        if reported_position_ms > self._fade_timeline_position_ms:
+            self._fade_timeline_position_ms = reported_position_ms
+        else:
+            # Streams can report a static position; keep fade progression aligned with wall time.
+            self._fade_timeline_position_ms += min(elapsed_ms, 500)
+
+        effective_position_ms = max(reported_position_ms, self._fade_timeline_position_ms)
+        self._update_fade_multiplier_for_position(effective_position_ms)
 
     def _on_error(self, *_: object) -> None:
         self.playback_error.emit(self._media_player.errorString())

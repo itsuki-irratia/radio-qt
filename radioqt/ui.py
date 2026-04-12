@@ -961,9 +961,17 @@ class MainWindow(QMainWindow):
                 return entry
         return None
 
-    @staticmethod
-    def _entry_duration_ms(entry: ScheduleEntry | None) -> int | None:
-        if entry is None or entry.duration is None or entry.duration <= 0:
+    def _entry_duration_ms(self, entry: ScheduleEntry | None) -> int | None:
+        if entry is None:
+            return None
+
+        start_at, end_at, _ = self._schedule_entry_window_details(entry)
+        if end_at is not None:
+            computed_ms = max(0, int((end_at - start_at).total_seconds() * 1000))
+            if computed_ms > 0:
+                return computed_ms
+
+        if entry.duration is None or entry.duration <= 0:
             return None
         return entry.duration * 1000
 
