@@ -51,7 +51,6 @@ def refresh_cron_table(
     entries: list[CronEntry],
     media_items: dict[str, MediaItem],
     *,
-    on_hard_sync_changed: Callable[[str, str], None],
     on_fade_in_changed: Callable[[str, str], None],
     on_fade_out_changed: Callable[[str, str], None],
     on_status_changed: Callable[[str, str], None],
@@ -72,15 +71,6 @@ def refresh_cron_table(
         media_item.setToolTip(media_source)
         cron_table.setItem(row, 1, media_item)
 
-        hard_sync_selector = NoScrollComboBox(cron_table)
-        hard_sync_selector.addItems(["True", "False"])
-        hard_sync_selector.setCurrentText("True" if entry.hard_sync else "False")
-        hard_sync_selector.setToolTip(media_source)
-        hard_sync_selector.currentTextChanged.connect(
-            lambda value, entry_id=entry.id: on_hard_sync_changed(entry_id, value)
-        )
-        cron_table.setCellWidget(row, 2, hard_sync_selector)
-
         fade_in_selector = NoScrollComboBox(cron_table)
         fade_in_selector.addItems(["True", "False"])
         fade_in_selector.setCurrentText("True" if entry.fade_in else "False")
@@ -88,7 +78,7 @@ def refresh_cron_table(
         fade_in_selector.currentTextChanged.connect(
             lambda value, entry_id=entry.id: on_fade_in_changed(entry_id, value)
         )
-        cron_table.setCellWidget(row, 3, fade_in_selector)
+        cron_table.setCellWidget(row, 2, fade_in_selector)
 
         fade_out_selector = NoScrollComboBox(cron_table)
         fade_out_selector.addItems(["True", "False"])
@@ -97,7 +87,7 @@ def refresh_cron_table(
         fade_out_selector.currentTextChanged.connect(
             lambda value, entry_id=entry.id: on_fade_out_changed(entry_id, value)
         )
-        cron_table.setCellWidget(row, 4, fade_out_selector)
+        cron_table.setCellWidget(row, 3, fade_out_selector)
 
         status_selector = NoScrollComboBox(cron_table)
         status_selector.addItems(["Enabled", "Disabled"])
@@ -106,12 +96,12 @@ def refresh_cron_table(
         status_selector.currentTextChanged.connect(
             lambda value, entry_id=entry.id: on_status_changed(entry_id, value)
         )
-        cron_table.setCellWidget(row, 5, status_selector)
+        cron_table.setCellWidget(row, 4, status_selector)
 
     cron_table.resizeColumnsToContents()
     _apply_comfortable_column_widths(
         cron_table,
-        [220, 260, 120, 110, 110, 130],
+        [220, 260, 110, 110, 130],
     )
 
 
@@ -127,7 +117,6 @@ def refresh_schedule_table(
     schedule_entry_palette: Callable[[ScheduleEntry, datetime], tuple | None],
     apply_item_palette: Callable[[QTableWidgetItem, tuple | None], None],
     apply_widget_palette: Callable[[QWidget, tuple | None], None],
-    on_hard_sync_changed: Callable[[str, str], None],
     on_fade_in_changed: Callable[[str, str], None],
     on_fade_out_changed: Callable[[str, str], None],
     on_status_changed: Callable[[str, str], None],
@@ -169,17 +158,6 @@ def refresh_schedule_table(
         cron_globally_disabled = cron_entry is not None and not cron_entry.enabled
         is_locked = entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}
 
-        hard_sync_selector = NoScrollComboBox(schedule_table)
-        hard_sync_selector.addItems(["True", "False"])
-        hard_sync_selector.setCurrentText("True" if entry.hard_sync else "False")
-        hard_sync_selector.setEnabled(not is_locked)
-        hard_sync_selector.setToolTip(tooltip)
-        hard_sync_selector.currentTextChanged.connect(
-            lambda value, entry_id=entry.id: on_hard_sync_changed(entry_id, value)
-        )
-        apply_widget_palette(hard_sync_selector, palette)
-        schedule_table.setCellWidget(row, 3, hard_sync_selector)
-
         fade_in_selector = NoScrollComboBox(schedule_table)
         fade_in_selector.addItems(["True", "False"])
         fade_in_selector.setCurrentText("True" if entry.fade_in else "False")
@@ -189,7 +167,7 @@ def refresh_schedule_table(
             lambda value, entry_id=entry.id: on_fade_in_changed(entry_id, value)
         )
         apply_widget_palette(fade_in_selector, palette)
-        schedule_table.setCellWidget(row, 4, fade_in_selector)
+        schedule_table.setCellWidget(row, 3, fade_in_selector)
 
         fade_out_selector = NoScrollComboBox(schedule_table)
         fade_out_selector.addItems(["True", "False"])
@@ -200,7 +178,7 @@ def refresh_schedule_table(
             lambda value, entry_id=entry.id: on_fade_out_changed(entry_id, value)
         )
         apply_widget_palette(fade_out_selector, palette)
-        schedule_table.setCellWidget(row, 5, fade_out_selector)
+        schedule_table.setCellWidget(row, 4, fade_out_selector)
 
         status_selector = NoScrollComboBox(schedule_table)
         if cron_globally_disabled:
@@ -218,10 +196,10 @@ def refresh_schedule_table(
             lambda value, entry_id=entry.id: on_status_changed(entry_id, value)
         )
         apply_widget_palette(status_selector, palette)
-        schedule_table.setCellWidget(row, 6, status_selector)
+        schedule_table.setCellWidget(row, 5, status_selector)
 
     schedule_table.resizeColumnsToContents()
     _apply_comfortable_column_widths(
         schedule_table,
-        [220, 140, 280, 120, 110, 110, 130],
+        [220, 140, 280, 110, 110, 130],
     )

@@ -107,7 +107,7 @@ class CronEntry:
     id: str
     media_id: str
     expression: str
-    hard_sync: bool = False
+    hard_sync: bool = True
     fade_in: bool = False
     fade_out: bool = False
     enabled: bool = True
@@ -118,7 +118,7 @@ class CronEntry:
         cls,
         media_id: str,
         expression: str,
-        hard_sync: bool = False,
+        hard_sync: bool = True,
         fade_in: bool = False,
         fade_out: bool = False,
     ) -> "CronEntry":
@@ -138,7 +138,7 @@ class CronEntry:
             id=data.get("id", str(uuid4())),
             media_id=data["media_id"],
             expression=data.get("expression", "").strip(),
-            hard_sync=bool(data.get("hard_sync", False)),
+            hard_sync=bool(data.get("hard_sync", True)),
             fade_in=bool(data.get("fade_in", False)),
             fade_out=bool(data.get("fade_out", False)),
             enabled=bool(data.get("enabled", True)),
@@ -164,7 +164,7 @@ class ScheduleEntry:
     media_id: str
     start_at: datetime
     duration: int | None = None
-    hard_sync: bool = False
+    hard_sync: bool = True
     fade_in: bool = False
     fade_out: bool = False
     status: str = SCHEDULE_STATUS_PENDING
@@ -176,7 +176,7 @@ class ScheduleEntry:
     cron_fade_out_override: bool | None = None
 
     @classmethod
-    def create(cls, media_id: str, start_at: datetime, hard_sync: bool = False) -> "ScheduleEntry":
+    def create(cls, media_id: str, start_at: datetime, hard_sync: bool = True) -> "ScheduleEntry":
         return cls(id=str(uuid4()), media_id=media_id, start_at=start_at, hard_sync=hard_sync)
 
     @classmethod
@@ -210,7 +210,7 @@ class ScheduleEntry:
             media_id=data["media_id"],
             start_at=_parse_datetime(data["start_at"]),
             duration=duration,
-            hard_sync=data.get("hard_sync", False),
+            hard_sync=bool(data.get("hard_sync", True)),
             fade_in=bool(data.get("fade_in", False)),
             fade_out=bool(data.get("fade_out", False)),
             status=status,

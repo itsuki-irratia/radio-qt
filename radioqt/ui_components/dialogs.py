@@ -142,8 +142,6 @@ class ScheduleDialog(QDialog):
         if initial_start_at is None:
             initial_start_at = self._default_start_datetime()
         self._datetime_edit.setDateTime(QDateTime(initial_start_at))
-        self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
-        self._hard_sync_checkbox.setChecked(True)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         buttons.accepted.connect(self.accept)
@@ -152,7 +150,6 @@ class ScheduleDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Start at:"))
         layout.addWidget(self._datetime_edit)
-        layout.addWidget(self._hard_sync_checkbox)
         layout.addWidget(buttons)
 
     @staticmethod
@@ -167,9 +164,6 @@ class ScheduleDialog(QDialog):
             return dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
         return dt
 
-    def hard_sync(self) -> bool:
-        return self._hard_sync_checkbox.isChecked()
-
 
 class CronDialog(QDialog):
     def __init__(
@@ -178,7 +172,6 @@ class CronDialog(QDialog):
         *,
         dialog_title: str = "Add CRON Entry",
         initial_expression: str = "",
-        initial_hard_sync: bool = True,
         initial_fade_in: bool = False,
         initial_fade_out: bool = False,
         expression_only: bool = False,
@@ -190,12 +183,9 @@ class CronDialog(QDialog):
         self._expression_edit = QLineEdit(self)
         self._expression_edit.setPlaceholderText("sec min hour day month weekday")
         self._expression_edit.setText(initial_expression.strip())
-        self._hard_sync_checkbox: QCheckBox | None = None
         self._fade_in_checkbox: QCheckBox | None = None
         self._fade_out_checkbox: QCheckBox | None = None
         if not self._expression_only:
-            self._hard_sync_checkbox = QCheckBox("Hard sync (interrupt current playback)", self)
-            self._hard_sync_checkbox.setChecked(bool(initial_hard_sync))
             self._fade_in_checkbox = QCheckBox("Fade in", self)
             self._fade_in_checkbox.setChecked(bool(initial_fade_in))
             self._fade_out_checkbox = QCheckBox("Fade out", self)
@@ -214,8 +204,6 @@ class CronDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("CRON expression (with seconds):"))
         layout.addWidget(self._expression_edit)
-        if self._hard_sync_checkbox is not None:
-            layout.addWidget(self._hard_sync_checkbox)
         if self._fade_in_checkbox is not None:
             layout.addWidget(self._fade_in_checkbox)
         if self._fade_out_checkbox is not None:
@@ -228,9 +216,6 @@ class CronDialog(QDialog):
 
     def expression(self) -> str:
         return self._expression_edit.text().strip()
-
-    def hard_sync(self) -> bool:
-        return self._hard_sync_checkbox.isChecked() if self._hard_sync_checkbox is not None else False
 
     def fade_in(self) -> bool:
         return self._fade_in_checkbox.isChecked() if self._fade_in_checkbox is not None else False

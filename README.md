@@ -47,13 +47,12 @@ Legacy `state/radio_state.db` and `state/radio_state.json` are copied to the new
 
 1. Add local files or stream URLs to the Media Library.
 2. Select a media item and click `Schedule Selected Media`.
-3. Pick an absolute start datetime and optional hard sync.
+3. Pick an absolute start datetime.
 4. Let scheduler trigger playback automatically.
 
 ## Notes
 
-- `Hard sync` interrupts current playback when a scheduled item starts.
-- Without hard sync, scheduled items are queued if something is already playing.
+- Scheduled items always interrupt current playback at trigger time.
 - If a media source is missing, the app logs the skip and continues.
 
 ## Linux troubleshooting
