@@ -704,8 +704,9 @@ class MainWindow(QMainWindow):
         self._supported_extensions = self._normalize_supported_extensions(app_config.supported_extensions)
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
         self._logs_visible = state.logs_visible
-        self._fade_in_duration_seconds = max(1, app_config.fade_in_duration_seconds)
-        self._fade_out_duration_seconds = max(1, app_config.fade_out_duration_seconds)
+        shared_fade_seconds = max(1, app_config.fade_duration_seconds)
+        self._fade_in_duration_seconds = shared_fade_seconds
+        self._fade_out_duration_seconds = shared_fade_seconds
         loaded_schedule_count = len(self._schedule_entries)
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
@@ -779,8 +780,7 @@ class MainWindow(QMainWindow):
 
     def _save_settings(self) -> None:
         app_config = AppConfig(
-            fade_in_duration_seconds=self._fade_in_duration_seconds,
-            fade_out_duration_seconds=self._fade_out_duration_seconds,
+            fade_duration_seconds=max(self._fade_in_duration_seconds, self._fade_out_duration_seconds),
             library_tabs=list(self._library_tab_configs),
             supported_extensions=list(self._supported_extensions),
         )
@@ -792,8 +792,7 @@ class MainWindow(QMainWindow):
 
         # Seed initial YAML config from legacy DB settings if available.
         seeded_config = AppConfig(
-            fade_in_duration_seconds=max(1, state.fade_in_duration_seconds),
-            fade_out_duration_seconds=max(1, state.fade_out_duration_seconds),
+            fade_duration_seconds=max(1, state.fade_in_duration_seconds, state.fade_out_duration_seconds),
             library_tabs=list(state.library_tabs),
             supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
         )

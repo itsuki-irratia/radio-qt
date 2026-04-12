@@ -1,5 +1,4 @@
-fade_in_duration_seconds: 5
-fade_out_duration_seconds: 5
+fade: 5
 library_tabs:
   - title: "Downloads"
     path: "/home/zital/Downloads"

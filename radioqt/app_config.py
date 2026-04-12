@@ -36,16 +36,19 @@ def _normalize_extensions(raw_values: Any) -> list[str]:
 
 @dataclass(slots=True)
 class AppConfig:
-    fade_in_duration_seconds: int = 5
-    fade_out_duration_seconds: int = 5
+    fade_duration_seconds: int = 5
     library_tabs: list[LibraryTab] = field(default_factory=list)
     supported_extensions: list[str] = field(default_factory=lambda: list(DEFAULT_SUPPORTED_EXTENSIONS))
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
+        fade_duration_seconds = _safe_positive_int(data.get("fade"), 5)
+        if "fade" not in data:
+            fade_in_legacy = _safe_positive_int(data.get("fade_in_duration_seconds"), 5)
+            fade_out_legacy = _safe_positive_int(data.get("fade_out_duration_seconds"), 5)
+            fade_duration_seconds = max(fade_in_legacy, fade_out_legacy)
         return cls(
-            fade_in_duration_seconds=_safe_positive_int(data.get("fade_in_duration_seconds"), 5),
-            fade_out_duration_seconds=_safe_positive_int(data.get("fade_out_duration_seconds"), 5),
+            fade_duration_seconds=fade_duration_seconds,
             library_tabs=[
                 LibraryTab.from_dict(item)
                 for item in data.get("library_tabs", [])
@@ -56,8 +59,7 @@ class AppConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "fade_in_duration_seconds": max(1, self.fade_in_duration_seconds),
-            "fade_out_duration_seconds": max(1, self.fade_out_duration_seconds),
+            "fade": max(1, self.fade_duration_seconds),
             "library_tabs": [tab.to_dict() for tab in self.library_tabs],
             "supported_extensions": _normalize_extensions(self.supported_extensions),
         }
@@ -86,6 +88,13 @@ def _parse_settings_yaml(raw_text: str) -> dict[str, Any]:
         line = lines[index].rstrip()
         index += 1
         if not line.strip():
+            continue
+        if line.startswith("fade:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["fade"] = int(raw_value)
+            except ValueError:
+                pass
             continue
         if line.startswith("fade_in_duration_seconds:"):
             raw_value = line.split(":", 1)[1].strip()
@@ -146,8 +155,7 @@ def _string_as_yaml(value: str) -> str:
 def _dump_settings_yaml(config: AppConfig) -> str:
     payload = config.to_dict()
     lines: list[str] = []
-    lines.append(f"fade_in_duration_seconds: {int(payload['fade_in_duration_seconds'])}")
-    lines.append(f"fade_out_duration_seconds: {int(payload['fade_out_duration_seconds'])}")
+    lines.append(f"fade: {int(payload['fade'])}")
     lines.append("library_tabs:")
     for tab in payload["library_tabs"]:
         title = _string_as_yaml(str(tab.get("title", "")))
