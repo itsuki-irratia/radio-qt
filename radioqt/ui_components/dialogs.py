@@ -269,21 +269,19 @@ class ConfigurationDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Configuration")
-        self.resize(460, 220)
+        self.resize(520, 200)
 
-        self._fade_in_spinbox = QSpinBox(self)
-        self._fade_in_spinbox.setRange(1, 120)
-        self._fade_in_spinbox.setValue(max(1, fade_in_duration_seconds))
-        self._fade_in_spinbox.setSuffix(" s")
-
-        self._fade_out_spinbox = QSpinBox(self)
-        self._fade_out_spinbox.setRange(1, 120)
-        self._fade_out_spinbox.setValue(max(1, fade_out_duration_seconds))
-        self._fade_out_spinbox.setSuffix(" s")
+        shared_initial_duration = max(
+            1,
+            int(round((max(1, fade_in_duration_seconds) + max(1, fade_out_duration_seconds)) / 2)),
+        )
+        self._fade_duration_spinbox = QSpinBox(self)
+        self._fade_duration_spinbox.setRange(1, 120)
+        self._fade_duration_spinbox.setValue(shared_initial_duration)
 
         self._properties_table = QTableWidget(self)
         self._properties_table.setColumnCount(2)
-        self._properties_table.setRowCount(2)
+        self._properties_table.setRowCount(1)
         self._properties_table.setHorizontalHeaderLabels(["Property", "Value"])
         self._properties_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._properties_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -292,22 +290,12 @@ class ConfigurationDialog(QDialog):
         self._properties_table.verticalHeader().setVisible(False)
         self._properties_table.horizontalHeader().setStretchLastSection(True)
 
-        fade_in_item = QTableWidgetItem("Fade in duration")
-        fade_in_item.setFlags(fade_in_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        fade_out_item = QTableWidgetItem("Fade out duration")
-        fade_out_item.setFlags(fade_out_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        fade_duration_item = QTableWidgetItem("Fade In / Fade Out in seconds")
+        fade_duration_item.setFlags(fade_duration_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
-        self._properties_table.setItem(0, 0, fade_in_item)
-        self._properties_table.setCellWidget(0, 1, self._fade_in_spinbox)
-        self._properties_table.setItem(1, 0, fade_out_item)
-        self._properties_table.setCellWidget(1, 1, self._fade_out_spinbox)
+        self._properties_table.setItem(0, 0, fade_duration_item)
+        self._properties_table.setCellWidget(0, 1, self._fade_duration_spinbox)
         self._properties_table.resizeColumnsToContents()
-
-        hint = QLabel(
-            "These values are used when schedule rows have Fade In / Fade Out enabled.",
-            self,
-        )
-        hint.setWordWrap(True)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         buttons.accepted.connect(self.accept)
@@ -315,11 +303,7 @@ class ConfigurationDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._properties_table)
-        layout.addWidget(hint)
         layout.addWidget(buttons)
 
-    def fade_in_duration_seconds(self) -> int:
-        return self._fade_in_spinbox.value()
-
-    def fade_out_duration_seconds(self) -> int:
-        return self._fade_out_spinbox.value()
+    def fade_duration_seconds(self) -> int:
+        return self._fade_duration_spinbox.value()

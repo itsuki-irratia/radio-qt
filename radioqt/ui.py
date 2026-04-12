@@ -2537,16 +2537,15 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.Accepted:
             return
 
-        next_fade_in_duration = max(1, dialog.fade_in_duration_seconds())
-        next_fade_out_duration = max(1, dialog.fade_out_duration_seconds())
+        next_shared_fade_duration = max(1, dialog.fade_duration_seconds())
         if (
-            next_fade_in_duration == self._fade_in_duration_seconds
-            and next_fade_out_duration == self._fade_out_duration_seconds
+            next_shared_fade_duration == self._fade_in_duration_seconds
+            and next_shared_fade_duration == self._fade_out_duration_seconds
         ):
             return
 
-        self._fade_in_duration_seconds = next_fade_in_duration
-        self._fade_out_duration_seconds = next_fade_out_duration
+        self._fade_in_duration_seconds = next_shared_fade_duration
+        self._fade_out_duration_seconds = next_shared_fade_duration
         self._save_state()
         self._append_log(
             f"Updated configuration: fade in={self._fade_in_duration_seconds}s, "
