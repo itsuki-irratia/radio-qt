@@ -3,12 +3,9 @@ from __future__ import annotations
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date, datetime, timedelta
-import math
 from pathlib import Path
 import shutil
-import subprocess
 import time
-from uuid import NAMESPACE_URL, uuid5
 
 from PySide6.QtCore import QDate, QDateTime, QModelIndex, QObject, QSize, Qt, QTimer, Signal, Slot, QEvent
 from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor, QIcon, QPainter, QPixmap
@@ -42,8 +39,16 @@ from PySide6.QtWidgets import (
     QInputDialog,
 )
 
-from .cron import CronExpression, CronParseError
 from .app_config import AppConfig, load_app_config, save_app_config
+from .duration_probe import (
+    duration_probe_cache_key_from_path,
+    duration_probe_cache_key_from_source,
+    duration_probe_cache_lookup,
+    normalize_probe_duration,
+    probe_media_duration_seconds,
+    sanitize_duration_probe_cache,
+    store_duration_probe_cache,
+)
 from .library import (
     VIDEO_EXTENSIONS,
     add_stream_media_item,
@@ -82,8 +87,10 @@ from .scheduling import (
     active_schedule_entry_at,
     normalize_overdue_one_shots,
     normalized_start,
+    next_cron_occurrence,
     prepare_schedule_entries_for_play,
     prepare_schedule_entries_for_startup,
+    refresh_cron_schedule_entries,
     schedule_entry_end_at,
     schedule_entry_window_details,
 )
@@ -693,7 +700,10 @@ class MainWindow(QMainWindow):
         app_config = self._load_or_initialize_app_config(state)
         self._media_items = {item.id: item for item in state.media_items}
         self._media_duration_cache.clear()
-        self._duration_probe_cache = self._sanitize_duration_probe_cache(state.duration_probe_cache)
+        self._duration_probe_cache = sanitize_duration_probe_cache(
+            state.duration_probe_cache,
+            max_entries=self._DURATION_PROBE_CACHE_MAX_ENTRIES,
+        )
         self._media_duration_pending.clear()
         self._schedule_entries = state.schedule_entries
         self._cron_entries = state.cron_entries
@@ -778,7 +788,7 @@ class MainWindow(QMainWindow):
             logs_visible=self._logs_visible,
             fade_in_duration_seconds=self._fade_in_duration_seconds,
             fade_out_duration_seconds=self._fade_out_duration_seconds,
-            duration_probe_cache=self._duration_probe_cache,
+            duration_probe_cache=dict(self._duration_probe_cache),
         )
         save_state(self._state_path, state)
 
@@ -856,67 +866,6 @@ class MainWindow(QMainWindow):
     def _fade_out_duration_ms(self) -> int:
         return max(1, self._fade_out_duration_seconds) * 1000
 
-    @classmethod
-    def _sanitize_duration_probe_cache(
-        cls,
-        raw_cache: dict[str, int | None] | None,
-    ) -> dict[str, int | None]:
-        if not isinstance(raw_cache, dict):
-            return {}
-        normalized: dict[str, int | None] = {}
-        for key, value in raw_cache.items():
-            if not isinstance(key, str) or not key:
-                continue
-            if value is None:
-                normalized[key] = None
-                continue
-            try:
-                normalized[key] = max(0, int(value))
-            except (TypeError, ValueError):
-                continue
-
-        while len(normalized) > cls._DURATION_PROBE_CACHE_MAX_ENTRIES:
-            oldest_key = next(iter(normalized))
-            normalized.pop(oldest_key, None)
-        return normalized
-
-    def _duration_probe_cache_lookup(self, probe_key: str) -> tuple[bool, int | None]:
-        if probe_key not in self._duration_probe_cache:
-            return False, None
-        duration = self._duration_probe_cache.pop(probe_key)
-        self._duration_probe_cache[probe_key] = duration
-        return True, duration
-
-    def _store_duration_probe_cache(self, probe_key: str, duration: int | None) -> None:
-        if probe_key in self._duration_probe_cache:
-            current = self._duration_probe_cache.pop(probe_key)
-            if current == duration:
-                self._duration_probe_cache[probe_key] = current
-                return
-        self._duration_probe_cache[probe_key] = duration
-        while len(self._duration_probe_cache) > self._DURATION_PROBE_CACHE_MAX_ENTRIES:
-            oldest_key = next(iter(self._duration_probe_cache))
-            self._duration_probe_cache.pop(oldest_key, None)
-
-    @classmethod
-    def _duration_probe_cache_key_from_path(cls, path: Path) -> str | None:
-        try:
-            stat = path.stat()
-        except OSError:
-            return None
-        try:
-            resolved = str(path.resolve())
-        except OSError:
-            resolved = str(path)
-        return f"{resolved}|{stat.st_mtime_ns}|{stat.st_size}"
-
-    @classmethod
-    def _duration_probe_cache_key_from_source(cls, source: str) -> str | None:
-        path = local_media_path_from_source(source)
-        if path is None or not path.is_file():
-            return None
-        return cls._duration_probe_cache_key_from_path(path)
-
     def _normalize_overdue_one_shots(
         self,
         reference_time: datetime,
@@ -969,10 +918,6 @@ class MainWindow(QMainWindow):
             on_fade_out_changed=self._on_cron_fade_out_changed,
             on_status_changed=self._on_cron_status_changed,
         )
-
-    @staticmethod
-    def _cron_occurrence_entry_id(cron_id: str, start_at: datetime) -> str:
-        return str(uuid5(NAMESPACE_URL, f"radioqt-cron:{cron_id}:{start_at.isoformat()}"))
 
     def _cron_entry_by_id(self, cron_id: str | None) -> CronEntry | None:
         if cron_id is None:
@@ -1028,130 +973,16 @@ class MainWindow(QMainWindow):
         today = datetime.now().astimezone().date()
         return {today, today + timedelta(days=1)}
 
-    def _next_cron_occurrence(self, cron_entry: CronEntry, start: datetime) -> datetime | None:
-        try:
-            expression = CronExpression.parse(cron_entry.expression)
-        except CronParseError:
-            return None
-        return expression.next_at_or_after(start)
-
-    def _apply_cron_entry_defaults(self, entry: ScheduleEntry, cron_entry: CronEntry) -> None:
-        entry.media_id = cron_entry.media_id
-        entry.one_shot = True
-        entry.cron_id = cron_entry.id
-        entry.hard_sync = True
-        entry.cron_hard_sync_override = None
-        if entry.cron_fade_in_override is None:
-            entry.fade_in = cron_entry.fade_in
-        else:
-            entry.fade_in = entry.cron_fade_in_override
-        if entry.cron_fade_out_override is None:
-            entry.fade_out = cron_entry.fade_out
-        else:
-            entry.fade_out = entry.cron_fade_out_override
-
-        if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
-            return
-        if not cron_entry.enabled:
-            entry.status = SCHEDULE_STATUS_DISABLED
-            return
-        entry.status = entry.cron_status_override or SCHEDULE_STATUS_PENDING
-
     def _refresh_cron_schedule_entries(self, target_dates: set[date] | None = None) -> None:
-        runtime_dates = set(target_dates) if target_dates else None
-        now = datetime.now().astimezone()
-        refreshed_entries: list[ScheduleEntry] = []
-        for entry in self._schedule_entries:
-            if entry.cron_id is None:
-                refreshed_entries.append(entry)
-                continue
-
-            if runtime_dates is not None:
-                entry_date = self._normalized_start(entry.start_at).date()
-                if entry_date not in runtime_dates:
-                    # Keep runtime memory bounded to the configured CRON window.
-                    continue
-
-            cron_entry = self._cron_entry_by_id(entry.cron_id)
-            if cron_entry is None:
-                if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
-                    refreshed_entries.append(entry)
-                continue
-            self._apply_cron_entry_defaults(entry, cron_entry)
-            refreshed_entries.append(entry)
-
-        self._schedule_entries = refreshed_entries
-        existing_by_id = {
-            entry.id: entry
-            for entry in self._schedule_entries
-            if entry.cron_id is not None
-        }
-        if not runtime_dates:
-            return
-
-        lookback_start = now - self._CRON_RUNTIME_LOOKBACK
-        timezone = datetime.now().astimezone().tzinfo
-        occurrence_candidates: list[tuple[datetime, CronEntry]] = []
-        for cron_entry in self._cron_entries:
-            if not cron_entry.enabled:
-                continue
-            try:
-                expression = CronExpression.parse(cron_entry.expression)
-            except CronParseError:
-                continue
-            for target_date in sorted(runtime_dates):
-                for start_at in expression.iter_datetimes_on_date(target_date, timezone):
-                    if start_at < lookback_start:
-                        continue
-                    occurrence_candidates.append((start_at, cron_entry))
-
-        occurrence_candidates.sort(key=lambda item: item[0])
-        past_occurrences = [item for item in occurrence_candidates if item[0] <= now]
-        future_occurrences = [item for item in occurrence_candidates if item[0] > now]
-
-        selected_recent = past_occurrences[-self._CRON_RUNTIME_MAX_RECENT_OCCURRENCES:]
-        remaining_capacity = max(0, self._CRON_RUNTIME_MAX_OCCURRENCES - len(selected_recent))
-        selected_occurrences = selected_recent + future_occurrences[:remaining_capacity]
-
-        if len(selected_occurrences) < self._CRON_RUNTIME_MAX_OCCURRENCES:
-            extra_needed = self._CRON_RUNTIME_MAX_OCCURRENCES - len(selected_occurrences)
-            older_past = past_occurrences[: max(0, len(past_occurrences) - len(selected_recent))]
-            selected_occurrences = older_past[-extra_needed:] + selected_occurrences
-
-        selected_occurrences.sort(key=lambda item: item[0])
-        selected_entry_ids: set[str] = set()
-        for start_at, cron_entry in selected_occurrences:
-            entry_id = self._cron_occurrence_entry_id(cron_entry.id, start_at)
-            selected_entry_ids.add(entry_id)
-            entry = existing_by_id.get(entry_id)
-            if entry is None:
-                entry = ScheduleEntry(
-                    id=entry_id,
-                    media_id=cron_entry.media_id,
-                    start_at=start_at,
-                    hard_sync=True,
-                    fade_in=cron_entry.fade_in,
-                    fade_out=cron_entry.fade_out,
-                    status=SCHEDULE_STATUS_PENDING,
-                    one_shot=True,
-                    cron_id=cron_entry.id,
-                )
-                self._apply_cron_entry_defaults(entry, cron_entry)
-                self._schedule_entries.append(entry)
-                existing_by_id[entry_id] = entry
-                continue
-
-            entry.start_at = start_at
-            self._apply_cron_entry_defaults(entry, cron_entry)
-
-        if selected_entry_ids:
-            self._schedule_entries = [
-                entry
-                for entry in self._schedule_entries
-                if entry.cron_id is None or entry.id in selected_entry_ids
-            ]
-        else:
-            self._schedule_entries = [entry for entry in self._schedule_entries if entry.cron_id is None]
+        self._schedule_entries = refresh_cron_schedule_entries(
+            self._schedule_entries,
+            self._cron_entries,
+            target_dates=target_dates,
+            now=datetime.now().astimezone(),
+            runtime_lookback=self._CRON_RUNTIME_LOOKBACK,
+            max_occurrences=self._CRON_RUNTIME_MAX_OCCURRENCES,
+            max_recent_occurrences=self._CRON_RUNTIME_MAX_RECENT_OCCURRENCES,
+        )
 
     def _refresh_cron_runtime_window(self) -> None:
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
@@ -1262,7 +1093,7 @@ class MainWindow(QMainWindow):
         now = datetime.now().astimezone()
         cron_dates = []
         for cron_entry in self._cron_entries:
-            next_occurrence = self._next_cron_occurrence(cron_entry, now)
+            next_occurrence = next_cron_occurrence(cron_entry, now)
             if next_occurrence is not None:
                 cron_dates.append(next_occurrence.date())
         if cron_dates:
@@ -1310,9 +1141,9 @@ class MainWindow(QMainWindow):
             self._media_duration_cache[media_id] = None
             return None
 
-        probe_key = self._duration_probe_cache_key_from_path(local_path)
+        probe_key = duration_probe_cache_key_from_path(local_path)
         if probe_key is not None:
-            cached, cached_duration = self._duration_probe_cache_lookup(probe_key)
+            cached, cached_duration = duration_probe_cache_lookup(self._duration_probe_cache, probe_key)
             if cached:
                 self._media_duration_cache[media_id] = cached_duration
                 return cached_duration
@@ -1329,10 +1160,10 @@ class MainWindow(QMainWindow):
     ) -> None:
         if media_id in self._media_duration_pending or self._shutting_down:
             return
-        requested_probe_key = probe_key or self._duration_probe_cache_key_from_source(source)
+        requested_probe_key = probe_key or duration_probe_cache_key_from_source(source)
         self._media_duration_pending.add(media_id)
         future = self._duration_probe_executor.submit(
-            self._probe_media_duration_seconds,
+            probe_media_duration_seconds,
             source,
         )
         future.add_done_callback(
@@ -1387,7 +1218,7 @@ class MainWindow(QMainWindow):
             return
 
         requested_probe_key = probe_key if isinstance(probe_key, str) and probe_key else None
-        current_probe_key = self._duration_probe_cache_key_from_source(media.source)
+        current_probe_key = duration_probe_cache_key_from_source(media.source)
         if (
             requested_probe_key is not None
             and current_probe_key is not None
@@ -1397,15 +1228,16 @@ class MainWindow(QMainWindow):
             self._media_duration_seconds(media_id)
             return
 
-        resolved_duration: int | None
-        if isinstance(duration, int):
-            resolved_duration = max(0, duration)
-        else:
-            resolved_duration = None
+        resolved_duration = normalize_probe_duration(duration)
 
         effective_probe_key = requested_probe_key or current_probe_key
         if effective_probe_key is not None:
-            self._store_duration_probe_cache(effective_probe_key, resolved_duration)
+            store_duration_probe_cache(
+                self._duration_probe_cache,
+                effective_probe_key,
+                resolved_duration,
+                max_entries=self._DURATION_PROBE_CACHE_MAX_ENTRIES,
+            )
 
         previous_duration = self._media_duration_cache.get(media_id, object())
         self._media_duration_cache[media_id] = resolved_duration
@@ -1427,39 +1259,6 @@ class MainWindow(QMainWindow):
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_schedule_table()
         self._save_state()
-
-    @staticmethod
-    def _probe_media_duration_seconds(source: str) -> int | None:
-        path = local_media_path_from_source(source)
-        if path is None or not path.is_file():
-            return None
-        try:
-            result = subprocess.run(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-show_entries",
-                    "format=duration",
-                    "-of",
-                    "default=noprint_wrappers=1:nokey=1",
-                    str(path),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=8,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-
-        value = result.stdout.strip()
-        if not value:
-            return None
-        try:
-            return max(0, math.ceil(float(value)))
-        except ValueError:
-            return None
 
     @staticmethod
     def _normalized_start(start_at: datetime) -> datetime:
@@ -2009,7 +1808,7 @@ class MainWindow(QMainWindow):
         )
         self._cron_entries.append(entry)
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-        next_occurrence = self._next_cron_occurrence(entry, datetime.now().astimezone())
+        next_occurrence = next_cron_occurrence(entry, datetime.now().astimezone())
         if next_occurrence is not None:
             self._set_schedule_filter_date(next_occurrence.date())
             self._refresh_cron_schedule_entries(self._runtime_cron_dates())
@@ -2053,7 +1852,7 @@ class MainWindow(QMainWindow):
         cron_entry.expression = updated_expression
 
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-        next_occurrence = self._next_cron_occurrence(cron_entry, datetime.now().astimezone())
+        next_occurrence = next_cron_occurrence(cron_entry, datetime.now().astimezone())
         if next_occurrence is not None:
             self._set_schedule_filter_date(next_occurrence.date())
             self._refresh_cron_schedule_entries(self._runtime_cron_dates())
