@@ -5,6 +5,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 import math
 from pathlib import Path
+import shutil
 import subprocess
 import time
 from uuid import NAMESPACE_URL, uuid5
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from .cron import CronExpression, CronParseError
+from .app_config import AppConfig, load_app_config, save_app_config
 from .library import (
     VIDEO_EXTENSIONS,
     add_stream_media_item,
@@ -108,7 +110,7 @@ class MainWindow(QMainWindow):
     _CRON_RUNTIME_LOOKBACK = timedelta(hours=1)
     _DURATION_PROBE_CACHE_MAX_ENTRIES = 2000
 
-    def __init__(self) -> None:
+    def __init__(self, config_dir: Path | None = None) -> None:
         super().__init__()
         self.setWindowFlag(Qt.Window, True)
         self.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
@@ -118,7 +120,11 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
         self.setMinimumSize(960, 760)
 
-        self._state_path = Path.cwd() / "state" / "radio_state.db"
+        self._config_dir = (config_dir or (Path.cwd() / "config")).expanduser()
+        self._state_path = self._config_dir / "db.sqlite"
+        self._settings_path = self._config_dir / "settings.yaml"
+        self._legacy_state_path = Path.cwd() / "state" / "radio_state.db"
+        self._legacy_state_json_path = Path.cwd() / "state" / "radio_state.json"
         self._media_items: dict[str, MediaItem] = {}
         self._media_duration_cache: dict[str, int | None] = {}
         self._duration_probe_cache: dict[str, int | None] = {}
@@ -684,7 +690,9 @@ class MainWindow(QMainWindow):
 
     def _load_initial_state(self) -> None:
         app_started_at = datetime.now().astimezone()
+        self._migrate_legacy_state_location_if_needed()
         state = load_state(self._state_path)
+        app_config = self._load_or_initialize_app_config(state)
         self._media_items = {item.id: item for item in state.media_items}
         self._media_duration_cache.clear()
         self._duration_probe_cache = self._sanitize_duration_probe_cache(state.duration_probe_cache)
@@ -692,12 +700,12 @@ class MainWindow(QMainWindow):
         self._schedule_entries = state.schedule_entries
         self._cron_entries = state.cron_entries
         self._play_queue = deque(state.queue)
-        self._library_tab_configs = list(state.library_tabs)
-        self._supported_extensions = self._normalize_supported_extensions(state.supported_extensions)
+        self._library_tab_configs = list(app_config.library_tabs)
+        self._supported_extensions = self._normalize_supported_extensions(app_config.supported_extensions)
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
         self._logs_visible = state.logs_visible
-        self._fade_in_duration_seconds = max(1, state.fade_in_duration_seconds)
-        self._fade_out_duration_seconds = max(1, state.fade_out_duration_seconds)
+        self._fade_in_duration_seconds = max(1, app_config.fade_in_duration_seconds)
+        self._fade_out_duration_seconds = max(1, app_config.fade_out_duration_seconds)
         loaded_schedule_count = len(self._schedule_entries)
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
@@ -768,6 +776,48 @@ class MainWindow(QMainWindow):
             duration_probe_cache=self._duration_probe_cache,
         )
         save_state(self._state_path, state)
+
+    def _save_settings(self) -> None:
+        app_config = AppConfig(
+            fade_in_duration_seconds=self._fade_in_duration_seconds,
+            fade_out_duration_seconds=self._fade_out_duration_seconds,
+            library_tabs=list(self._library_tab_configs),
+            supported_extensions=list(self._supported_extensions),
+        )
+        save_app_config(self._settings_path, app_config)
+
+    def _load_or_initialize_app_config(self, state: AppState) -> AppConfig:
+        if self._settings_path.exists():
+            return load_app_config(self._settings_path)
+
+        # Seed initial YAML config from legacy DB settings if available.
+        seeded_config = AppConfig(
+            fade_in_duration_seconds=max(1, state.fade_in_duration_seconds),
+            fade_out_duration_seconds=max(1, state.fade_out_duration_seconds),
+            library_tabs=list(state.library_tabs),
+            supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
+        )
+        self._settings_path.parent.mkdir(parents=True, exist_ok=True)
+        save_app_config(self._settings_path, seeded_config)
+        return seeded_config
+
+    def _migrate_legacy_state_location_if_needed(self) -> None:
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self._state_path.exists() and self._legacy_state_path.exists():
+            try:
+                shutil.copy2(self._legacy_state_path, self._state_path)
+            except OSError:
+                pass
+        target_legacy_json_path = self._state_path.with_suffix(".json")
+        if (
+            not self._state_path.exists()
+            and not target_legacy_json_path.exists()
+            and self._legacy_state_json_path.exists()
+        ):
+            try:
+                shutil.copy2(self._legacy_state_json_path, target_legacy_json_path)
+            except OSError:
+                pass
 
     def _fade_in_duration_ms(self) -> int:
         return max(1, self._fade_in_duration_seconds) * 1000
@@ -2699,7 +2749,7 @@ class MainWindow(QMainWindow):
         if library_tabs_changed:
             self._library_tab_configs = next_library_tabs
             self._rebuild_custom_library_tabs()
-        self._save_state()
+        self._save_settings()
         self._append_log(
             f"Updated settings: fade in={self._fade_in_duration_seconds}s, "
             f"fade out={self._fade_out_duration_seconds}s, "
@@ -2781,5 +2831,6 @@ class MainWindow(QMainWindow):
         self._scheduler.stop()
         self._volume_fade_timer.stop()
         self._duration_probe_executor.shutdown(wait=False, cancel_futures=True)
+        self._save_settings()
         self._save_state()
         super().closeEvent(event)

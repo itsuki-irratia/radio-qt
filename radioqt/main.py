@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
 import sys
@@ -102,10 +103,23 @@ def _configure_multimedia_runtime() -> None:
             os.environ.setdefault("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", "")
 
 
+def _parse_cli_args(argv: list[str]) -> tuple[Path, list[str]]:
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument(
+        "--config",
+        default="config",
+        help="Configuration directory (default: ./config)",
+    )
+    parsed_args, qt_args = parser.parse_known_args(argv[1:])
+    config_dir = Path(parsed_args.config).expanduser()
+    return config_dir, [argv[0], *qt_args]
+
+
 def run() -> int:
+    config_dir, qt_argv = _parse_cli_args(sys.argv)
     _configure_multimedia_runtime()
-    app = QApplication(sys.argv)
-    window = MainWindow()
+    app = QApplication(qt_argv)
+    window = MainWindow(config_dir=config_dir)
     window.show()
     return app.exec()
 

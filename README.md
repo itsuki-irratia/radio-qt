@@ -26,11 +26,22 @@ pip install -r requirements.txt
 python -m radioqt
 ```
 
-State is saved to:
+Default runtime paths:
 
-`state/radio_state.db`
+- SQLite state: `config/db.sqlite`
+- App settings (YAML): `config/settings.yaml`
 
-If `state/radio_state.json` exists from an older version, it is migrated automatically on startup.
+You can override the config directory:
+
+```bash
+python -m radioqt --config "/path/to/config-dir"
+```
+
+In that case, paths become:
+- `/path/to/config-dir/db.sqlite`
+- `/path/to/config-dir/settings.yaml`
+
+Legacy `state/radio_state.db` and `state/radio_state.json` are copied to the new location automatically when needed.
 
 ## Basic workflow
 

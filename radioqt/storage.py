@@ -407,42 +407,21 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
         connection.execute(
             """
             INSERT INTO app_meta(key, value)
-            VALUES('library_tabs', ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            (json.dumps([tab.to_dict() for tab in state.library_tabs], separators=(",", ":")),),
-        )
-        connection.execute(
-            """
-            INSERT INTO app_meta(key, value)
-            VALUES('supported_extensions', ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            (json.dumps(state.supported_extensions, separators=(",", ":")),),
-        )
-        connection.execute(
-            """
-            INSERT INTO app_meta(key, value)
-            VALUES('fade_in_duration_seconds', ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            (str(max(1, state.fade_in_duration_seconds)),),
-        )
-        connection.execute(
-            """
-            INSERT INTO app_meta(key, value)
-            VALUES('fade_out_duration_seconds', ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            (str(max(1, state.fade_out_duration_seconds)),),
-        )
-        connection.execute(
-            """
-            INSERT INTO app_meta(key, value)
             VALUES('duration_probe_cache', ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
             (json.dumps(state.duration_probe_cache, separators=(",", ":")),),
+        )
+        connection.execute(
+            """
+            DELETE FROM app_meta
+            WHERE key IN (
+                'library_tabs',
+                'supported_extensions',
+                'fade_in_duration_seconds',
+                'fade_out_duration_seconds'
+            )
+            """
         )
 
 
