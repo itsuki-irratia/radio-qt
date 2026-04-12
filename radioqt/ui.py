@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         self._last_source_panel = "filesystem"
         self._automation_playing = False
         self._schedule_auto_focus_enabled = False
+        self._logs_visible = True
         self._fade_in_duration_seconds = 5
         self._fade_out_duration_seconds = 5
         self._fullscreen_active = False
@@ -311,7 +312,7 @@ class MainWindow(QMainWindow):
         view_menu = menu_bar.addMenu("&View")
         self._toggle_logs_action = QAction("&Logs", self)
         self._toggle_logs_action.setCheckable(True)
-        self._toggle_logs_action.setChecked(True)
+        self._toggle_logs_action.setChecked(self._logs_visible)
         view_menu.addAction(self._toggle_logs_action)
         help_menu = menu_bar.addMenu("&Help")
         self._cron_help_action = QAction("&CRON", self)
@@ -491,7 +492,7 @@ class MainWindow(QMainWindow):
         self._cron_refresh_timer.timeout.connect(self._refresh_cron_runtime_window)
         self._schedule_focus_timer.timeout.connect(self._refresh_schedule_auto_focus)
         self._configuration_action.triggered.connect(self._open_configuration_dialog)
-        self._toggle_logs_action.toggled.connect(self._set_logs_visible)
+        self._toggle_logs_action.toggled.connect(self._on_logs_visibility_toggled)
         self._export_logs_action.triggered.connect(self._export_logs)
         self._cron_help_action.triggered.connect(self._show_cron_help)
         # Sync fullscreen button with video widget state
@@ -580,6 +581,7 @@ class MainWindow(QMainWindow):
         self._cron_entries = state.cron_entries
         self._play_queue = deque(state.queue)
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
+        self._logs_visible = state.logs_visible
         self._fade_in_duration_seconds = max(1, state.fade_in_duration_seconds)
         self._fade_out_duration_seconds = max(1, state.fade_out_duration_seconds)
         loaded_schedule_count = len(self._schedule_entries)
@@ -598,6 +600,10 @@ class MainWindow(QMainWindow):
         self._schedule_focus_checkbox.blockSignals(True)
         self._schedule_focus_checkbox.setChecked(self._schedule_auto_focus_enabled)
         self._schedule_focus_checkbox.blockSignals(False)
+        self._toggle_logs_action.blockSignals(True)
+        self._toggle_logs_action.setChecked(self._logs_visible)
+        self._toggle_logs_action.blockSignals(False)
+        self._set_logs_visible(self._logs_visible)
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
         runtime_pruned_count = max(0, loaded_schedule_count - len(self._schedule_entries))
@@ -638,6 +644,7 @@ class MainWindow(QMainWindow):
             cron_entries=self._cron_entries,
             queue=list(self._play_queue),
             schedule_auto_focus=self._schedule_auto_focus_enabled,
+            logs_visible=self._logs_visible,
             fade_in_duration_seconds=self._fade_in_duration_seconds,
             fade_out_duration_seconds=self._fade_out_duration_seconds,
             duration_probe_cache=self._duration_probe_cache,
@@ -2488,6 +2495,12 @@ class MainWindow(QMainWindow):
     @Slot(bool)
     def _set_logs_visible(self, visible: bool) -> None:
         self._logs_group.setVisible(bool(visible))
+
+    @Slot(bool)
+    def _on_logs_visibility_toggled(self, checked: bool) -> None:
+        self._logs_visible = bool(checked)
+        self._set_logs_visible(self._logs_visible)
+        self._save_state()
 
     @Slot()
     def _export_logs(self) -> None:

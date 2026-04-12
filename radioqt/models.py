@@ -226,6 +226,7 @@ class AppState:
     cron_entries: list[CronEntry] = field(default_factory=list)
     queue: list[QueueItem] = field(default_factory=list)
     schedule_auto_focus: bool = False
+    logs_visible: bool = True
     fade_in_duration_seconds: int = 5
     fade_out_duration_seconds: int = 5
     duration_probe_cache: dict[str, int | None] = field(default_factory=dict)
@@ -262,6 +263,7 @@ class AppState:
             cron_entries=cron_entries,
             queue=queue,
             schedule_auto_focus=bool(data.get("schedule_auto_focus", False)),
+            logs_visible=bool(data.get("logs_visible", True)),
             fade_in_duration_seconds=_safe_positive_int(data.get("fade_in_duration_seconds"), 5),
             fade_out_duration_seconds=_safe_positive_int(data.get("fade_out_duration_seconds"), 5),
             duration_probe_cache=duration_probe_cache,
@@ -274,6 +276,7 @@ class AppState:
             "cron_entries": [entry.to_dict() for entry in self.cron_entries],
             "queue": [item.to_dict() for item in self.queue],
             "schedule_auto_focus": self.schedule_auto_focus,
+            "logs_visible": self.logs_visible,
             "fade_in_duration_seconds": self.fade_in_duration_seconds,
             "fade_out_duration_seconds": self.fade_out_duration_seconds,
             "duration_probe_cache": self.duration_probe_cache,

@@ -147,6 +147,10 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
     schedule_auto_focus = (
         schedule_auto_focus_row is not None and schedule_auto_focus_row["value"] == "1"
     )
+    logs_visible_row = connection.execute(
+        "SELECT value FROM app_meta WHERE key = 'logs_visible'"
+    ).fetchone()
+    logs_visible = logs_visible_row is None or logs_visible_row["value"] == "1"
     fade_in_duration_row = connection.execute(
         "SELECT value FROM app_meta WHERE key = 'fade_in_duration_seconds'"
     ).fetchone()
@@ -260,6 +264,7 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "cron_entries": cron_entries,
             "queue": queue,
             "schedule_auto_focus": schedule_auto_focus,
+            "logs_visible": logs_visible,
             "fade_in_duration_seconds": fade_in_duration_seconds,
             "fade_out_duration_seconds": fade_out_duration_seconds,
             "duration_probe_cache": duration_probe_cache,
@@ -370,6 +375,14 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
             ("1" if state.schedule_auto_focus else "0",),
+        )
+        connection.execute(
+            """
+            INSERT INTO app_meta(key, value)
+            VALUES('logs_visible', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            ("1" if state.logs_visible else "0",),
         )
         connection.execute(
             """
