@@ -40,13 +40,15 @@ def selected_filesystem_media_id(
     filesystem_model: QFileSystemModel,
     media_items: dict[str, MediaItem],
     media_duration_cache: dict[str, int | None],
+    *,
+    supported_extensions: set[str] | None = None,
 ) -> tuple[str | None, bool]:
     index = filesystem_view.currentIndex()
     if not index.isValid():
         return None, False
 
     path = Path(filesystem_model.filePath(index))
-    if not path.is_file() or not is_supported_media_file(path):
+    if not path.is_file() or not is_supported_media_file(path, supported_extensions=supported_extensions):
         return None, False
 
     media, created = ensure_file_media_item(media_items, media_duration_cache, path)

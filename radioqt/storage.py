@@ -154,6 +154,9 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
     library_tabs_row = connection.execute(
         "SELECT value FROM app_meta WHERE key = 'library_tabs'"
     ).fetchone()
+    supported_extensions_row = connection.execute(
+        "SELECT value FROM app_meta WHERE key = 'supported_extensions'"
+    ).fetchone()
     fade_in_duration_row = connection.execute(
         "SELECT value FROM app_meta WHERE key = 'fade_in_duration_seconds'"
     ).fetchone()
@@ -187,6 +190,12 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
         )
     except (TypeError, ValueError, json.JSONDecodeError):
         library_tabs = []
+    try:
+        supported_extensions = json.loads(
+            supported_extensions_row["value"] if supported_extensions_row is not None else "[]"
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        supported_extensions = []
     media_items = [
         {
             "id": row["id"],
@@ -273,6 +282,7 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "cron_entries": cron_entries,
             "queue": queue,
             "library_tabs": library_tabs,
+            "supported_extensions": supported_extensions,
             "schedule_auto_focus": schedule_auto_focus,
             "logs_visible": logs_visible,
             "fade_in_duration_seconds": fade_in_duration_seconds,
@@ -401,6 +411,14 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
             (json.dumps([tab.to_dict() for tab in state.library_tabs], separators=(",", ":")),),
+        )
+        connection.execute(
+            """
+            INSERT INTO app_meta(key, value)
+            VALUES('supported_extensions', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (json.dumps(state.supported_extensions, separators=(",", ":")),),
         )
         connection.execute(
             """

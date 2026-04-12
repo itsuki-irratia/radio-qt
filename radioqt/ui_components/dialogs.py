@@ -275,6 +275,7 @@ class ConfigurationDialog(QDialog):
         fade_in_duration_seconds: int,
         fade_out_duration_seconds: int,
         library_tabs: list[LibraryTab],
+        supported_extensions: list[str],
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -288,10 +289,12 @@ class ConfigurationDialog(QDialog):
         self._fade_duration_spinbox.setRange(1, 120)
         self._fade_duration_spinbox.setValue(shared_initial_duration)
         self._configured_library_tabs: list[LibraryTab] = list(library_tabs)
+        self._configured_supported_extensions: list[str] = list(supported_extensions)
 
         self._settings_sections_list = QListWidget(self)
         self._settings_sections_list.addItem("General Settings")
         self._settings_sections_list.addItem("Custom Paths")
+        self._settings_sections_list.addItem("Extensions")
         self._settings_sections_list.setFixedWidth(190)
 
         self._settings_pages = QStackedWidget(self)
@@ -348,8 +351,36 @@ class ConfigurationDialog(QDialog):
         custom_paths_layout.addWidget(self._library_tabs_table, 1)
         custom_paths_layout.addLayout(library_tabs_buttons)
 
+        extensions_page = QWidget(self)
+        extensions_layout = QVBoxLayout(extensions_page)
+        self._supported_extensions_table = QTableWidget(extensions_page)
+        self._supported_extensions_table.setColumnCount(1)
+        self._supported_extensions_table.setHorizontalHeaderLabels(["Extension"])
+        self._supported_extensions_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._supported_extensions_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._supported_extensions_table.setAlternatingRowColors(True)
+        self._supported_extensions_table.verticalHeader().setVisible(False)
+        self._supported_extensions_table.horizontalHeader().setStretchLastSection(True)
+        self._supported_extensions_table.setRowCount(0)
+        for extension in self._configured_supported_extensions:
+            self._append_extension_row(extension)
+
+        extensions_buttons = QHBoxLayout()
+        self._add_extension_button = QPushButton("Add Extension", extensions_page)
+        self._remove_extension_button = QPushButton(extensions_page)
+        self._remove_extension_button.setToolTip("Remove selected extension")
+        self._remove_extension_button.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self._add_extension_button.clicked.connect(self._add_extension_row)
+        self._remove_extension_button.clicked.connect(self._remove_selected_extension_row)
+        extensions_buttons.addWidget(self._add_extension_button)
+        extensions_buttons.addWidget(self._remove_extension_button)
+        extensions_buttons.addStretch()
+        extensions_layout.addWidget(self._supported_extensions_table, 1)
+        extensions_layout.addLayout(extensions_buttons)
+
         self._settings_pages.addWidget(general_page)
         self._settings_pages.addWidget(custom_paths_page)
+        self._settings_pages.addWidget(extensions_page)
         self._settings_sections_list.currentRowChanged.connect(self._on_settings_section_changed)
         self._settings_sections_list.setCurrentRow(0)
 
@@ -364,10 +395,18 @@ class ConfigurationDialog(QDialog):
         return self._fade_duration_spinbox.value()
 
     def library_tabs(self) -> list[LibraryTab]:
-        configured_tabs = self._collect_library_tabs(show_warning=False)
-        if configured_tabs is None:
+        collected_settings = self._collect_settings_values(show_warning=False)
+        if collected_settings is None:
             return list(self._configured_library_tabs)
+        configured_tabs, _ = collected_settings
         return configured_tabs
+
+    def supported_extensions(self) -> list[str]:
+        collected_settings = self._collect_settings_values(show_warning=False)
+        if collected_settings is None:
+            return list(self._configured_supported_extensions)
+        _, configured_supported_extensions = collected_settings
+        return configured_supported_extensions
 
     @staticmethod
     def _normalize_directory_path(raw_path: str) -> str:
@@ -384,11 +423,31 @@ class ConfigurationDialog(QDialog):
         self._library_tabs_table.setItem(row, 1, QTableWidgetItem(path))
         self._library_tabs_table.resizeColumnsToContents()
 
+    @staticmethod
+    def _normalize_extension_token(raw_extension: str) -> str:
+        token = raw_extension.strip().lower().lstrip(".")
+        if not token:
+            return ""
+        if not all(char.isalnum() for char in token):
+            return ""
+        return token
+
+    def _append_extension_row(self, extension: str = "") -> None:
+        row = self._supported_extensions_table.rowCount()
+        self._supported_extensions_table.insertRow(row)
+        self._supported_extensions_table.setItem(row, 0, QTableWidgetItem(extension))
+
     def _add_library_tab_row(self) -> None:
         self._append_library_tab_row()
         new_row = self._library_tabs_table.rowCount() - 1
         self._library_tabs_table.setCurrentCell(new_row, 0)
         self._library_tabs_table.editItem(self._library_tabs_table.item(new_row, 0))
+
+    def _add_extension_row(self) -> None:
+        self._append_extension_row()
+        new_row = self._supported_extensions_table.rowCount() - 1
+        self._supported_extensions_table.setCurrentCell(new_row, 0)
+        self._supported_extensions_table.editItem(self._supported_extensions_table.item(new_row, 0))
 
     def _remove_selected_library_tab_row(self) -> None:
         current_row = self._library_tabs_table.currentRow()
@@ -409,6 +468,24 @@ class ConfigurationDialog(QDialog):
         if result != QMessageBox.Yes:
             return
         self._library_tabs_table.removeRow(current_row)
+
+    def _remove_selected_extension_row(self) -> None:
+        current_row = self._supported_extensions_table.currentRow()
+        if current_row < 0:
+            return
+        extension_item = self._supported_extensions_table.item(current_row, 0)
+        extension = extension_item.text().strip() if extension_item is not None else ""
+        details = extension or f"row {current_row + 1}"
+        result = QMessageBox.question(
+            self,
+            "Confirm Removal",
+            f"Remove extension '{details}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if result != QMessageBox.Yes:
+            return
+        self._supported_extensions_table.removeRow(current_row)
 
     def _browse_selected_library_tab_path(self) -> None:
         current_row = self._library_tabs_table.currentRow()
@@ -457,22 +534,69 @@ class ConfigurationDialog(QDialog):
             configured_tabs.append(LibraryTab(title=title, path=normalized_path))
         return configured_tabs
 
+    def _collect_supported_extensions(self, *, show_warning: bool) -> list[str] | None:
+        configured_supported_extensions: list[str] = []
+        seen_extensions: set[str] = set()
+        for row in range(self._supported_extensions_table.rowCount()):
+            extension_item = self._supported_extensions_table.item(row, 0)
+            raw_extension = extension_item.text() if extension_item is not None else ""
+            extension = self._normalize_extension_token(raw_extension)
+            if not raw_extension.strip():
+                continue
+            if not extension:
+                if show_warning:
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Extension",
+                        (
+                            f"Row {row + 1}: extension '{raw_extension}' is invalid. "
+                            "Use only letters and numbers."
+                        ),
+                    )
+                return None
+            if extension in seen_extensions:
+                continue
+            seen_extensions.add(extension)
+            configured_supported_extensions.append(extension)
+        if not configured_supported_extensions:
+            if show_warning:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Extensions",
+                    "Add at least one extension.",
+                )
+            return None
+        return configured_supported_extensions
+
+    def _collect_settings_values(self, *, show_warning: bool) -> tuple[list[LibraryTab], list[str]] | None:
+        configured_tabs = self._collect_library_tabs(show_warning=show_warning)
+        if configured_tabs is None:
+            return None
+        configured_supported_extensions = self._collect_supported_extensions(show_warning=show_warning)
+        if configured_supported_extensions is None:
+            return None
+        return configured_tabs, configured_supported_extensions
+
     def _on_settings_section_changed(self, index: int) -> None:
         if 0 <= index < self._settings_pages.count():
             self._settings_pages.setCurrentIndex(index)
 
     def reject(self) -> None:
-        configured_tabs = self._collect_library_tabs(show_warning=True)
-        if configured_tabs is None:
+        collected_settings = self._collect_settings_values(show_warning=True)
+        if collected_settings is None:
             return
+        configured_tabs, configured_supported_extensions = collected_settings
         self._configured_library_tabs = configured_tabs
+        self._configured_supported_extensions = configured_supported_extensions
         super().accept()
 
     def closeEvent(self, event) -> None:
-        configured_tabs = self._collect_library_tabs(show_warning=True)
-        if configured_tabs is None:
+        collected_settings = self._collect_settings_values(show_warning=True)
+        if collected_settings is None:
             event.ignore()
             return
+        configured_tabs, configured_supported_extensions = collected_settings
         self._configured_library_tabs = configured_tabs
+        self._configured_supported_extensions = configured_supported_extensions
         self.setResult(QDialog.Accepted)
         event.accept()

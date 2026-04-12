@@ -56,6 +56,7 @@ from .library import (
 from .models import (
     AppState,
     CronEntry,
+    DEFAULT_SUPPORTED_EXTENSIONS,
     LibraryTab,
     MediaItem,
     QueueItem,
@@ -126,6 +127,7 @@ class MainWindow(QMainWindow):
         self._cron_entries: list[CronEntry] = []
         self._play_queue: deque[QueueItem] = deque()
         self._library_tab_configs: list[LibraryTab] = []
+        self._supported_extensions: list[str] = list(DEFAULT_SUPPORTED_EXTENSIONS)
         self._library_tab_sources: dict[QWidget, tuple[str, QTreeView | None, QFileSystemModel | None]] = {}
         self._custom_library_tab_widgets: list[QWidget] = []
         self._last_source_panel = "filesystem"
@@ -379,6 +381,48 @@ class MainWindow(QMainWindow):
         except OSError:
             return str(expanded)
 
+    @staticmethod
+    def _normalize_supported_extensions(raw_extensions: list[str]) -> list[str]:
+        normalized_extensions: list[str] = []
+        seen: set[str] = set()
+        for raw_extension in raw_extensions:
+            token = str(raw_extension).strip().lower().lstrip(".")
+            if not token or not all(char.isalnum() for char in token):
+                continue
+            if token in seen:
+                continue
+            seen.add(token)
+            normalized_extensions.append(token)
+        return normalized_extensions or list(DEFAULT_SUPPORTED_EXTENSIONS)
+
+    def _supported_extension_suffixes(self) -> set[str]:
+        return {f".{extension}" for extension in self._supported_extensions}
+
+    def _filesystem_name_filters(self) -> list[str]:
+        filters: list[str] = []
+        for extension in self._supported_extensions:
+            case_insensitive_extension = "".join(
+                f"[{char.lower()}{char.upper()}]" if char.isalpha() else char
+                for char in extension
+            )
+            filters.append(f"*.{case_insensitive_extension}")
+        return filters or ["*"]
+
+    def _apply_supported_extensions_to_model(self, filesystem_model: QFileSystemModel) -> None:
+        filesystem_model.setNameFilterDisables(False)
+        filesystem_model.setNameFilters(self._filesystem_name_filters())
+
+    def _apply_supported_extensions_to_filesystem_models(self) -> None:
+        applied_models: set[int] = set()
+        for panel_kind, _, filesystem_model in self._library_tab_sources.values():
+            if panel_kind != "filesystem" or filesystem_model is None:
+                continue
+            model_id = id(filesystem_model)
+            if model_id in applied_models:
+                continue
+            self._apply_supported_extensions_to_model(filesystem_model)
+            applied_models.add(model_id)
+
     def _create_filesystem_tab_widget(
         self,
         root_path: str,
@@ -390,6 +434,7 @@ class MainWindow(QMainWindow):
 
         normalized_root = self._normalize_library_tab_path(root_path)
         filesystem_model = QFileSystemModel(filesystem_tab)
+        self._apply_supported_extensions_to_model(filesystem_model)
         root_index = filesystem_model.setRootPath(normalized_root)
 
         filesystem_view = QTreeView(filesystem_tab)
@@ -648,6 +693,7 @@ class MainWindow(QMainWindow):
         self._cron_entries = state.cron_entries
         self._play_queue = deque(state.queue)
         self._library_tab_configs = list(state.library_tabs)
+        self._supported_extensions = self._normalize_supported_extensions(state.supported_extensions)
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
         self._logs_visible = state.logs_visible
         self._fade_in_duration_seconds = max(1, state.fade_in_duration_seconds)
@@ -672,6 +718,7 @@ class MainWindow(QMainWindow):
         self._toggle_logs_action.setChecked(self._logs_visible)
         self._toggle_logs_action.blockSignals(False)
         self._set_logs_visible(self._logs_visible)
+        self._apply_supported_extensions_to_filesystem_models()
         self._rebuild_custom_library_tabs()
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
@@ -713,6 +760,7 @@ class MainWindow(QMainWindow):
             cron_entries=self._cron_entries,
             queue=list(self._play_queue),
             library_tabs=self._library_tab_configs,
+            supported_extensions=self._supported_extensions,
             schedule_auto_focus=self._schedule_auto_focus_enabled,
             logs_visible=self._logs_visible,
             fade_in_duration_seconds=self._fade_in_duration_seconds,
@@ -1496,6 +1544,7 @@ class MainWindow(QMainWindow):
             filesystem_model,
             self._media_items,
             self._media_duration_cache,
+            supported_extensions=self._supported_extension_suffixes(),
         )
         if created:
             self._save_state()
@@ -2623,24 +2672,30 @@ class MainWindow(QMainWindow):
             fade_in_duration_seconds=self._fade_in_duration_seconds,
             fade_out_duration_seconds=self._fade_out_duration_seconds,
             library_tabs=self._library_tab_configs,
+            supported_extensions=self._supported_extensions,
         )
         if dialog.exec() != QDialog.Accepted:
             return
 
         next_shared_fade_duration = max(1, dialog.fade_duration_seconds())
         next_library_tabs = dialog.library_tabs()
+        next_supported_extensions = self._normalize_supported_extensions(dialog.supported_extensions())
         fade_changed = not (
             next_shared_fade_duration == self._fade_in_duration_seconds
             and next_shared_fade_duration == self._fade_out_duration_seconds
         )
         library_tabs_changed = next_library_tabs != self._library_tab_configs
+        supported_extensions_changed = next_supported_extensions != self._supported_extensions
 
-        if not fade_changed and not library_tabs_changed:
+        if not fade_changed and not library_tabs_changed and not supported_extensions_changed:
             return
 
         if fade_changed:
             self._fade_in_duration_seconds = next_shared_fade_duration
             self._fade_out_duration_seconds = next_shared_fade_duration
+        if supported_extensions_changed:
+            self._supported_extensions = next_supported_extensions
+            self._apply_supported_extensions_to_filesystem_models()
         if library_tabs_changed:
             self._library_tab_configs = next_library_tabs
             self._rebuild_custom_library_tabs()
@@ -2648,7 +2703,8 @@ class MainWindow(QMainWindow):
         self._append_log(
             f"Updated settings: fade in={self._fade_in_duration_seconds}s, "
             f"fade out={self._fade_out_duration_seconds}s, "
-            f"custom library tabs={len(self._library_tab_configs)}"
+            f"custom library tabs={len(self._library_tab_configs)}, "
+            f"extensions={','.join(self._supported_extensions)}"
         )
 
     def _set_automation_status(self, is_playing: bool) -> None:

@@ -13,6 +13,52 @@ def _parse_datetime(value: str) -> datetime:
     return parsed
 
 
+DEFAULT_SUPPORTED_EXTENSIONS = [
+    "mp3",
+    "ogg",
+    "opus",
+    "mp4",
+    "webm",
+    "aac",
+    "mkv",
+    "mpg",
+    "mpeg",
+    "m3u",
+    "m3u8",
+    "pls",
+    "xspf",
+    "mov",
+    "wav",
+    "flac",
+    "m4a",
+    "avi",
+    "flv",
+]
+
+
+def _normalize_extension(value: object) -> str:
+    token = str(value).strip().lower().lstrip(".")
+    if not token:
+        return ""
+    if not all(char.isalnum() for char in token):
+        return ""
+    return token
+
+
+def _normalize_extensions_list(raw_values: object) -> list[str]:
+    if not isinstance(raw_values, list):
+        return list(DEFAULT_SUPPORTED_EXTENSIONS)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        token = _normalize_extension(raw_value)
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+    return normalized or list(DEFAULT_SUPPORTED_EXTENSIONS)
+
+
 @dataclass(slots=True)
 class MediaItem:
     id: str
@@ -245,6 +291,7 @@ class AppState:
     cron_entries: list[CronEntry] = field(default_factory=list)
     queue: list[QueueItem] = field(default_factory=list)
     library_tabs: list[LibraryTab] = field(default_factory=list)
+    supported_extensions: list[str] = field(default_factory=lambda: list(DEFAULT_SUPPORTED_EXTENSIONS))
     schedule_auto_focus: bool = False
     logs_visible: bool = True
     fade_in_duration_seconds: int = 5
@@ -288,6 +335,7 @@ class AppState:
             cron_entries=cron_entries,
             queue=queue,
             library_tabs=library_tabs,
+            supported_extensions=_normalize_extensions_list(data.get("supported_extensions")),
             schedule_auto_focus=bool(data.get("schedule_auto_focus", False)),
             logs_visible=bool(data.get("logs_visible", True)),
             fade_in_duration_seconds=_safe_positive_int(data.get("fade_in_duration_seconds"), 5),
@@ -302,6 +350,7 @@ class AppState:
             "cron_entries": [entry.to_dict() for entry in self.cron_entries],
             "queue": [item.to_dict() for item in self.queue],
             "library_tabs": [tab.to_dict() for tab in self.library_tabs],
+            "supported_extensions": _normalize_extensions_list(self.supported_extensions),
             "schedule_auto_focus": self.schedule_auto_focus,
             "logs_visible": self.logs_visible,
             "fade_in_duration_seconds": self.fade_in_duration_seconds,
