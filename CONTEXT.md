@@ -1,7 +1,7 @@
 # RadioQt Context
 
 Working memory for future sessions on this repository.
-This file describes the current architecture and behavior as implemented in code.
+This document reflects the code as it exists now.
 
 ## Project Snapshot
 
@@ -12,17 +12,20 @@ Core capabilities:
 - Manual datetime schedule entries
 - CRON-generated schedule entries
 - Queue fallback when player is busy
-- SQLite persistence
-- Runtime logs and log export
+- SQLite persistence for runtime state
+- YAML persistence for app settings
+- Runtime logs + log export
 
 Primary entrypoint:
 - `python -m radioqt`
 
-Primary state file:
-- `state/radio_state.db`
+Default runtime files:
+- State DB: `config/db.sqlite`
+- App settings: `config/settings.yaml`
 
 Legacy migration:
-- If `state/radio_state.json` exists and DB has no data, state is migrated automatically.
+- `state/radio_state.db` and `state/radio_state.json` are copied to `config/` when needed.
+- Legacy JSON (`config/db.json`) can still be imported into SQLite on first run when DB is empty.
 
 ## Runtime Entrypoint
 
@@ -30,48 +33,51 @@ Startup path:
 1. `radioqt.__main__` -> `radioqt.main.run()`
 2. `_configure_multimedia_runtime()`
 3. `QApplication(...)`
-4. `MainWindow()`
-5. `window.show()`
+4. Load app icon from `radioqt/radioqt.svg` (if available)
+5. `MainWindow(config_dir=...)`
+6. `window.show()`
 
 `radioqt/main.py` runtime behavior:
 - `RADIOQT_MEDIA_BACKEND=auto` (default): let Qt choose backend
 - `RADIOQT_MEDIA_BACKEND=<backend>`: request explicit backend (e.g. `ffmpeg`, `gstreamer`)
-- Backend detection scans Qt plugin roots, including common Linux fallbacks:
+- Backend detection scans Qt plugin roots, including Linux fallbacks:
   - `/usr/lib/qt6/plugins`
   - `/usr/lib/qt/plugins`
-- If requested backend is unavailable and FFmpeg plugin exists, fallback to FFmpeg.
+- If requested backend is unavailable and FFmpeg exists, fallback to FFmpeg.
 - On Linux, hardware decoding is disabled by default unless `RADIOQT_DISABLE_HW_DECODING=0`.
 
 ## Repository Map
 
-- `README.md`: setup/run and troubleshooting notes
-- `requirements.txt`: runtime dependency (`PySide6>=6.6`)
+- `README.md`: setup/run notes
+- `requirements.txt`: Python deps (`PySide6>=6.6`)
 - `requirements-system.txt`: system multimedia packages
 
-- `radioqt/main.py`: app bootstrap + multimedia env setup
-- `radioqt/ui.py`: main window + most runtime orchestration
-- `radioqt/player.py`: `QMediaPlayer` wrapper, seek/fade/audio levels
-- `radioqt/storage.py`: SQLite persistence + schema/data migrations
-- `radioqt/models.py`: dataclasses and schedule status constants
-- `radioqt/cron.py`: 6-field CRON parser and iterator
+- `radioqt/main.py`: bootstrap + multimedia env setup + app icon wiring
+- `radioqt/radioqt.svg`: app icon asset
+- `radioqt/ui.py`: main window + orchestration
+- `radioqt/player.py`: `QMediaPlayer` wrapper, fades, audio levels
+- `radioqt/storage.py`: SQLite persistence + migrations
+- `radioqt/app_config.py`: YAML settings load/save
+- `radioqt/models.py`: dataclasses + status constants
+- `radioqt/cron.py`: 6-field CRON parser/iterator
 
 - `radioqt/scheduling/logic.py`: pure schedule computations
 - `radioqt/scheduling/runtime.py`: timer scheduler engine
 - `radioqt/scheduling/state.py`: startup/play normalization helpers
-- `radioqt/scheduling/__init__.py`: exports scheduling APIs
-- `radioqt/scheduler.py`: compatibility wrapper to scheduling runtime
-- `radioqt/schedule_logic.py`: compatibility wrapper to scheduling logic
+- `radioqt/scheduling/__init__.py`: scheduling exports
+- `radioqt/scheduler.py`: compatibility export for runtime scheduler
+- `radioqt/schedule_logic.py`: compatibility export for schedule logic
 
 - `radioqt/playback/actions.py`: queue/media helper actions
-- `radioqt/playback/orchestration.py`: trigger/play decision helpers
+- `radioqt/playback/orchestration.py`: trigger/play decision logic
 
 - `radioqt/library/sources.py`: source/path/extension helpers
 - `radioqt/library/items.py`: selected-media helpers
-- `radioqt/library/actions.py`: library state mutations
+- `radioqt/library/actions.py`: library mutations
 
 - `radioqt/ui_components/dialogs.py`: dialogs (`Schedule`, `CRON`, `Settings`, help)
-- `radioqt/ui_components/widgets.py`: `WaveformWidget`, `FullscreenOverlay`
 - `radioqt/ui_components/tables.py`: table render helpers
+- `radioqt/ui_components/widgets.py`: `WaveformWidget`, `FullscreenOverlay`
 
 ## Core Data Model
 
@@ -107,17 +113,18 @@ Defined in `radioqt/models.py`.
 
 ### `AppState`
 - `media_items`, `schedule_entries`, `cron_entries`, `queue`
-- `library_tabs`
-- `supported_extensions`
-- `schedule_auto_focus`
-- `logs_visible`
-- `fade_in_duration_seconds`
-- `fade_out_duration_seconds`
+- `library_tabs`, `supported_extensions`
+- `schedule_auto_focus`, `logs_visible`
+- `fade_in_duration_seconds`, `fade_out_duration_seconds`
 - `duration_probe_cache`
 
-## Persistence (SQLite)
+Note:
+- `AppState` still contains settings-like fields for compatibility/import.
+- Current runtime settings source of truth is `config/settings.yaml` (`AppConfig`).
 
-Implemented in `radioqt/storage.py`.
+## Persistence
+
+### SQLite (`radioqt/storage.py`)
 
 Tables:
 - `media_items`
@@ -126,27 +133,41 @@ Tables:
 - `queue_items`
 - `app_meta`
 
-Persistence model:
-- Save is full rewrite: clear core tables, then insert in-memory state.
-- Ordering preserved by `position` columns.
+Write model:
+- Full rewrite on save (`DELETE` + `INSERT`) for core tables.
+- Queue and schedule order preserved by `position`.
 
 `app_meta` keys currently used:
 - `legacy_json_migrated`
 - `schedule_auto_focus`
 - `logs_visible`
+- `duration_probe_cache`
+
+Legacy app_meta keys deliberately removed on write:
 - `library_tabs`
 - `supported_extensions`
 - `fade_in_duration_seconds`
 - `fade_out_duration_seconds`
-- `duration_probe_cache`
 
-Notable migrations handled:
+Handled migrations include:
 - old `enabled` / `fired` -> `status`
-- add CRON-related schedule columns and overrides
+- add CRON link/override columns to schedule entries
 - add fade flags on schedule/CRON tables
-- normalize boolean storage to text `True` / `False`
-- rebuild tables if boolean column types are not `TEXT`
 - add queue metadata (`source`, `schedule_entry_id`)
+- normalize/rebuild boolean-like columns as `TEXT` (`'True'/'False'`)
+
+### YAML Settings (`radioqt/app_config.py`)
+
+File: `config/settings.yaml`
+
+Current keys:
+- `fade` (shared fade duration in seconds)
+- `library_tabs`
+- `supported_extensions`
+
+Backward compatibility:
+- Can read legacy `fade_in_duration_seconds` / `fade_out_duration_seconds`.
+- If `settings.yaml` does not exist, it is seeded from legacy DB values via `AppState`.
 
 ## CRON Semantics
 
@@ -179,193 +200,202 @@ Top-level areas:
 
 Menu:
 - `File -> Settings...`
-- `View -> Logs` (toggle visibility)
+- `View -> Logs`
 - `Help -> Export Logs...`
 - `Help -> CRON`
 
-### Media Library panel
+### Media Library
 
-- Built-in tabs:
-  - `Filesystem`
-  - `Streamings`
-- Additional custom filesystem tabs are configurable in Settings.
-- Filesystem filtering is driven by `supported_extensions` from persisted settings.
-- Extension filters are applied as case-insensitive glob patterns.
-- URL tab supports context menu edit/remove.
+Tabs:
+- `Filesystem`
+- `Streamings`
+- Optional custom filesystem tabs from Settings
 
-### Schedule panel
+Behavior:
+- Filesystem filter uses configured extensions
+- Streams table supports context menu edit/remove
+- Add stream via `Add Streaming` button
 
-Date Time table columns:
-- `Start Time`, `Duration`, `Media`, `Hard Sync`, `Fade In`, `Fade Out`, `Status`
+### Schedule Tables
 
-CRON table columns:
-- `CRON`, `Media`, `Hard Sync`, `Fade In`, `Fade Out`, `Status`
+Date Time columns:
+- `Start Time`, `Duration`, `Media`, `Fade In`, `Fade Out`, `Status`
 
-Behaviors:
+CRON columns:
+- `CRON`, `Media`, `Fade In`, `Fade Out`, `Status`
+
+Important:
+- `hard_sync` is always enforced in code and not exposed in table columns.
+
+Other behaviors:
 - Date filter by selected day
-- Multi-select removal in Date Time table
-- CRON-managed rows cannot be removed from Date Time while corresponding CRON entry is enabled
-- CRON context menu allows edit/remove
-- CRON edit dialog currently changes expression only; hard/fade are changed via table controls
-- Auto-focus checkbox: `Focus current program`
+- Multi-select remove in Date Time table
+- Active CRON-generated Date Time rows cannot be removed while CRON rule is enabled
+- CRON context menu supports edit/remove
+- CRON edit dialog currently edits expression only (`expression_only=True`)
+- Optional auto-focus (`Focus current program`) updates every second
 
 ## Scheduling Runtime
 
 `radioqt/scheduling/runtime.py`:
-- `RadioScheduler` runs a `QTimer` every 500 ms
-- Emits `schedule_triggered(entry)` when `now >= start_at` for `pending` entries
-- Does not perform collision logic; orchestration is in UI/playback layer
+- `RadioScheduler` ticks every 500 ms
+- Emits `schedule_triggered(entry)` for `pending` entries where `now >= start_at`
+- Collision/window logic is not in scheduler; it is handled by scheduling/playback logic
 
-`radioqt/ui.py` CRON runtime window policy:
+CRON runtime window in `ui.py`:
 - Runtime dates: today + tomorrow
 - Refresh timer: every 30 seconds
-- Lookback window for occurrences: 1 hour
-- Max CRON occurrences in memory: 100
-- Keep up to 20 recent past occurrences plus upcoming ones
-- CRON occurrence IDs are deterministic:
+- Lookback for occurrence generation: 1 hour
+- Max CRON occurrences kept in memory: 100
+- Keep up to 20 recent past occurrences + upcoming ones
+- Deterministic occurrence IDs:
   - `uuid5(NAMESPACE_URL, f"radioqt-cron:{cron_id}:{start_at.isoformat()}")`
-
-## Duration Handling
-
-Duration source:
-- Local files only, via external `ffprobe`
-- Remote streams are treated as unknown duration
-
-Flow:
-- Request from `_media_duration_seconds()`
-- Async probe in single-thread `ThreadPoolExecutor`
-- Completion dispatched back to UI thread via `_DurationProbeDispatcher`
-
-Caching:
-- In-memory per-media cache (`_media_duration_cache`)
-- Persistent signature cache (`AppState.duration_probe_cache`)
-- Probe key: `<resolved_path>|<mtime_ns>|<size>`
-- Max probe cache entries: 2000
-- Cache behaves as LRU-like (pop/reinsert on lookup/store)
 
 ## Play / Trigger / Queue Rules
 
-Play button (`_on_play_clicked`) high-level flow:
+Play button (`_on_play_clicked`) flow:
 1. Refresh CRON runtime entries
 2. Recalculate durations
 3. Prepare schedule state (`prepare_schedule_entries_for_play`)
-4. If automation was stopped: start automation + scheduler
+4. Start automation + scheduler if needed
 5. Resolve play request (`resolve_play_request`) with precedence:
    - already playing -> no-op
    - active schedule -> play from computed offset
    - resume loaded media
    - play queue
-   - otherwise log compact schedule summary
+   - else log schedule summary
 
-Schedule trigger (`_on_schedule_triggered`) rules:
+Schedule trigger (`_on_schedule_triggered`) flow:
 - If automation stopped: one-shot `pending` -> `missed`, ignore
 - Missing media: one-shot -> `missed`, ignore
 - Else one-shot -> `fired`
-- If `hard_sync` true or player idle: play now (with start offset)
+- If `hard_sync` true or player idle -> play now (with offset)
 - Else queue scheduled media
 
-Queue:
+Queue behavior:
 - `deque[QueueItem]`, persisted
-- Stores origin (`manual` vs `schedule`) + optional `schedule_entry_id`
-- On media end, queue playback continues via `_play_next_from_queue()`
+- Keeps source (`manual` / `schedule`) + optional `schedule_entry_id`
+- On media finish, `_play_next_from_queue()` continues playback
+- Missing queued media are skipped with log count
 
-Active window semantics:
-- End-at is minimum of:
-  - `start + duration` (if known)
-  - next entry start (if exists)
-- So later scheduled entries can truncate current entry window.
+## Duration Handling
+
+Source of duration:
+- Local files only, via `ffprobe`
+- Streams/remote URLs are unknown duration
+
+Flow:
+- `_media_duration_seconds()` checks cache, then async probe if needed
+- Probe runs in single-thread `ThreadPoolExecutor`
+- Result is marshaled to UI thread via `_DurationProbeDispatcher`
+
+Caching:
+- Per-media cache (`_media_duration_cache`)
+- Persistent signature cache (`duration_probe_cache`)
+- Cache key: `<resolved_path>|<mtime_ns>|<size>`
+- Max entries: 2000
+- LRU-like behavior via pop/reinsert
 
 ## Fade Behavior
 
-Two fade systems exist:
+Two separate fade systems exist:
 
-1. Playback-entry fades in `MediaPlayerController`:
-- Supports per-entry `fade_in` / `fade_out`
-- Fade-in ramps from 0 to current base volume
-- Fade-out ramps toward 0 near expected end
-- Fade-out only active when expected duration is known
+1. Playback-entry fades (`MediaPlayerController`):
+- Per-entry `fade_in` / `fade_out`
+- Effective volume = slider base volume * fade multiplier
+- Fade-out requires an `expected_duration_ms`
+- `expected_duration_ms` comes from schedule window in UI:
+  - end = min(`start + media duration`, `next schedule start`)
+  - this allows fade-out on overlaps/truncations
+- For streams/backends with static `QMediaPlayer.position()`, fade progression falls back to a wall-clock timeline (`QTimer` tick)
 
-2. Manual volume fade controls in UI:
-- `Fade In` and `Fade Out` buttons animate slider value
-- Uses configurable durations from Settings
-- Tracks last non-zero volume for mute/unmute recovery
+2. Manual volume fades (UI buttons):
+- `Fade In` / `Fade Out` animate slider value
+- Uses configured shared fade duration
+- Keeps last non-zero volume for mute/unmute recovery
 
 ## Startup and Shutdown
 
-Startup in `MainWindow`:
-- UI is built first; state loading deferred with `QTimer.singleShot(0, ...)`
-- Load persisted state
-- Rebuild custom library tabs
-- Refresh CRON runtime window and durations
-- Run startup normalization (`prepare_schedule_entries_for_startup`)
-- Apply schedule filter date and optional auto-focus
+Startup:
+- Build UI first, then deferred load (`QTimer.singleShot(0, _finish_startup_load)`)
+- Migrate/copy legacy state paths if needed
+- Load SQLite state + YAML settings
+- Enforce hard sync on all schedule/CRON entries
+- Refresh CRON runtime entries and durations
+- Normalize missed/restored one-shot entries (`prepare_schedule_entries_for_startup`)
+- Refresh tables, scheduler entries, visuals
 - Start timers:
-  - CRON refresh (30s)
+  - CRON runtime refresh (30s)
   - schedule auto-focus refresh (1s)
 
 Shutdown:
-- set `_shutting_down`
-- stop scheduler and fade timer
-- shutdown duration probe executor (`cancel_futures=True`)
-- save state
+- Set `_shutting_down`
+- Stop scheduler and UI volume fade timer
+- Shutdown duration probe executor (`cancel_futures=True`)
+- Save settings and state
 
-## Fullscreen
+## Fullscreen, Icon, and Visuals
 
-Handled defensively in `ui.py`:
-- Double-click player area toggles fullscreen
-- `Esc` exits fullscreen via event filter
-- Video uses `QVideoWidget.setFullScreen(True)` when possible
+Fullscreen handling:
+- Double-click video/waveform/overlay toggles fullscreen
+- `Esc` exits fullscreen through event filter
+- Video prefers `QVideoWidget.setFullScreen(True)`
 - Audio-only uses `FullscreenOverlay`
+
+App icon:
+- Loaded from `radioqt/radioqt.svg`
+- Applied to both `QApplication` and `MainWindow` in `main.py`
+
+Waveform:
+- `WaveformWidget` shows bar visualization only (no title/subtitle text overlay)
+- Uses decaying smoothed levels from `QAudioBufferOutput`
 
 ## Logging
 
-- Logs are appended as `[HH:MM:SS] message`
-- Export from `Help -> Export Logs...`
-- Logs visibility toggle is persisted (`logs_visible`)
+- Log format: `[HH:MM:SS] message`
+- Log view max: 2000 lines
+- Export path chosen from `Help -> Export Logs...`
+- Logs visibility persists (`logs_visible`)
 
 ## Important Operational Details
 
-- `ui.py` remains the highest-risk file for behavior regressions.
-- `ConfigurationDialog` enforces valid settings on close/cancel and currently returns accepted when validation passes.
-- Missing media removal cascades:
-  - removes linked CRON entries
-  - removes linked schedule entries
-  - removes linked queue items
-  - clears current playback if it was that media
-- Manual schedule entries created in the past are immediately marked `missed`.
-- Active `missed` one-shots may be restored to `pending` by startup/play preparation helpers.
+- `ui.py` is still the highest-risk file for behavior regressions.
+- Hard sync is normalized/enforced to always true for all schedule/CRON entries.
+- Schedule entries created in the past are immediately marked `missed`.
+- Active `missed` one-shots may be restored to `pending` by preparation helpers.
+- Removing media cascades to linked CRON entries, schedule entries, queue entries, and current playback.
+- `ConfigurationDialog` accepts on close/reject after validation (non-standard but intentional in current code).
 
 ## Known Constraints
 
 - No automated test suite in repo yet.
 - `ffprobe` availability is required for local duration probing.
-- Stream duration remains unknown in current implementation.
-- Scheduler is simple timer-driven logic; state coherence depends on in-memory entries being refreshed correctly.
-- Business logic is still concentrated in `ui.py` despite ongoing extraction to `library/`, `playback/`, `scheduling/`, and `ui_components/`.
+- Stream duration remains unknown.
+- Most orchestration complexity is still concentrated in `ui.py`.
 
 ## Quick Manual Regression Checklist
 
 1. Manual schedule in future (local file)
-2. Manual schedule in past (expect `missed`)
-3. CRON recurring rule with enabled/disabled toggles
-4. Play mid-program (resume from offset)
-5. Hard sync on/off during active playback
+2. Manual schedule in past (`missed`)
+3. CRON rule add/edit/remove + enabled/disabled toggles
+4. Play mid-program (offset resume)
+5. Overlap fade-out: local->local, local->stream, stream->local
 6. Missing media behavior on trigger and queue
-7. Queue fallback with busy player
-8. Restart app and verify status normalization/recovery
+7. Queue fallback while player is busy
+8. Restart app and verify normalization/recovery
 9. Settings changes:
-   - fade duration
+   - shared fade duration
    - custom library tabs
    - supported extensions
-   - logs visibility
-10. Log export and fullscreen behavior
+10. Log export + fullscreen
+11. App icon visible from `radioqt.svg`
 
 ## Next Refactor Priorities
 
-- Continue reducing `ui.py` responsibilities.
+- Continue extracting orchestration logic out of `ui.py`.
 - Add automated tests for:
-  - CRON parsing and occurrence generation
-  - active-entry and end-window computation
+  - CRON parsing/occurrence generation
+  - active entry + end window computations
   - missed/restore normalization
-  - play-from-offset behavior
-  - queue and trigger orchestration
+  - trigger/play/queue orchestration
+  - fade expected-duration calculations on overlapping schedules
