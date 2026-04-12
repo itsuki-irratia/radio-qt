@@ -22,6 +22,85 @@ class ScheduleStatusMutationResult:
     refresh_only: bool = False
 
 
+@dataclass(slots=True)
+class ScheduleRemovalSelection:
+    entries_to_remove: list[ScheduleEntry]
+    protected_entries: list[ScheduleEntry]
+
+
+def create_schedule_entry(
+    *,
+    media_id: str,
+    start_at: datetime,
+    reference_time: datetime,
+) -> ScheduleEntry:
+    entry = ScheduleEntry.create(
+        media_id=media_id,
+        start_at=start_at,
+        hard_sync=True,
+    )
+    if entry.one_shot and normalized_start(entry.start_at, reference_time) <= reference_time:
+        entry.status = SCHEDULE_STATUS_MISSED
+    return entry
+
+
+def select_schedule_entries_for_removal(
+    entries: list[ScheduleEntry],
+    *,
+    entry_ids: set[str],
+    is_protected: Callable[[ScheduleEntry], bool],
+) -> ScheduleRemovalSelection:
+    entries_to_remove = [entry for entry in entries if entry.id in entry_ids]
+    protected_entries = [entry for entry in entries_to_remove if is_protected(entry)]
+    return ScheduleRemovalSelection(
+        entries_to_remove=entries_to_remove,
+        protected_entries=protected_entries,
+    )
+
+
+def remove_schedule_entries_by_ids(entries: list[ScheduleEntry], *, entry_ids: set[str]) -> list[ScheduleEntry]:
+    return [entry for entry in entries if entry.id not in entry_ids]
+
+
+def create_cron_entry(
+    *,
+    media_id: str,
+    expression: str,
+    fade_in: bool,
+    fade_out: bool,
+) -> CronEntry:
+    return CronEntry.create(
+        media_id=media_id,
+        expression=expression,
+        hard_sync=True,
+        fade_in=fade_in,
+        fade_out=fade_out,
+    )
+
+
+def update_cron_expression(cron_entry: CronEntry, *, expression: str) -> bool:
+    updated_expression = expression.strip()
+    if updated_expression == cron_entry.expression:
+        return False
+    cron_entry.expression = updated_expression
+    return True
+
+
+def remove_cron_and_generated_schedule_entries(
+    cron_entries: list[CronEntry],
+    schedule_entries: list[ScheduleEntry],
+    *,
+    cron_id: str,
+) -> tuple[list[CronEntry], list[ScheduleEntry]]:
+    remaining_cron_entries = [entry for entry in cron_entries if entry.id != cron_id]
+    remaining_schedule_entries = [
+        entry
+        for entry in schedule_entries
+        if entry.cron_id != cron_id or entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}
+    ]
+    return remaining_cron_entries, remaining_schedule_entries
+
+
 def update_schedule_fade_in(
     entries: list[ScheduleEntry],
     entry_id: str,
