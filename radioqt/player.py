@@ -50,7 +50,7 @@ class MediaPlayerController(QObject):
     def play_media(
         self,
         media: MediaItem,
-        start_position_ms: int = 0,
+        start_position_ms: int | None = 0,
         *,
         fade_in: bool = False,
         fade_out: bool = False,
@@ -62,7 +62,7 @@ class MediaPlayerController(QObject):
         if source_url is None:
             self.playback_error.emit(f"Cannot resolve media source: {media.source}")
             return
-        normalized_start_position_ms = max(0, start_position_ms)
+        normalized_start_position_ms = self._normalize_start_position_ms(start_position_ms)
         self._configure_fade_for_new_media(
             start_position_ms=normalized_start_position_ms,
             fade_in=fade_in,
@@ -71,12 +71,13 @@ class MediaPlayerController(QObject):
             fade_in_duration_ms=fade_in_duration_ms,
             fade_out_duration_ms=fade_out_duration_ms,
         )
-        self._pending_seek_ms = normalized_start_position_ms
+        pending_seek_ms = normalized_start_position_ms
+        self._pending_seek_ms = pending_seek_ms
         self.current_media = media
         self._media_player.setSource(source_url)
-        if self._pending_seek_ms > 0:
+        if pending_seek_ms > 0:
             # Try immediately; some backends need an additional seek after load.
-            self._media_player.setPosition(self._pending_seek_ms)
+            self._media_player.setPosition(pending_seek_ms)
         self._media_player.play()
         self.media_started.emit(media)
 
@@ -171,6 +172,14 @@ class MediaPlayerController(QObject):
         self._audio_output.setVolume(max(0.0, min(1.0, effective)))
 
     @staticmethod
+    def _normalize_start_position_ms(start_position_ms: int | None) -> int:
+        try:
+            parsed = int(start_position_ms) if start_position_ms is not None else 0
+        except (TypeError, ValueError):
+            return 0
+        return max(0, parsed)
+
+    @staticmethod
     def _resolve_source(source: str) -> QUrl | None:
         source = source.strip()
         if not source:
@@ -187,11 +196,13 @@ class MediaPlayerController(QObject):
 
     @Slot(QMediaPlayer.MediaStatus)
     def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
-        if self._pending_seek_ms and status in (
+        if status in (
             QMediaPlayer.LoadedMedia,
             QMediaPlayer.BufferedMedia,
         ):
-            self._media_player.setPosition(self._pending_seek_ms)
+            pending_seek_ms = self._pending_seek_ms
+            if pending_seek_ms is not None and pending_seek_ms > 0:
+                self._media_player.setPosition(pending_seek_ms)
             self._pending_seek_ms = None
         if status == QMediaPlayer.EndOfMedia:
             self.media_finished.emit()
