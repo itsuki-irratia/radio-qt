@@ -85,14 +85,25 @@ from .player import MediaPlayerController
 from .scheduling import (
     RadioScheduler,
     active_schedule_entry_at,
+    current_schedule_entry_for_playback,
+    initial_schedule_filter_date,
     normalize_overdue_one_shots,
     normalized_start,
     next_cron_occurrence,
     prepare_schedule_entries_for_play,
     prepare_schedule_entries_for_startup,
     refresh_cron_schedule_entries,
+    runtime_cron_dates,
+    schedule_entry_palette_tokens,
     schedule_entry_end_at,
     schedule_entry_window_details,
+    update_cron_enabled,
+    update_cron_fade_in,
+    update_cron_fade_out,
+    update_schedule_fade_in,
+    update_schedule_fade_out,
+    update_schedule_status,
+    visible_schedule_entries,
 )
 from .storage import load_state, save_state
 from .ui_components import (
@@ -381,7 +392,11 @@ class MainWindow(QMainWindow):
         self._library_tabs.addTab(self._streamings_tab_widget, "Streamings")
         self._library_tab_sources[self._streamings_tab_widget] = ("urls", None, None)
 
+        self._add_schedule_button = QPushButton("Schedule Selected Media")
+        self._add_schedule_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
         layout.addWidget(self._library_tabs)
+        layout.addWidget(self._add_schedule_button)
         return group
 
     @staticmethod
@@ -543,12 +558,8 @@ class MainWindow(QMainWindow):
         self._schedule_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self._schedule_table.customContextMenuRequested.connect(self._on_schedule_context_menu)
 
-        self._add_schedule_button = QPushButton("Schedule Selected Media")
-        self._add_schedule_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
         datetime_layout.addLayout(filter_row)
         datetime_layout.addWidget(self._schedule_table)
-        datetime_layout.addWidget(self._add_schedule_button)
         self._schedule_tabs.addTab(datetime_tab, "Date Time")
 
         # --- CRON tab (placeholder for CRON-based scheduling) ---
@@ -730,7 +741,11 @@ class MainWindow(QMainWindow):
             app_started_at,
             startup_preparation.normalized_entries,
         )
-        self._schedule_filter_date = self._initial_schedule_filter_date()
+        self._schedule_filter_date = initial_schedule_filter_date(
+            self._schedule_entries,
+            self._cron_entries,
+            datetime.now().astimezone(),
+        )
         self._set_schedule_filter_date(self._schedule_filter_date)
         self._schedule_focus_checkbox.blockSignals(True)
         self._schedule_focus_checkbox.setChecked(self._schedule_auto_focus_enabled)
@@ -970,8 +985,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _runtime_cron_dates() -> set[date]:
-        today = datetime.now().astimezone().date()
-        return {today, today + timedelta(days=1)}
+        return runtime_cron_dates(datetime.now().astimezone())
 
     def _refresh_cron_schedule_entries(self, target_dates: set[date] | None = None) -> None:
         self._schedule_entries = refresh_cron_schedule_entries(
@@ -984,14 +998,24 @@ class MainWindow(QMainWindow):
             max_recent_occurrences=self._CRON_RUNTIME_MAX_RECENT_OCCURRENCES,
         )
 
-    def _refresh_cron_runtime_window(self) -> None:
+    def _resync_schedule_runtime(self, *, refresh_table: bool = False, save_state: bool = False) -> None:
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+        self._recalculate_and_apply_schedule_entries()
+        if refresh_table:
+            self._refresh_schedule_table()
+        if save_state:
+            self._save_state()
+
+    def _recalculate_and_apply_schedule_entries(self) -> None:
         self._recalculate_schedule_durations()
+        self._scheduler.set_entries(self._schedule_entries)
+
+    def _refresh_cron_runtime_window(self) -> None:
+        self._resync_schedule_runtime()
         normalized_entries, normalized_details = self._normalize_overdue_one_shots(
             datetime.now().astimezone(),
             {SCHEDULE_STATUS_PENDING},
         )
-        self._scheduler.set_entries(self._schedule_entries)
         if normalized_entries:
             self._refresh_schedule_table()
             self._save_state()
@@ -1000,30 +1024,23 @@ class MainWindow(QMainWindow):
             )
             self._append_normalized_missed_logs(normalized_entries, normalized_details)
 
-    def _current_schedule_entry_for_playback(self, reference_time: datetime) -> ScheduleEntry | None:
-        if not self._player.is_playing() or self._player.current_media is None:
-            return None
-        active_entry = self._active_schedule_entry_at(reference_time)
-        if active_entry is None:
-            return None
-        entry, _ = active_entry
-        if entry.media_id != self._player.current_media.id:
-            return None
-        return entry
-
     def _schedule_entry_palette(self, entry: ScheduleEntry, reference_time: datetime) -> tuple[QColor, QColor] | None:
-        current_entry = self._current_schedule_entry_for_playback(reference_time)
-        if current_entry is not None and current_entry.id == entry.id:
-            return QColor("#2d6a4f"), QColor("#ffffff")
-        if entry.status == SCHEDULE_STATUS_DISABLED:
-            return QColor("#f8d7da"), QColor("#842029")
-        if entry.status == SCHEDULE_STATUS_FIRED and self._normalized_start(entry.start_at) < reference_time:
-            return QColor("#d8f3dc"), QColor("#1b4332")
-        if entry.status == SCHEDULE_STATUS_MISSED:
-            return QColor("#fff3cd"), QColor("#664d03")
-        if entry.cron_id is not None:
-            return QColor("#ffd166"), QColor("#5f4b00")
-        return None
+        current_media_id = self._player.current_media.id if self._player.current_media is not None else None
+        current_entry = current_schedule_entry_for_playback(
+            self._schedule_entries,
+            reference_time,
+            player_is_playing=self._player.is_playing(),
+            current_media_id=current_media_id,
+        )
+        palette_tokens = schedule_entry_palette_tokens(
+            entry,
+            reference_time,
+            current_entry_id=current_entry.id if current_entry is not None else None,
+        )
+        if palette_tokens is None:
+            return None
+        background_hex, foreground_hex = palette_tokens
+        return QColor(background_hex), QColor(foreground_hex)
 
     @staticmethod
     def _apply_item_palette(item: QTableWidgetItem, palette: tuple[QColor, QColor] | None) -> None:
@@ -1047,7 +1064,11 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_schedule_table(self) -> None:
-        entries = self._visible_schedule_entries()
+        entries = visible_schedule_entries(
+            self._schedule_entries,
+            self._schedule_filter_date,
+            datetime.now().astimezone(),
+        )
         now = datetime.now().astimezone()
         refresh_schedule_table(
             self._schedule_table,
@@ -1064,41 +1085,6 @@ class MainWindow(QMainWindow):
             on_fade_out_changed=self._on_schedule_fade_out_changed,
             on_status_changed=self._on_schedule_status_changed,
         )
-
-    def _visible_schedule_entries(self) -> list[ScheduleEntry]:
-        return [
-            entry
-            for entry in sorted(
-                self._schedule_entries,
-                key=lambda current_entry: self._normalized_start(current_entry.start_at),
-            )
-            if self._normalized_start(entry.start_at).date() == self._schedule_filter_date
-        ]
-
-    def _initial_schedule_filter_date(self) -> date:
-        today = datetime.now().astimezone().date()
-        upcoming_dates = [
-            self._normalized_start(entry.start_at).date()
-            for entry in sorted(
-                self._schedule_entries,
-                key=lambda entry: self._normalized_start(entry.start_at),
-            )
-        ]
-        for entry_date in upcoming_dates:
-            if entry_date >= today:
-                return entry_date
-        if upcoming_dates:
-            return upcoming_dates[0]
-
-        now = datetime.now().astimezone()
-        cron_dates = []
-        for cron_entry in self._cron_entries:
-            next_occurrence = next_cron_occurrence(cron_entry, now)
-            if next_occurrence is not None:
-                cron_dates.append(next_occurrence.date())
-        if cron_dates:
-            return min(cron_dates)
-        return today
 
     def _set_schedule_filter_date(self, target_date: date) -> None:
         self._schedule_filter_date = target_date
@@ -1403,10 +1389,7 @@ class MainWindow(QMainWindow):
         entry, active_date = target_entry
         if active_date != self._schedule_filter_date:
             self._set_schedule_filter_date(active_date)
-            self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-            self._recalculate_schedule_durations()
-            self._scheduler.set_entries(self._schedule_entries)
-            self._refresh_schedule_table()
+            self._resync_schedule_runtime(refresh_table=True)
 
         self._focus_schedule_entry(entry.id, force=force)
 
@@ -1481,10 +1464,7 @@ class MainWindow(QMainWindow):
     @Slot(QDate)
     def _on_schedule_filter_date_changed(self, selected_date: QDate) -> None:
         self._schedule_filter_date = selected_date.toPython()
-        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
-        self._refresh_schedule_table()
+        self._resync_schedule_runtime(refresh_table=True)
 
     @Slot(bool)
     def _on_schedule_auto_focus_toggled(self, checked: bool) -> None:
@@ -1552,9 +1532,7 @@ class MainWindow(QMainWindow):
             self._now_playing_label.setText("None")
             self._update_player_visual_state()
 
-        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
+        self._resync_schedule_runtime()
         self._refresh_urls_list()
         self._refresh_cron_table()
         self._refresh_schedule_table()
@@ -1679,8 +1657,7 @@ class MainWindow(QMainWindow):
             entry.status = SCHEDULE_STATUS_MISSED
         self._schedule_entries.append(entry)
 
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
+        self._recalculate_and_apply_schedule_entries()
         self._set_schedule_filter_date(self._normalized_start(entry.start_at).date())
         self._refresh_schedule_table()
         self._save_state()
@@ -1739,8 +1716,7 @@ class MainWindow(QMainWindow):
             return
 
         self._schedule_entries = [e for e in self._schedule_entries if e.id not in entry_ids_set]
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
+        self._recalculate_and_apply_schedule_entries()
         self._refresh_schedule_table()
         self._save_state()
         if len(entries_to_remove) == 1:
@@ -1812,8 +1788,7 @@ class MainWindow(QMainWindow):
         if next_occurrence is not None:
             self._set_schedule_filter_date(next_occurrence.date())
             self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
+        self._recalculate_and_apply_schedule_entries()
         self._refresh_cron_table()
         self._refresh_schedule_table()
         self._save_state()
@@ -1856,8 +1831,7 @@ class MainWindow(QMainWindow):
         if next_occurrence is not None:
             self._set_schedule_filter_date(next_occurrence.date())
             self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
+        self._recalculate_and_apply_schedule_entries()
         self._refresh_cron_table()
         self._refresh_schedule_table()
         self._save_state()
@@ -1897,8 +1871,7 @@ class MainWindow(QMainWindow):
             for entry in self._schedule_entries
             if entry.cron_id != cron_id or entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}
         ]
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
+        self._recalculate_and_apply_schedule_entries()
         self._refresh_cron_table()
         self._refresh_schedule_table()
         self._save_state()
@@ -1921,28 +1894,12 @@ class MainWindow(QMainWindow):
         menu.exec(self._urls_table.viewport().mapToGlobal(position))
 
     def _on_schedule_fade_in_changed(self, entry_id: str, value: str) -> None:
-        updated_entry: ScheduleEntry | None = None
-        fade_in_enabled = value == "True"
-        for entry in self._schedule_entries:
-            if entry.id != entry_id:
-                continue
-            if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
-                return
-            cron_entry = self._cron_entry_by_id(entry.cron_id)
-            if cron_entry is not None:
-                override_value = None if cron_entry.fade_in == fade_in_enabled else fade_in_enabled
-                if entry.cron_fade_in_override == override_value and entry.fade_in == fade_in_enabled:
-                    return
-                entry.cron_fade_in_override = override_value
-                entry.fade_in = fade_in_enabled
-                updated_entry = entry
-                break
-            if entry.fade_in == fade_in_enabled:
-                return
-            entry.fade_in = fade_in_enabled
-            updated_entry = entry
-            break
-
+        updated_entry = update_schedule_fade_in(
+            self._schedule_entries,
+            entry_id,
+            fade_in_enabled=value == "True",
+            cron_entry_by_id=self._cron_entry_by_id,
+        )
         if updated_entry is None:
             return
 
@@ -1955,28 +1912,12 @@ class MainWindow(QMainWindow):
         )
 
     def _on_schedule_fade_out_changed(self, entry_id: str, value: str) -> None:
-        updated_entry: ScheduleEntry | None = None
-        fade_out_enabled = value == "True"
-        for entry in self._schedule_entries:
-            if entry.id != entry_id:
-                continue
-            if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
-                return
-            cron_entry = self._cron_entry_by_id(entry.cron_id)
-            if cron_entry is not None:
-                override_value = None if cron_entry.fade_out == fade_out_enabled else fade_out_enabled
-                if entry.cron_fade_out_override == override_value and entry.fade_out == fade_out_enabled:
-                    return
-                entry.cron_fade_out_override = override_value
-                entry.fade_out = fade_out_enabled
-                updated_entry = entry
-                break
-            if entry.fade_out == fade_out_enabled:
-                return
-            entry.fade_out = fade_out_enabled
-            updated_entry = entry
-            break
-
+        updated_entry = update_schedule_fade_out(
+            self._schedule_entries,
+            entry_id,
+            fade_out_enabled=value == "True",
+            cron_entry_by_id=self._cron_entry_by_id,
+        )
         if updated_entry is None:
             return
 
@@ -1989,112 +1930,65 @@ class MainWindow(QMainWindow):
         )
 
     def _on_schedule_status_changed(self, entry_id: str, value: str) -> None:
-        updated_entry: ScheduleEntry | None = None
-        applied_value = value
-        for entry in self._schedule_entries:
-            if entry.id == entry_id:
-                if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
-                    return
-                cron_entry = self._cron_entry_by_id(entry.cron_id)
-                if cron_entry is not None and not cron_entry.enabled:
-                    self._refresh_schedule_table()
-                    return
-                new_status = SCHEDULE_STATUS_PENDING if value == "Pending" else SCHEDULE_STATUS_DISABLED
-                if (
-                    new_status == SCHEDULE_STATUS_PENDING
-                    and entry.one_shot
-                    and self._normalized_start(entry.start_at) < datetime.now().astimezone()
-                ):
-                    new_status = SCHEDULE_STATUS_MISSED
-                    applied_value = "Missed"
-                if entry.status == new_status:
-                    return
-                if cron_entry is not None:
-                    entry.cron_status_override = (
-                        SCHEDULE_STATUS_DISABLED if new_status == SCHEDULE_STATUS_DISABLED else None
-                    )
-                entry.status = new_status
-                updated_entry = entry
-                break
-
-        if updated_entry is None:
+        result = update_schedule_status(
+            self._schedule_entries,
+            entry_id,
+            value=value,
+            reference_time=datetime.now().astimezone(),
+            cron_entry_by_id=self._cron_entry_by_id,
+        )
+        if result.refresh_only:
+            self._refresh_schedule_table()
             return
+        if result.updated_entry is None:
+            return
+        applied_value = result.applied_value or value
 
         self._scheduler.set_entries(self._schedule_entries)
         self._refresh_schedule_table()
         self._save_state()
         self._append_log(
-            f"Set status for media '{self._media_log_name(updated_entry.media_id)}' to {applied_value}"
+            f"Set status for media '{self._media_log_name(result.updated_entry.media_id)}' to {applied_value}"
         )
 
     def _on_cron_fade_in_changed(self, cron_id: str, value: str) -> None:
-        updated_entry: CronEntry | None = None
-        fade_in_enabled = value == "True"
-        for entry in self._cron_entries:
-            if entry.id != cron_id:
-                continue
-            if entry.fade_in == fade_in_enabled:
-                return
-            entry.fade_in = fade_in_enabled
-            updated_entry = entry
-            break
-
+        updated_entry = update_cron_fade_in(
+            self._cron_entries,
+            cron_id,
+            fade_in_enabled=value == "True",
+        )
         if updated_entry is None:
             return
 
-        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
-        self._refresh_schedule_table()
-        self._save_state()
+        self._resync_schedule_runtime(refresh_table=True, save_state=True)
         self._append_log(
             f"Set CRON fade in for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
         )
 
     def _on_cron_fade_out_changed(self, cron_id: str, value: str) -> None:
-        updated_entry: CronEntry | None = None
-        fade_out_enabled = value == "True"
-        for entry in self._cron_entries:
-            if entry.id != cron_id:
-                continue
-            if entry.fade_out == fade_out_enabled:
-                return
-            entry.fade_out = fade_out_enabled
-            updated_entry = entry
-            break
-
+        updated_entry = update_cron_fade_out(
+            self._cron_entries,
+            cron_id,
+            fade_out_enabled=value == "True",
+        )
         if updated_entry is None:
             return
 
-        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
-        self._refresh_schedule_table()
-        self._save_state()
+        self._resync_schedule_runtime(refresh_table=True, save_state=True)
         self._append_log(
             f"Set CRON fade out for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
         )
 
     def _on_cron_status_changed(self, cron_id: str, value: str) -> None:
-        updated_entry: CronEntry | None = None
-        enabled = value == "Enabled"
-        for entry in self._cron_entries:
-            if entry.id != cron_id:
-                continue
-            if entry.enabled == enabled:
-                return
-            entry.enabled = enabled
-            updated_entry = entry
-            break
-
+        updated_entry = update_cron_enabled(
+            self._cron_entries,
+            cron_id,
+            enabled=value == "Enabled",
+        )
         if updated_entry is None:
             return
 
-        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
-        self._recalculate_schedule_durations()
-        self._scheduler.set_entries(self._schedule_entries)
-        self._refresh_schedule_table()
-        self._save_state()
+        self._resync_schedule_runtime(refresh_table=True, save_state=True)
         self._append_log(
             f"Set CRON status for media '{self._media_log_name(updated_entry.media_id)}' to {value}"
         )
