@@ -7,6 +7,7 @@ from PySide6.QtCore import Slot
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QStyle
 
+from .library import is_stream_source, local_media_path_from_source
 from .models import MediaItem, ScheduleEntry
 from .playback import dequeue_next_playable_media, process_schedule_trigger, resolve_play_request
 from .scheduling import prepare_schedule_entries_for_play
@@ -47,6 +48,11 @@ class MainWindowPlaybackHandlersMixin:
                 )
             scheduled_start_at = self._normalized_start(entry.start_at)
             offset_ms = max(0, int((datetime.now().astimezone() - scheduled_start_at).total_seconds() * 1000))
+            if (
+                is_stream_source(outcome.media.source)
+                and local_media_path_from_source(outcome.media.source) is None
+            ):
+                offset_ms = 0
             self._player.play_media(
                 outcome.media,
                 start_position_ms=offset_ms,

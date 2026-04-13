@@ -69,15 +69,22 @@ class MediaPlayerController(QObject):
             self.playback_error.emit(f"Cannot resolve media source: {media.source}")
             return
         normalized_start_position_ms = self._normalize_start_position_ms(start_position_ms)
+        seek_start_position_ms = normalized_start_position_ms if source_url.isLocalFile() else 0
+        current_source = self._media_player.source()
+        if current_source.isValid():
+            # Always force a fresh pipeline when changing scheduled media.
+            # This avoids backend reuse edge cases (especially with streams).
+            self._media_player.stop()
+            self._media_player.setSource(QUrl())
         self._configure_fade_for_new_media(
-            start_position_ms=normalized_start_position_ms,
+            start_position_ms=seek_start_position_ms,
             fade_in=fade_in,
             fade_out=fade_out,
             expected_duration_ms=expected_duration_ms,
             fade_in_duration_ms=fade_in_duration_ms,
             fade_out_duration_ms=fade_out_duration_ms,
         )
-        pending_seek_ms = normalized_start_position_ms
+        pending_seek_ms = seek_start_position_ms
         self._pending_seek_ms = pending_seek_ms
         self.current_media = media
         self._media_player.setSource(source_url)

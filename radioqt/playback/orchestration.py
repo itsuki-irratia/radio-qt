@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from ..library.sources import is_stream_source, local_media_path_from_source
 from ..models import (
     MediaItem,
     QueueItem,
@@ -37,6 +38,13 @@ class ActiveSchedulePlayOutcome:
 class PlayRequestOutcome:
     kind: str
     active_schedule: ActiveSchedulePlayOutcome | None = None
+
+
+def _effective_schedule_offset_ms(media: MediaItem, start_at: datetime, now: datetime) -> int:
+    # Remote streams are not seekable in schedule time; they must always start live.
+    if is_stream_source(media.source) and local_media_path_from_source(media.source) is None:
+        return 0
+    return max(0, int((now - start_at).total_seconds() * 1000))
 
 
 def process_schedule_trigger(
@@ -112,7 +120,7 @@ def resolve_active_schedule_play(
         start_at=start_at,
         end_at=end_at,
         end_reason=end_reason,
-        offset_ms=max(0, int((now - start_at).total_seconds() * 1000)),
+        offset_ms=_effective_schedule_offset_ms(media, start_at, now),
     )
 
 

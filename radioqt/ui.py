@@ -193,14 +193,13 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
     def _schedule_next_greenwich_time_signal(self) -> None:
         self._greenwich_time_signal_timer.stop()
         now = datetime.now().astimezone()
-        next_hour = (now + timedelta(hours=1)).replace(
-            minute=0,
+        next_minute = (now + timedelta(minutes=1)).replace(
             second=0,
             microsecond=0,
         )
         delay_ms = max(
             1000,
-            int((next_hour - now).total_seconds() * 1000),
+            int((next_minute - now).total_seconds() * 1000),
         )
         self._greenwich_time_signal_timer.start(delay_ms)
 
@@ -223,6 +222,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._schedule_next_greenwich_time_signal()
 
     def _try_play_greenwich_time_signal(self) -> None:
+        if not self._automation_playing:
+            return
         if not self._greenwich_time_signal_enabled:
             return
         audio_path = self._resolved_greenwich_time_signal_audio_path()
