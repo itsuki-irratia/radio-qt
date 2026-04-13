@@ -442,10 +442,15 @@ class MainWindowHandlersMixin:
     @Slot("QPoint")
     def _on_urls_context_menu(self, position) -> None:
         item = self._urls_table.itemAt(position)
+        menu = QMenu(self._urls_table)
+        add_action = QAction("Add Streaming...", menu)
+        add_action.triggered.connect(self._add_media_url)
+        menu.addAction(add_action)
         if item is None:
+            menu.exec(self._urls_table.viewport().mapToGlobal(position))
             return
         self._urls_table.selectRow(item.row())
-        menu = QMenu(self._urls_table)
+        menu.addSeparator()
         edit_action = QAction("Edit Entry", menu)
         edit_action.triggered.connect(self._edit_selected_url)
         menu.addAction(edit_action)

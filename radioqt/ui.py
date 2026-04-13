@@ -435,6 +435,15 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         streamings_layout = QVBoxLayout(self._streamings_tab_widget)
         streamings_layout.setContentsMargins(8, 8, 8, 8)
 
+        streamings_header_row = QHBoxLayout()
+        streamings_header_row.addWidget(QLabel("Streamings", self._streamings_tab_widget))
+        streamings_header_row.addStretch()
+        self._add_stream_button = QPushButton("+", self._streamings_tab_widget)
+        self._add_stream_button.setToolTip("Add Streaming")
+        self._add_stream_button.setFixedSize(QSize(30, 30))
+        streamings_header_row.addWidget(self._add_stream_button)
+        streamings_layout.addLayout(streamings_header_row)
+
         self._urls_table = QTableWidget(self._streamings_tab_widget)
         self._urls_table.setColumnCount(3)
         self._urls_table.setHorizontalHeaderLabels(["Title", "URL", "Greenwich Time Signal"])
@@ -447,11 +456,6 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._urls_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self._urls_table.customContextMenuRequested.connect(self._on_urls_context_menu)
         streamings_layout.addWidget(self._urls_table)
-
-        buttons_row = QHBoxLayout()
-        self._add_url_button = QPushButton("Add Streaming")
-        buttons_row.addWidget(self._add_url_button)
-        streamings_layout.addLayout(buttons_row)
 
         self._library_tabs.addTab(self._streamings_tab_widget, "Streamings")
         self._library_tab_sources[self._streamings_tab_widget] = ("urls", None, None)
@@ -662,7 +666,7 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._filesystem_view.clicked.connect(self._on_filesystem_selected)
         self._urls_table.itemSelectionChanged.connect(self._on_urls_selection_changed)
         self._library_tabs.currentChanged.connect(self._on_library_tab_changed)
-        self._add_url_button.clicked.connect(self._add_media_url)
+        self._add_stream_button.clicked.connect(self._add_media_url)
 
         self._add_schedule_button.clicked.connect(self._add_schedule_entry)
         self._add_cron_button.clicked.connect(self._add_cron_schedule)
