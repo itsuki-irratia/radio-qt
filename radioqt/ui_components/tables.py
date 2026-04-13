@@ -31,6 +31,7 @@ def refresh_urls_table(
     media_items: dict[str, MediaItem],
     *,
     is_stream_source: Callable[[str], bool],
+    on_greenwich_time_signal_changed: Callable[[str, str], None],
 ) -> None:
     urls_table.setRowCount(0)
     items = sorted(media_items.values(), key=lambda item: item.created_at)
@@ -42,8 +43,23 @@ def refresh_urls_table(
         title_item = QTableWidgetItem(media.title)
         title_item.setData(Qt.UserRole, media.id)
         urls_table.setItem(row, 0, title_item)
-        urls_table.setItem(row, 1, QTableWidgetItem(media.source))
+        source_item = QTableWidgetItem(media.source)
+        source_item.setToolTip(media.source)
+        urls_table.setItem(row, 1, source_item)
+
+        signal_selector = NoScrollComboBox(urls_table)
+        signal_selector.addItems(["True", "False"])
+        signal_selector.setCurrentText("True" if media.greenwich_time_signal_enabled else "False")
+        signal_selector.setToolTip("Allow Greenwich Time Signal while this stream is active")
+        signal_selector.currentTextChanged.connect(
+            lambda value, media_id=media.id: on_greenwich_time_signal_changed(media_id, value)
+        )
+        urls_table.setCellWidget(row, 2, signal_selector)
     urls_table.resizeColumnsToContents()
+    _apply_comfortable_column_widths(
+        urls_table,
+        [220, 420, 220],
+    )
 
 
 def refresh_cron_table(

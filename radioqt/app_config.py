@@ -16,6 +16,20 @@ def _safe_positive_int(value: Any, default: int) -> int:
     return max(1, parsed)
 
 
+def _safe_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off", ""}:
+            return False
+    return default
+
+
 def _normalize_extensions(raw_values: Any) -> list[str]:
     if not isinstance(raw_values, list):
         return list(DEFAULT_SUPPORTED_EXTENSIONS)
@@ -40,6 +54,8 @@ class AppConfig:
     font_size: int | None = None
     library_tabs: list[LibraryTab] = field(default_factory=list)
     supported_extensions: list[str] = field(default_factory=lambda: list(DEFAULT_SUPPORTED_EXTENSIONS))
+    greenwich_time_signal_enabled: bool = False
+    greenwich_time_signal_path: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
@@ -57,6 +73,23 @@ class AppConfig:
             # Backward-compatible support for legacy flat key.
             font_size = _safe_positive_int(data.get("font_size"), 10)
 
+        greenwich_time_signal_enabled = _safe_bool(
+            data.get("greenwich_time_signal_enabled"),
+            False,
+        )
+        greenwich_time_signal_path = str(
+            data.get("greenwich_time_signal_path", "") or ""
+        ).strip()
+        signal_payload = data.get("greenwich_time_signal")
+        if isinstance(signal_payload, dict):
+            greenwich_time_signal_enabled = _safe_bool(
+                signal_payload.get("enabled"),
+                greenwich_time_signal_enabled,
+            )
+            greenwich_time_signal_path = str(
+                signal_payload.get("path", greenwich_time_signal_path) or ""
+            ).strip()
+
         return cls(
             fade_duration_seconds=fade_duration_seconds,
             font_size=font_size,
@@ -66,6 +99,8 @@ class AppConfig:
                 if isinstance(item, dict)
             ],
             supported_extensions=_normalize_extensions(data.get("supported_extensions")),
+            greenwich_time_signal_enabled=greenwich_time_signal_enabled,
+            greenwich_time_signal_path=greenwich_time_signal_path,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,6 +112,8 @@ class AppConfig:
             },
             "library_tabs": [tab.to_dict() for tab in self.library_tabs],
             "supported_extensions": _normalize_extensions(self.supported_extensions),
+            "greenwich_time_signal_enabled": bool(self.greenwich_time_signal_enabled),
+            "greenwich_time_signal_path": str(self.greenwich_time_signal_path).strip(),
         }
 
 
@@ -131,6 +168,34 @@ def _parse_settings_yaml(raw_text: str) -> dict[str, Any]:
                 data["font_size"] = int(raw_value)
             except ValueError:
                 pass
+            continue
+        if line.startswith("greenwich_time_signal_enabled:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["greenwich_time_signal_enabled"] = _safe_bool(raw_value, False)
+            continue
+        if line.startswith("greenwich_time_signal_path:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["greenwich_time_signal_path"] = _parse_scalar(raw_value)
+            continue
+        if line.startswith("greenwich_time_signal:"):
+            signal_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                index += 1
+                if ":" not in detail:
+                    continue
+                key, value = detail.split(":", 1)
+                normalized_key = key.strip()
+                raw_value = value.strip()
+                if normalized_key == "enabled":
+                    signal_data["enabled"] = _safe_bool(raw_value, False)
+                elif normalized_key == "path":
+                    signal_data["path"] = _parse_scalar(raw_value)
+            if signal_data:
+                data["greenwich_time_signal"] = signal_data
             continue
         if line.startswith("font:"):
             font_data: dict[str, Any] = {}
@@ -211,6 +276,14 @@ def _dump_settings_yaml(config: AppConfig) -> str:
     lines.append("supported_extensions:")
     for extension in payload["supported_extensions"]:
         lines.append(f"  - {_string_as_yaml(str(extension))}")
+    lines.append(
+        "greenwich_time_signal_enabled: "
+        f"{'true' if payload['greenwich_time_signal_enabled'] else 'false'}"
+    )
+    lines.append(
+        "greenwich_time_signal_path: "
+        f"{_string_as_yaml(str(payload['greenwich_time_signal_path']))}"
+    )
     lines.append("")
     return "\n".join(lines)
 

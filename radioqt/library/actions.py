@@ -46,6 +46,19 @@ def update_stream_media_item(
     return media
 
 
+def update_stream_greenwich_time_signal(
+    media_items: dict[str, MediaItem],
+    media_id: str,
+    *,
+    enabled: bool,
+) -> MediaItem | None:
+    media = media_items.get(media_id)
+    if media is None:
+        return None
+    media.greenwich_time_signal_enabled = bool(enabled)
+    return media
+
+
 def remove_media_from_library(
     media_items: dict[str, MediaItem],
     media_duration_cache: dict[str, int | None],

@@ -64,11 +64,23 @@ class MediaItem:
     id: str
     title: str
     source: str
+    greenwich_time_signal_enabled: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
     @classmethod
-    def create(cls, title: str, source: str) -> "MediaItem":
-        return cls(id=str(uuid4()), title=title, source=source)
+    def create(
+        cls,
+        title: str,
+        source: str,
+        *,
+        greenwich_time_signal_enabled: bool = False,
+    ) -> "MediaItem":
+        return cls(
+            id=str(uuid4()),
+            title=title,
+            source=source,
+            greenwich_time_signal_enabled=bool(greenwich_time_signal_enabled),
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MediaItem":
@@ -77,6 +89,7 @@ class MediaItem:
             id=data.get("id", str(uuid4())),
             title=data.get("title", "Untitled"),
             source=data.get("source", ""),
+            greenwich_time_signal_enabled=bool(data.get("greenwich_time_signal_enabled", False)),
             created_at=_parse_datetime(created_at_raw),
         )
 
@@ -85,6 +98,7 @@ class MediaItem:
             "id": self.id,
             "title": self.title,
             "source": self.source,
+            "greenwich_time_signal_enabled": self.greenwich_time_signal_enabled,
             "created_at": self.created_at.isoformat(),
         }
 

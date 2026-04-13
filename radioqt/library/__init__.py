@@ -1,4 +1,10 @@
-from .actions import MediaRemovalResult, add_stream_media_item, remove_media_from_library, update_stream_media_item
+from .actions import (
+    MediaRemovalResult,
+    add_stream_media_item,
+    remove_media_from_library,
+    update_stream_greenwich_time_signal,
+    update_stream_media_item,
+)
 from .items import ensure_file_media_item, selected_filesystem_media_id, selected_url_media_id
 from .sources import (
     SUPPORTED_MEDIA_EXTENSIONS,
@@ -24,5 +30,6 @@ __all__ = [
     "remove_media_from_library",
     "selected_filesystem_media_id",
     "selected_url_media_id",
+    "update_stream_greenwich_time_signal",
     "update_stream_media_item",
 ]

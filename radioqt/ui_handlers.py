@@ -10,6 +10,7 @@ from .library import (
     add_stream_media_item,
     remove_media_from_library,
     selected_url_media_id,
+    update_stream_greenwich_time_signal,
     update_stream_media_item,
 )
 from .models import SCHEDULE_STATUS_MISSED
@@ -171,6 +172,20 @@ class MainWindowHandlersMixin:
         self._refresh_schedule_table()
         self._save_state()
         self._append_log(f"Updated stream: {media.title}")
+
+    def _on_stream_greenwich_time_signal_changed(self, media_id: str, value: str) -> None:
+        enabled = value == "True"
+        media = update_stream_greenwich_time_signal(
+            self._media_items,
+            media_id,
+            enabled=enabled,
+        )
+        if media is None:
+            return
+        self._save_state()
+        self._append_log(
+            f"Set Greenwich Time Signal for stream '{media.title}' to {value}"
+        )
 
     @Slot()
     def _remove_selected_media(self) -> None:

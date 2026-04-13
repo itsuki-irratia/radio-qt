@@ -52,6 +52,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
             source TEXT NOT NULL,
+            greenwich_time_signal_enabled TEXT NOT NULL DEFAULT 'False',
             created_at TEXT NOT NULL
         );
 
@@ -201,10 +202,20 @@ def _read_state(connection: sqlite3.Connection) -> AppState:
             "id": row["id"],
             "title": row["title"],
             "source": row["source"],
+            "greenwich_time_signal_enabled": _db_bool_to_python(row["greenwich_time_signal_enabled"]),
             "created_at": row["created_at"],
         }
         for row in connection.execute(
-            "SELECT id, title, source, created_at FROM media_items ORDER BY created_at, id"
+            """
+            SELECT
+                id,
+                title,
+                source,
+                greenwich_time_signal_enabled,
+                created_at
+            FROM media_items
+            ORDER BY created_at, id
+            """
         ).fetchall()
     ]
     schedule_entries = [
@@ -301,11 +312,23 @@ def _write_state(connection: sqlite3.Connection, state: AppState) -> None:
 
         connection.executemany(
             """
-            INSERT INTO media_items (id, title, source, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO media_items (
+                id,
+                title,
+                source,
+                greenwich_time_signal_enabled,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
             """,
             [
-                (item.id, item.title, item.source, item.created_at.isoformat())
+                (
+                    item.id,
+                    item.title,
+                    item.source,
+                    _python_bool_to_db(item.greenwich_time_signal_enabled),
+                    item.created_at.isoformat(),
+                )
                 for item in state.media_items
             ],
         )
@@ -487,6 +510,21 @@ def _migrate_schedule_entries_for_cron(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
+def _migrate_media_items_greenwich_time_signal(connection: sqlite3.Connection) -> None:
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(media_items)").fetchall()
+    }
+    if "greenwich_time_signal_enabled" not in columns:
+        connection.execute(
+            """
+            ALTER TABLE media_items
+            ADD COLUMN greenwich_time_signal_enabled TEXT NOT NULL DEFAULT 'False'
+            """
+        )
+    connection.commit()
+
+
 def _migrate_schedule_entries_fade_flags(connection: sqlite3.Connection) -> None:
     columns = {
         row[1]
@@ -522,6 +560,15 @@ def _migrate_cron_entries_fade_flags(connection: sqlite3.Connection) -> None:
 def _migrate_boolean_storage_to_text(connection: sqlite3.Connection) -> None:
     truthy = "1, '1', 'true', 'TRUE', 'True', 'yes', 'YES', 'Yes', 'on', 'ON', 'On'"
     with connection:
+        connection.execute(
+            f"""
+            UPDATE media_items
+            SET greenwich_time_signal_enabled = CASE
+                WHEN greenwich_time_signal_enabled IN ({truthy}) THEN 'True'
+                ELSE 'False'
+            END
+            """
+        )
         connection.execute(
             f"""
             UPDATE schedule_entries
@@ -783,6 +830,7 @@ def load_state(path: Path) -> AppState:
 
     with _connect(path) as connection:
         _ensure_schema(connection)
+        _migrate_media_items_greenwich_time_signal(connection)
         _migrate_enabled_fired_to_status(connection)
         _migrate_schedule_entries_for_cron(connection)
         _migrate_schedule_entries_fade_flags(connection)
@@ -802,6 +850,7 @@ def save_state(path: Path, state: AppState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with _connect(path) as connection:
         _ensure_schema(connection)
+        _migrate_media_items_greenwich_time_signal(connection)
         _migrate_schedule_entries_for_cron(connection)
         _migrate_schedule_entries_fade_flags(connection)
         _migrate_cron_entries_fade_flags(connection)

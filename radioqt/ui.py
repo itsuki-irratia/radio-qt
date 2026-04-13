@@ -6,8 +6,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 import shutil
 
-from PySide6.QtCore import QDate, QDateTime, QObject, QSize, Qt, QTimer, Signal, Slot, QEvent
+from PySide6.QtCore import QDate, QDateTime, QObject, QSize, Qt, QTimer, Signal, Slot, QEvent, QUrl
 from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -142,6 +143,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._logs_visible = True
         self._fade_in_duration_seconds = 5
         self._fade_out_duration_seconds = 5
+        self._greenwich_time_signal_enabled = False
+        self._greenwich_time_signal_path = ""
         self._fullscreen_active = False
         self._schedule_filter_date = datetime.now().astimezone().date()
         self._current_playback_position_ms = 0
@@ -149,6 +152,12 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._font_size_points = self._default_font_size_points()
 
         self._player = MediaPlayerController(self)
+        self._greenwich_time_signal_audio_output = QAudioOutput(self)
+        self._greenwich_time_signal_audio_output.setVolume(1.0)
+        self._greenwich_time_signal_player = QMediaPlayer(self)
+        self._greenwich_time_signal_player.setAudioOutput(
+            self._greenwich_time_signal_audio_output
+        )
         self._scheduler = RadioScheduler(parent=self)
         self._duration_probe_executor = ThreadPoolExecutor(
             max_workers=1,
@@ -159,6 +168,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._cron_refresh_timer.setInterval(30000)
         self._schedule_focus_timer = QTimer(self)
         self._schedule_focus_timer.setInterval(1000)
+        self._greenwich_time_signal_timer = QTimer(self)
+        self._greenwich_time_signal_timer.setSingleShot(True)
         self._volume_fade_timer = QTimer(self)
         self._volume_fade_timer.setInterval(40)
         self._volume_fade_started_at = 0.0
@@ -177,6 +188,77 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._load_initial_state()
         self._cron_refresh_timer.start()
         self._schedule_focus_timer.start()
+        self._schedule_next_greenwich_time_signal()
+
+    def _schedule_next_greenwich_time_signal(self) -> None:
+        self._greenwich_time_signal_timer.stop()
+        now = datetime.now().astimezone()
+        next_hour = (now + timedelta(hours=1)).replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        delay_ms = max(
+            1000,
+            int((next_hour - now).total_seconds() * 1000),
+        )
+        self._greenwich_time_signal_timer.start(delay_ms)
+
+    def _resolved_greenwich_time_signal_audio_path(self) -> Path | None:
+        raw_path = self._greenwich_time_signal_path.strip()
+        if not raw_path:
+            return None
+        path = Path(raw_path).expanduser()
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if not resolved.is_file():
+            return None
+        return resolved
+
+    @Slot()
+    def _on_greenwich_time_signal_timer(self) -> None:
+        self._try_play_greenwich_time_signal()
+        self._schedule_next_greenwich_time_signal()
+
+    def _try_play_greenwich_time_signal(self) -> None:
+        if not self._greenwich_time_signal_enabled:
+            return
+        audio_path = self._resolved_greenwich_time_signal_audio_path()
+        if audio_path is None:
+            self._append_log(
+                "Greenwich Time Signal is enabled, but the configured audio path is missing or invalid"
+            )
+            return
+
+        if self._player.is_playing():
+            current_media = self._player.current_media
+            if (
+                current_media is not None
+                and is_stream_source(current_media.source)
+                and not current_media.greenwich_time_signal_enabled
+            ):
+                self._append_log(
+                    (
+                        "Skipped Greenwich Time Signal: active stream "
+                        f"'{current_media.title}' has Greenwich Time Signal disabled"
+                    )
+                )
+                return
+        try:
+            self._greenwich_time_signal_player.stop()
+            self._greenwich_time_signal_player.setSource(
+                QUrl.fromLocalFile(str(audio_path))
+            )
+            self._greenwich_time_signal_player.play()
+            self._append_log(
+                f"Played Greenwich Time Signal from '{audio_path}'"
+            )
+        except Exception as exc:
+            self._append_log(
+                f"Failed to play Greenwich Time Signal: {exc}"
+            )
 
     @staticmethod
     def _make_tab_marker(marker_color: str) -> QWidget:
@@ -353,9 +435,9 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         streamings_layout.setContentsMargins(8, 8, 8, 8)
 
         self._urls_table = QTableWidget(self._streamings_tab_widget)
-        self._urls_table.setColumnCount(2)
-        self._urls_table.setHorizontalHeaderLabels(["Title", "URL"])
-        self._urls_table.horizontalHeader().setStretchLastSection(True)
+        self._urls_table.setColumnCount(3)
+        self._urls_table.setHorizontalHeaderLabels(["Title", "URL", "Greenwich Time Signal"])
+        self._urls_table.horizontalHeader().setStretchLastSection(False)
         self._urls_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._urls_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._urls_table.setAlternatingRowColors(True)
@@ -606,6 +688,7 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._scheduler.log.connect(self._append_log)
         self._cron_refresh_timer.timeout.connect(self._refresh_cron_runtime_window)
         self._schedule_focus_timer.timeout.connect(self._refresh_schedule_auto_focus)
+        self._greenwich_time_signal_timer.timeout.connect(self._on_greenwich_time_signal_timer)
         self._configuration_action.triggered.connect(self._open_configuration_dialog)
         self._toggle_logs_action.toggled.connect(self._on_logs_visibility_toggled)
         self._export_logs_action.triggered.connect(self._export_logs)
@@ -708,6 +791,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         shared_fade_seconds = max(1, app_config.fade_duration_seconds)
         self._fade_in_duration_seconds = shared_fade_seconds
         self._fade_out_duration_seconds = shared_fade_seconds
+        self._greenwich_time_signal_enabled = bool(app_config.greenwich_time_signal_enabled)
+        self._greenwich_time_signal_path = str(app_config.greenwich_time_signal_path).strip()
         if app_config.font_size is not None:
             self._font_size_points = max(1, app_config.font_size)
         self._apply_global_font_size(self._font_size_points)
@@ -794,6 +879,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             font_size=self._font_size_points,
             library_tabs=list(self._library_tab_configs),
             supported_extensions=list(self._supported_extensions),
+            greenwich_time_signal_enabled=self._greenwich_time_signal_enabled,
+            greenwich_time_signal_path=self._greenwich_time_signal_path,
         )
         save_app_config(self._settings_path, app_config)
 
@@ -811,6 +898,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             font_size=self._font_size_points,
             library_tabs=list(state.library_tabs),
             supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
+            greenwich_time_signal_enabled=False,
+            greenwich_time_signal_path="",
         )
         self._settings_path.parent.mkdir(parents=True, exist_ok=True)
         save_app_config(self._settings_path, seeded_config)
@@ -903,6 +992,7 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             self._urls_table,
             self._media_items,
             is_stream_source=is_stream_source,
+            on_greenwich_time_signal_changed=self._on_stream_greenwich_time_signal_changed,
         )
 
     def _refresh_cron_table(self) -> None:
@@ -1598,6 +1688,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             fade_in_duration_seconds=self._fade_in_duration_seconds,
             fade_out_duration_seconds=self._fade_out_duration_seconds,
             font_size_points=self._font_size_points,
+            greenwich_time_signal_enabled=self._greenwich_time_signal_enabled,
+            greenwich_time_signal_path=self._greenwich_time_signal_path,
             library_tabs=self._library_tab_configs,
             supported_extensions=self._supported_extensions,
         )
@@ -1606,6 +1698,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
 
         next_shared_fade_duration = max(1, dialog.fade_duration_seconds())
         next_font_size_points = max(1, dialog.font_size_points())
+        next_greenwich_time_signal_enabled = bool(dialog.greenwich_time_signal_enabled())
+        next_greenwich_time_signal_path = dialog.greenwich_time_signal_path()
         next_library_tabs = dialog.library_tabs()
         next_supported_extensions = self._normalize_supported_extensions(dialog.supported_extensions())
         fade_changed = not (
@@ -1613,10 +1707,20 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             and next_shared_fade_duration == self._fade_out_duration_seconds
         )
         font_size_changed = next_font_size_points != self._font_size_points
+        greenwich_time_signal_changed = (
+            next_greenwich_time_signal_enabled != self._greenwich_time_signal_enabled
+            or next_greenwich_time_signal_path != self._greenwich_time_signal_path
+        )
         library_tabs_changed = next_library_tabs != self._library_tab_configs
         supported_extensions_changed = next_supported_extensions != self._supported_extensions
 
-        if not fade_changed and not font_size_changed and not library_tabs_changed and not supported_extensions_changed:
+        if (
+            not fade_changed
+            and not font_size_changed
+            and not greenwich_time_signal_changed
+            and not library_tabs_changed
+            and not supported_extensions_changed
+        ):
             return
 
         if fade_changed:
@@ -1624,6 +1728,9 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             self._fade_out_duration_seconds = next_shared_fade_duration
         if font_size_changed:
             self._apply_global_font_size(next_font_size_points)
+        if greenwich_time_signal_changed:
+            self._greenwich_time_signal_enabled = next_greenwich_time_signal_enabled
+            self._greenwich_time_signal_path = next_greenwich_time_signal_path
         if supported_extensions_changed:
             self._supported_extensions = next_supported_extensions
             self._apply_supported_extensions_to_filesystem_models()
@@ -1634,6 +1741,7 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._append_log(
             f"Updated settings: fade in={self._fade_in_duration_seconds}s, "
             f"fade out={self._fade_out_duration_seconds}s, "
+            f"greenwich_time_signal={'True' if self._greenwich_time_signal_enabled else 'False'}, "
             f"font={self._font_size_points}pt, "
             f"custom library tabs={len(self._library_tab_configs)}, "
             f"extensions={','.join(self._supported_extensions)}"
@@ -1711,6 +1819,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
     def closeEvent(self, event: QCloseEvent) -> None:
         self._shutting_down = True
         self._scheduler.stop()
+        self._greenwich_time_signal_timer.stop()
+        self._greenwich_time_signal_player.stop()
         self._volume_fade_timer.stop()
         self._duration_probe_executor.shutdown(wait=False, cancel_futures=True)
         self._save_settings()

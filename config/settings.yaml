@@ -22,3 +22,5 @@ supported_extensions:
   - "m4a"
   - "avi"
   - "flv"
+greenwich_time_signal_enabled: true
+greenwich_time_signal_path: "/home/zital/Gts_(bbc)_pips.ogg"

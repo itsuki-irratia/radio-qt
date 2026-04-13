@@ -7,6 +7,7 @@ from PySide6.QtCore import QDateTime, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -260,6 +261,8 @@ class ConfigurationDialog(QDialog):
         fade_in_duration_seconds: int,
         fade_out_duration_seconds: int,
         font_size_points: int,
+        greenwich_time_signal_enabled: bool,
+        greenwich_time_signal_path: str,
         library_tabs: list[LibraryTab],
         supported_extensions: list[str],
     ) -> None:
@@ -277,11 +280,38 @@ class ConfigurationDialog(QDialog):
         self._font_size_spinbox = QSpinBox(self)
         self._font_size_spinbox.setRange(6, 72)
         self._font_size_spinbox.setValue(max(6, int(font_size_points)))
+        self._greenwich_time_signal_selector = QComboBox(self)
+        self._greenwich_time_signal_selector.addItems(["True", "False"])
+        self._greenwich_time_signal_selector.setCurrentText(
+            "True" if greenwich_time_signal_enabled else "False"
+        )
+        self._greenwich_time_signal_path_edit = QLineEdit(self)
+        self._greenwich_time_signal_path_edit.setPlaceholderText(
+            "Path to Greenwich Time Signal audio"
+        )
+        self._greenwich_time_signal_path_edit.setText(greenwich_time_signal_path.strip())
+        self._greenwich_time_signal_browse_button = QPushButton("Browse...", self)
+        self._greenwich_time_signal_browse_button.clicked.connect(
+            self._browse_greenwich_time_signal_path
+        )
+        self._greenwich_time_signal_path_widget = QWidget(self)
+        self._greenwich_time_signal_path_layout = QHBoxLayout(
+            self._greenwich_time_signal_path_widget
+        )
+        self._greenwich_time_signal_path_layout.setContentsMargins(0, 0, 0, 0)
+        self._greenwich_time_signal_path_layout.setSpacing(6)
+        self._greenwich_time_signal_path_layout.addWidget(
+            self._greenwich_time_signal_path_edit, 1
+        )
+        self._greenwich_time_signal_path_layout.addWidget(
+            self._greenwich_time_signal_browse_button
+        )
         self._configured_library_tabs: list[LibraryTab] = list(library_tabs)
         self._configured_supported_extensions: list[str] = list(supported_extensions)
 
         self._settings_sections_list = QListWidget(self)
         self._settings_sections_list.addItem("General Settings")
+        self._settings_sections_list.addItem("Greenwich Time Signal")
         self._settings_sections_list.addItem("Custom Paths")
         self._settings_sections_list.addItem("Extensions")
         self._settings_sections_list.setFixedWidth(190)
@@ -293,12 +323,12 @@ class ConfigurationDialog(QDialog):
         self._properties_table = QTableWidget(self)
         self._properties_table.setColumnCount(2)
         self._properties_table.setRowCount(2)
-        self._properties_table.setHorizontalHeaderLabels(["Property", "Value"])
         self._properties_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._properties_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._properties_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._properties_table.setAlternatingRowColors(True)
         self._properties_table.verticalHeader().setVisible(False)
+        self._properties_table.horizontalHeader().setVisible(False)
         self._properties_table.horizontalHeader().setStretchLastSection(True)
 
         fade_duration_item = QTableWidgetItem("Fade In / Fade Out in seconds")
@@ -313,6 +343,32 @@ class ConfigurationDialog(QDialog):
         self._properties_table.resizeColumnsToContents()
         general_layout.addWidget(self._properties_table)
         general_layout.addStretch()
+
+        greenwich_page = QWidget(self)
+        greenwich_layout = QVBoxLayout(greenwich_page)
+        self._greenwich_table = QTableWidget(self)
+        self._greenwich_table.setColumnCount(2)
+        self._greenwich_table.setRowCount(2)
+        self._greenwich_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._greenwich_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._greenwich_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._greenwich_table.setAlternatingRowColors(True)
+        self._greenwich_table.verticalHeader().setVisible(False)
+        self._greenwich_table.horizontalHeader().setVisible(False)
+        self._greenwich_table.horizontalHeader().setStretchLastSection(True)
+
+        signal_enabled_item = QTableWidgetItem("Enabled")
+        signal_enabled_item.setFlags(signal_enabled_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        signal_path_item = QTableWidgetItem("Audio Path")
+        signal_path_item.setFlags(signal_path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+        self._greenwich_table.setItem(0, 0, signal_enabled_item)
+        self._greenwich_table.setCellWidget(0, 1, self._greenwich_time_signal_selector)
+        self._greenwich_table.setItem(1, 0, signal_path_item)
+        self._greenwich_table.setCellWidget(1, 1, self._greenwich_time_signal_path_widget)
+        self._greenwich_table.resizeColumnsToContents()
+        greenwich_layout.addWidget(self._greenwich_table)
+        greenwich_layout.addStretch()
 
         custom_paths_page = QWidget(self)
         custom_paths_layout = QVBoxLayout(custom_paths_page)
@@ -372,6 +428,7 @@ class ConfigurationDialog(QDialog):
         extensions_layout.addLayout(extensions_buttons)
 
         self._settings_pages.addWidget(general_page)
+        self._settings_pages.addWidget(greenwich_page)
         self._settings_pages.addWidget(custom_paths_page)
         self._settings_pages.addWidget(extensions_page)
         self._settings_sections_list.currentRowChanged.connect(self._on_settings_section_changed)
@@ -389,6 +446,12 @@ class ConfigurationDialog(QDialog):
 
     def font_size_points(self) -> int:
         return self._font_size_spinbox.value()
+
+    def greenwich_time_signal_enabled(self) -> bool:
+        return self._greenwich_time_signal_selector.currentText() == "True"
+
+    def greenwich_time_signal_path(self) -> str:
+        return self._greenwich_time_signal_path_edit.text().strip()
 
     def library_tabs(self) -> list[LibraryTab]:
         collected_settings = self._collect_settings_values(show_warning=False)
@@ -500,6 +563,19 @@ class ConfigurationDialog(QDialog):
         else:
             current_path_item.setText(normalized_path)
         self._library_tabs_table.resizeColumnsToContents()
+
+    def _browse_greenwich_time_signal_path(self) -> None:
+        current_path = self._greenwich_time_signal_path_edit.text().strip()
+        base_dir = str(Path(current_path).expanduser().parent) if current_path else str(Path.home())
+        selected_file, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose Greenwich Time Signal Audio",
+            base_dir,
+            "Audio Files (*.wav *.mp3 *.ogg *.opus *.m4a *.aac *.flac *.webm *.mp4);;All Files (*)",
+        )
+        if not selected_file:
+            return
+        self._greenwich_time_signal_path_edit.setText(str(Path(selected_file).expanduser()))
 
     def _collect_library_tabs(self, *, show_warning: bool) -> list[LibraryTab] | None:
         configured_tabs: list[LibraryTab] = []
