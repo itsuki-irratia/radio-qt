@@ -112,7 +112,7 @@ def refresh_schedule_table(
     reference_time: datetime,
     *,
     cron_entry_by_id: Callable[[str | None], CronEntry | None],
-    duration_display_details: Callable[[MediaItem | None, int | None], tuple[str, str]],
+    duration_display_details: Callable[[ScheduleEntry, MediaItem | None, int | None], tuple[str, str]],
     schedule_window_tooltip: Callable[[ScheduleEntry], str],
     schedule_entry_palette: Callable[[ScheduleEntry, datetime], tuple | None],
     apply_item_palette: Callable[[QTableWidgetItem, tuple | None], None],
@@ -128,7 +128,7 @@ def refresh_schedule_table(
         media_source = media.source if media else f"Missing media ID: {entry.media_id}"
         status = entry.status.capitalize()
         start_label = entry.start_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-        duration_label, duration_tooltip = duration_display_details(media, entry.duration)
+        duration_label, duration_tooltip = duration_display_details(entry, media, entry.duration)
         cron_entry = cron_entry_by_id(entry.cron_id)
         origin_label = (
             f"Generated from CRON: {cron_entry.expression}"

@@ -346,7 +346,7 @@ Important UX behavior currently in code:
 - `ui.py` remains large and central to most behavior.
 - `ffprobe` is required for reliable local duration probing.
 - Stream duration remains unknown.
-- CRON help text in UI describes weekday as `1-7 (Mon-Sun)`, while parser accepts `0-7` with `0/7=Sunday`.
+- CRON weekday values are strict `1-7 (Mon-Sun)`; legacy expressions using `0` are invalid.
 
 ## Manual Regression Checklist
 

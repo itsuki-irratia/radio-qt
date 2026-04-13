@@ -931,19 +931,63 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
                 return entry
         return None
 
+    def _next_scheduled_start(self, entry: ScheduleEntry) -> datetime | None:
+        ordered = sorted(
+            self._schedule_entries,
+            key=lambda candidate: self._normalized_start(candidate.start_at),
+        )
+        for index, candidate in enumerate(ordered):
+            if candidate.id != entry.id:
+                continue
+            if index + 1 >= len(ordered):
+                return None
+            return self._normalized_start(ordered[index + 1].start_at)
+        return None
+
+    def _next_scheduled_gap_ms(self, entry: ScheduleEntry) -> int | None:
+        next_start = self._next_scheduled_start(entry)
+        if next_start is None:
+            return None
+        start_at = self._normalized_start(entry.start_at)
+        gap_ms = max(0, int((next_start - start_at).total_seconds() * 1000))
+        if gap_ms <= 0:
+            return None
+        return gap_ms
+
+    def _is_open_ended_stream_entry(
+        self,
+        entry: ScheduleEntry,
+        media: MediaItem | None = None,
+    ) -> bool:
+        resolved_media = media or self._media_items.get(entry.media_id)
+        if resolved_media is None:
+            return False
+        return (
+            is_stream_source(resolved_media.source)
+            and local_media_path_from_source(resolved_media.source) is None
+        )
+
     def _entry_duration_ms(self, entry: ScheduleEntry | None) -> int | None:
         if entry is None:
             return None
 
-        start_at, end_at, _ = self._schedule_entry_window_details(entry)
-        if end_at is not None:
-            computed_ms = max(0, int((end_at - start_at).total_seconds() * 1000))
-            if computed_ms > 0:
-                return computed_ms
+        media_duration_ms: int | None = None
+        if entry.duration is not None and entry.duration > 0:
+            media_duration_ms = entry.duration * 1000
 
-        if entry.duration is None or entry.duration <= 0:
+        next_gap_ms = self._next_scheduled_gap_ms(entry)
+        if media_duration_ms is not None and next_gap_ms is not None:
+            return min(media_duration_ms, next_gap_ms)
+
+        if media_duration_ms is not None:
+            return media_duration_ms
+
+        if next_gap_ms is not None:
+            return next_gap_ms
+
+        if self._is_open_ended_stream_entry(entry):
             return None
-        return entry.duration * 1000
+        return None
 
     def _enforce_hard_sync_always(self) -> bool:
         changed = False
@@ -1253,9 +1297,52 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
 
     def _duration_display_details(
         self,
+        entry: ScheduleEntry,
         media: MediaItem | None,
         duration_seconds: int | None,
     ) -> tuple[str, str]:
+        effective_duration_ms = self._entry_duration_ms(entry)
+        if effective_duration_ms is not None and effective_duration_ms > 0:
+            effective_seconds = max(0, effective_duration_ms // 1000)
+            formatted = MainWindow._format_duration(effective_seconds)
+            media_duration_ms = entry.duration * 1000 if entry.duration is not None and entry.duration > 0 else None
+            next_gap_ms = self._next_scheduled_gap_ms(entry)
+            if media_duration_ms is not None and next_gap_ms is not None:
+                media_formatted = MainWindow._format_duration(media_duration_ms // 1000)
+                gap_formatted = MainWindow._format_duration(next_gap_ms // 1000)
+                if media_duration_ms < next_gap_ms:
+                    return (
+                        formatted,
+                        "Duration read from media file: "
+                        f"{media_formatted} (next scheduled gap: {gap_formatted})",
+                    )
+                if next_gap_ms < media_duration_ms:
+                    return (
+                        formatted,
+                        "Duration limited by next scheduled item: "
+                        f"{gap_formatted} (media duration: {media_formatted})",
+                    )
+                return formatted, f"Duration from media and schedule boundary: {formatted}"
+
+            if media_duration_ms is not None:
+                return formatted, f"Duration read from media file: {formatted}"
+            if next_gap_ms is not None:
+                next_start = self._next_scheduled_start(entry)
+                next_label = (
+                    next_start.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+                    if next_start is not None
+                    else "unknown"
+                )
+                return (
+                    formatted,
+                    "Duration computed from next scheduled item: "
+                    f"{formatted} (next start at {next_label})",
+                )
+            return formatted, f"Effective duration: {formatted}"
+
+        if effective_duration_ms is None and self._is_open_ended_stream_entry(entry, media):
+            return "-", "Open-ended stream: no media duration and no next scheduled item"
+
         if media is not None and media.id in self._media_duration_pending:
             return "Loading", "Duration is being analyzed in background"
         if duration_seconds is not None:

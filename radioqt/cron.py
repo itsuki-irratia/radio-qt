@@ -15,10 +15,6 @@ class CronField:
     is_wildcard: bool
 
 
-def _normalize_dow(value: int) -> int:
-    return 0 if value == 7 else value
-
-
 def _parse_single_value(token: str, minimum: int, maximum: int, names: dict[str, int] | None = None) -> int:
     lowered = token.lower()
     if names and lowered in names:
@@ -120,7 +116,7 @@ class CronExpression:
             hour=_parse_field(parts[2], 0, 23),
             day_of_month=_parse_field(parts[3], 1, 31),
             month=_parse_field(parts[4], 1, 12),
-            day_of_week=_parse_field(parts[5], 0, 7, normalize=_normalize_dow),
+            day_of_week=_parse_field(parts[5], 1, 7),
         )
 
     def matches(self, value: datetime) -> bool:
@@ -160,7 +156,7 @@ class CronExpression:
 
     def _matches_day(self, target_date: date) -> bool:
         dom_match = target_date.day in self.day_of_month.values
-        dow_match = (target_date.isoweekday() % 7) in self.day_of_week.values
+        dow_match = target_date.isoweekday() in self.day_of_week.values
 
         if self.day_of_month.is_wildcard and self.day_of_week.is_wildcard:
             return True
