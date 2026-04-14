@@ -1,3 +1,3 @@
-from .bootstrap import run
+from .application import run
 
 __all__ = ["run"]

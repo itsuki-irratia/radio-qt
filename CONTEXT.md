@@ -70,7 +70,7 @@ DB migrations include:
 - Boolean normalization to textual `True`/`False`
 - Rebuild of boolean columns as `TEXT` when needed
 
-## Runtime Backend Configuration (`radioqt/main/bootstrap.py`)
+## Runtime Backend Configuration (`radioqt/main/runtime.py`)
 
 Environment controls:
 - `RADIOQT_MEDIA_BACKEND=auto` (default): Qt auto selection
@@ -95,13 +95,19 @@ Top-level:
 - `CONTEXT.md`: this file
 
 Core runtime:
-- `radioqt/main/bootstrap.py`: app bootstrap + multimedia runtime env
+- `radioqt/main/application.py`: app bootstrap and `run()` entry wiring
+- `radioqt/main/runtime.py`: multimedia runtime env configuration
+- `radioqt/main/cli.py`: CLI parsing (`--config`)
 - `radioqt/ui/main_window.py`: main window + orchestration
 - `radioqt/ui/handlers.py`: UI action handlers (library/schedule/CRON/settings interactions)
 - `radioqt/ui/playback_handlers.py`: playback/scheduler trigger handlers
 - `radioqt/player/controller.py`: media player wrapper + fade engine
 - `radioqt/storage/sqlite_store.py`: SQLite persistence + migrations
-- `radioqt/app_config/core.py`: custom YAML parser/dumper + settings model
+- `radioqt/app_config/schema.py`: settings dataclass and dict conversion
+- `radioqt/app_config/parser.py`: YAML parsing (with legacy key support)
+- `radioqt/app_config/serializer.py`: canonical YAML dump
+- `radioqt/app_config/io.py`: file load/save
+- `radioqt/app_config/core.py`: compatibility facade/re-exports
 - `radioqt/models/entities.py`: dataclasses/constants
 - `radioqt/cron/expression.py`: CRON parser and matching
 - `radioqt/duration_probe/probe.py`: duration probe helpers and cache utilities
@@ -152,7 +158,7 @@ Deprecated app_meta keys removed on write:
 - `fade_in_duration_seconds`
 - `fade_out_duration_seconds`
 
-### Settings YAML (`radioqt/app_config/core.py`)
+### Settings YAML (`radioqt/app_config/schema.py`, `parser.py`, `serializer.py`, `io.py`)
 
 Canonical YAML structure:
 - `view.font_size`
