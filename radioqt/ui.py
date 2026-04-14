@@ -154,6 +154,9 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._current_playback_position_ms = 0
         self._shutting_down = False
         self._font_size_points = self._default_font_size_points()
+        self._media_library_width_percent = 35
+        self._schedule_width_percent = 65
+        self._panels_layout: QHBoxLayout | None = None
 
         self._player = MediaPlayerController(self)
         self._greenwich_time_signal_audio_output = QAudioOutput(self)
@@ -372,9 +375,9 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         playback_controls_layout.addWidget(self._volume_label)
         self._volume_slider.valueChanged.connect(self._on_volume_slider_value_changed)
 
-        panels_layout = QHBoxLayout()
-        panels_layout.addWidget(self._build_library_panel(), 7)
-        panels_layout.addWidget(self._build_schedule_panel(), 13)
+        self._panels_layout = QHBoxLayout()
+        self._panels_layout.addWidget(self._build_library_panel(), self._media_library_width_percent)
+        self._panels_layout.addWidget(self._build_schedule_panel(), self._schedule_width_percent)
 
         self._logs_group = QGroupBox("Logs", root)
         logs_layout = QVBoxLayout(self._logs_group)
@@ -390,7 +393,7 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         root_layout.addWidget(self._player_display, 2)
         root_layout.addLayout(now_playing_layout)
         root_layout.addLayout(playback_controls_layout)
-        root_layout.addLayout(panels_layout, 7)
+        root_layout.addLayout(self._panels_layout, 7)
         root_layout.addWidget(self._logs_group)
 
         self.setCentralWidget(root)
@@ -798,6 +801,7 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._supported_extensions = self._normalize_supported_extensions(app_config.supported_extensions)
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
         self._logs_visible = state.logs_visible
+        self._apply_panel_width_split(app_config.media_library_width_percent)
         shared_fade_duration_seconds = max(
             1,
             max(app_config.fade_in_duration_seconds, app_config.fade_out_duration_seconds),
@@ -902,6 +906,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             filesystem_default_fade_out=self._filesystem_default_fade_out,
             streams_default_fade_in=self._streams_default_fade_in,
             streams_default_fade_out=self._streams_default_fade_out,
+            media_library_width_percent=self._media_library_width_percent,
+            schedule_width_percent=self._schedule_width_percent,
             font_size=self._font_size_points,
             library_tabs=list(self._library_tab_configs),
             supported_extensions=list(self._supported_extensions),
@@ -926,6 +932,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             filesystem_default_fade_out=False,
             streams_default_fade_in=False,
             streams_default_fade_out=False,
+            media_library_width_percent=35,
+            schedule_width_percent=65,
             font_size=self._font_size_points,
             library_tabs=list(state.library_tabs),
             supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
@@ -963,6 +971,16 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         if point_size <= 0:
             return 10
         return int(point_size)
+
+    def _apply_panel_width_split(self, media_library_width_percent: int) -> None:
+        normalized_media_library_width_percent = max(10, min(90, int(media_library_width_percent)))
+        normalized_schedule_width_percent = 100 - normalized_media_library_width_percent
+        self._media_library_width_percent = normalized_media_library_width_percent
+        self._schedule_width_percent = normalized_schedule_width_percent
+        if self._panels_layout is None:
+            return
+        self._panels_layout.setStretch(0, self._media_library_width_percent)
+        self._panels_layout.setStretch(1, self._schedule_width_percent)
 
     def _apply_global_font_size(self, font_size_points: int) -> None:
         normalized_size = max(1, int(font_size_points))
@@ -1722,6 +1740,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             filesystem_default_fade_out=self._filesystem_default_fade_out,
             streams_default_fade_in=self._streams_default_fade_in,
             streams_default_fade_out=self._streams_default_fade_out,
+            media_library_width_percent=self._media_library_width_percent,
+            schedule_width_percent=self._schedule_width_percent,
             font_size_points=self._font_size_points,
             greenwich_time_signal_enabled=self._greenwich_time_signal_enabled,
             greenwich_time_signal_path=self._greenwich_time_signal_path,
@@ -1736,6 +1756,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         next_filesystem_default_fade_out = bool(dialog.filesystem_default_fade_out())
         next_streams_default_fade_in = bool(dialog.streams_default_fade_in())
         next_streams_default_fade_out = bool(dialog.streams_default_fade_out())
+        next_media_library_width_percent = max(10, min(90, dialog.media_library_width_percent()))
+        next_schedule_width_percent = 100 - next_media_library_width_percent
         next_font_size_points = max(1, dialog.font_size_points())
         next_greenwich_time_signal_enabled = bool(dialog.greenwich_time_signal_enabled())
         next_greenwich_time_signal_path = dialog.greenwich_time_signal_path()
@@ -1750,6 +1772,10 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             and next_streams_default_fade_out == self._streams_default_fade_out
         )
         font_size_changed = next_font_size_points != self._font_size_points
+        panel_width_changed = not (
+            next_media_library_width_percent == self._media_library_width_percent
+            and next_schedule_width_percent == self._schedule_width_percent
+        )
         greenwich_time_signal_changed = (
             next_greenwich_time_signal_enabled != self._greenwich_time_signal_enabled
             or next_greenwich_time_signal_path != self._greenwich_time_signal_path
@@ -1760,6 +1786,7 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         if (
             not fade_changed
             and not font_size_changed
+            and not panel_width_changed
             and not greenwich_time_signal_changed
             and not library_tabs_changed
             and not supported_extensions_changed
@@ -1775,6 +1802,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             self._streams_default_fade_out = next_streams_default_fade_out
         if font_size_changed:
             self._apply_global_font_size(next_font_size_points)
+        if panel_width_changed:
+            self._apply_panel_width_split(next_media_library_width_percent)
         if greenwich_time_signal_changed:
             self._greenwich_time_signal_enabled = next_greenwich_time_signal_enabled
             self._greenwich_time_signal_path = next_greenwich_time_signal_path
@@ -1793,6 +1822,8 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             f"streams_fade_in={'True' if self._streams_default_fade_in else 'False'}, "
             f"streams_fade_out={'True' if self._streams_default_fade_out else 'False'}, "
             f"greenwich_time_signal={'True' if self._greenwich_time_signal_enabled else 'False'}, "
+            f"media_library_width={self._media_library_width_percent}%, "
+            f"schedule_width={self._schedule_width_percent}%, "
             f"font={self._font_size_points}pt, "
             f"custom library tabs={len(self._library_tab_configs)}, "
             f"extensions={','.join(self._supported_extensions)}"

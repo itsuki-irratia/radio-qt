@@ -16,6 +16,14 @@ def _safe_positive_int(value: Any, default: int) -> int:
     return max(1, parsed)
 
 
+def _safe_panel_percent(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(10, min(90, parsed))
+
+
 def _safe_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
@@ -56,6 +64,8 @@ class AppConfig:
     filesystem_default_fade_out: bool = False
     streams_default_fade_in: bool = False
     streams_default_fade_out: bool = False
+    media_library_width_percent: int = 35
+    schedule_width_percent: int = 65
     font_size: int | None = None
     library_tabs: list[LibraryTab] = field(default_factory=list)
     supported_extensions: list[str] = field(default_factory=lambda: list(DEFAULT_SUPPORTED_EXTENSIONS))
@@ -82,6 +92,14 @@ class AppConfig:
         filesystem_default_fade_out = _safe_bool(data.get("filesystem_default_fade_out"), False)
         streams_default_fade_in = _safe_bool(data.get("streams_default_fade_in"), False)
         streams_default_fade_out = _safe_bool(data.get("streams_default_fade_out"), False)
+        media_library_raw = data.get("media_library_width_percent")
+        schedule_raw = data.get("schedule_width_percent")
+        if media_library_raw is None and schedule_raw is not None:
+            schedule_width_percent = _safe_panel_percent(schedule_raw, 65)
+            media_library_width_percent = 100 - schedule_width_percent
+        else:
+            media_library_width_percent = _safe_panel_percent(media_library_raw, 35)
+        schedule_width_percent = 100 - media_library_width_percent
 
         font_size: int | None = None
         font_payload = data.get("font")
@@ -115,6 +133,8 @@ class AppConfig:
             filesystem_default_fade_out=filesystem_default_fade_out,
             streams_default_fade_in=streams_default_fade_in,
             streams_default_fade_out=streams_default_fade_out,
+            media_library_width_percent=media_library_width_percent,
+            schedule_width_percent=schedule_width_percent,
             font_size=font_size,
             library_tabs=[
                 LibraryTab.from_dict(item)
@@ -133,6 +153,11 @@ class AppConfig:
             int(self.fade_in_duration_seconds),
             int(self.fade_out_duration_seconds),
         )
+        normalized_media_library_width_percent = _safe_panel_percent(
+            self.media_library_width_percent,
+            35,
+        )
+        normalized_schedule_width_percent = 100 - normalized_media_library_width_percent
         return {
             "fade": normalized_shared_fade_duration_seconds,
             "fade_in_seconds": normalized_shared_fade_duration_seconds,
@@ -141,6 +166,8 @@ class AppConfig:
             "filesystem_default_fade_out": bool(self.filesystem_default_fade_out),
             "streams_default_fade_in": bool(self.streams_default_fade_in),
             "streams_default_fade_out": bool(self.streams_default_fade_out),
+            "media_library_width_percent": normalized_media_library_width_percent,
+            "schedule_width_percent": normalized_schedule_width_percent,
             "font": {
                 "size": normalized_font_size,
             },
@@ -225,6 +252,20 @@ def _parse_settings_yaml(raw_text: str) -> dict[str, Any]:
         if line.startswith("streams_default_fade_out:"):
             raw_value = line.split(":", 1)[1].strip()
             data["streams_default_fade_out"] = _safe_bool(raw_value, False)
+            continue
+        if line.startswith("media_library_width_percent:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["media_library_width_percent"] = int(raw_value)
+            except ValueError:
+                pass
+            continue
+        if line.startswith("schedule_width_percent:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["schedule_width_percent"] = int(raw_value)
+            except ValueError:
+                pass
             continue
         if line.startswith("font_size:"):
             raw_value = line.split(":", 1)[1].strip()
@@ -346,6 +387,8 @@ def _dump_settings_yaml(config: AppConfig) -> str:
         "streams_default_fade_out: "
         f"{'true' if payload['streams_default_fade_out'] else 'false'}"
     )
+    lines.append(f"media_library_width_percent: {int(payload['media_library_width_percent'])}")
+    lines.append(f"schedule_width_percent: {int(payload['schedule_width_percent'])}")
     font_payload = payload.get("font", {})
     lines.append("font:")
     lines.append(f"  size: {int(font_payload.get('size', 10))}")

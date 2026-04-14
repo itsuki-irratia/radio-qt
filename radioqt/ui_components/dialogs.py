@@ -264,6 +264,8 @@ class ConfigurationDialog(QDialog):
         filesystem_default_fade_out: bool,
         streams_default_fade_in: bool,
         streams_default_fade_out: bool,
+        media_library_width_percent: int,
+        schedule_width_percent: int,
         font_size_points: int,
         greenwich_time_signal_enabled: bool,
         greenwich_time_signal_path: str,
@@ -304,6 +306,18 @@ class ConfigurationDialog(QDialog):
         self._font_size_spinbox = QSpinBox(self)
         self._font_size_spinbox.setRange(6, 72)
         self._font_size_spinbox.setValue(max(6, int(font_size_points)))
+        normalized_media_library_width_percent = max(10, min(90, int(media_library_width_percent)))
+        normalized_schedule_width_percent = max(10, min(90, int(schedule_width_percent)))
+        if normalized_media_library_width_percent + normalized_schedule_width_percent != 100:
+            normalized_schedule_width_percent = 100 - normalized_media_library_width_percent
+        self._media_library_width_spinbox = QSpinBox(self)
+        self._media_library_width_spinbox.setRange(10, 90)
+        self._media_library_width_spinbox.setValue(normalized_media_library_width_percent)
+        self._schedule_width_spinbox = QSpinBox(self)
+        self._schedule_width_spinbox.setRange(10, 90)
+        self._schedule_width_spinbox.setValue(normalized_schedule_width_percent)
+        self._media_library_width_spinbox.valueChanged.connect(self._on_media_library_width_changed)
+        self._schedule_width_spinbox.valueChanged.connect(self._on_schedule_width_changed)
         self._greenwich_time_signal_selector = QComboBox(self)
         self._greenwich_time_signal_selector.addItems(["True", "False"])
         self._greenwich_time_signal_selector.setCurrentText(
@@ -350,7 +364,7 @@ class ConfigurationDialog(QDialog):
         general_layout.setContentsMargins(0, 0, 0, 0)
         self._properties_table = QTableWidget(self)
         self._properties_table.setColumnCount(2)
-        self._properties_table.setRowCount(1)
+        self._properties_table.setRowCount(3)
         self._properties_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._properties_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._properties_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -362,9 +376,19 @@ class ConfigurationDialog(QDialog):
 
         font_size_item = QTableWidgetItem("Font size (pt)")
         font_size_item.setFlags(font_size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        media_library_width_item = QTableWidgetItem("Media Library Width (%)")
+        media_library_width_item.setFlags(
+            media_library_width_item.flags() & ~Qt.ItemFlag.ItemIsEditable
+        )
+        schedule_width_item = QTableWidgetItem("Schedule Width (%)")
+        schedule_width_item.setFlags(schedule_width_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
         self._properties_table.setItem(0, 0, font_size_item)
         self._properties_table.setCellWidget(0, 1, self._font_size_spinbox)
+        self._properties_table.setItem(1, 0, media_library_width_item)
+        self._properties_table.setCellWidget(1, 1, self._media_library_width_spinbox)
+        self._properties_table.setItem(2, 0, schedule_width_item)
+        self._properties_table.setCellWidget(2, 1, self._schedule_width_spinbox)
         self._properties_table.resizeColumnsToContents()
         general_layout.addWidget(self._properties_table, 1)
 
@@ -535,6 +559,12 @@ class ConfigurationDialog(QDialog):
 
     def font_size_points(self) -> int:
         return self._font_size_spinbox.value()
+
+    def media_library_width_percent(self) -> int:
+        return self._media_library_width_spinbox.value()
+
+    def schedule_width_percent(self) -> int:
+        return self._schedule_width_spinbox.value()
 
     def greenwich_time_signal_enabled(self) -> bool:
         return self._greenwich_time_signal_selector.currentText() == "True"
@@ -793,6 +823,24 @@ class ConfigurationDialog(QDialog):
     def _on_settings_section_changed(self, index: int) -> None:
         if 0 <= index < self._settings_pages.count():
             self._settings_pages.setCurrentIndex(index)
+
+    def _on_media_library_width_changed(self, value: int) -> None:
+        normalized_media_library_width = max(10, min(90, int(value)))
+        target_schedule_width = 100 - normalized_media_library_width
+        if self._schedule_width_spinbox.value() == target_schedule_width:
+            return
+        self._schedule_width_spinbox.blockSignals(True)
+        self._schedule_width_spinbox.setValue(target_schedule_width)
+        self._schedule_width_spinbox.blockSignals(False)
+
+    def _on_schedule_width_changed(self, value: int) -> None:
+        normalized_schedule_width = max(10, min(90, int(value)))
+        target_media_library_width = 100 - normalized_schedule_width
+        if self._media_library_width_spinbox.value() == target_media_library_width:
+            return
+        self._media_library_width_spinbox.blockSignals(True)
+        self._media_library_width_spinbox.setValue(target_media_library_width)
+        self._media_library_width_spinbox.blockSignals(False)
 
     def reject(self) -> None:
         if not self._validate_greenwich_time_signal_path(show_warning=True):

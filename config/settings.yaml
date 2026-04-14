@@ -5,6 +5,8 @@ filesystem_default_fade_in: false
 filesystem_default_fade_out: true
 streams_default_fade_in: false
 streams_default_fade_out: false
+media_library_width_percent: 35
+schedule_width_percent: 65
 font:
   size: 12
 library_tabs:
