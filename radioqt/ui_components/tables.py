@@ -13,6 +13,42 @@ class NoScrollComboBox(QComboBox):
     def wheelEvent(self, event) -> None:
         event.ignore()
 
+
+def _apply_boolean_selector_color(selector: QComboBox, value: str) -> None:
+    if value == "True":
+        selector.setStyleSheet(
+            "QComboBox {"
+            "background-color: #e8f5e9;"
+            "color: #1b5e20;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            "selection-background-color: #2e7d32;"
+            "selection-color: #ffffff;"
+            "}"
+        )
+        return
+    if value == "False":
+        selector.setStyleSheet(
+            "QComboBox {"
+            "background-color: #ffebee;"
+            "color: #b71c1c;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            "selection-background-color: #c62828;"
+            "selection-color: #ffffff;"
+            "}"
+        )
+        return
+    selector.setStyleSheet("")
+
+
+def _configure_boolean_selector(selector: QComboBox) -> None:
+    _apply_boolean_selector_color(selector, selector.currentText())
+    selector.currentTextChanged.connect(
+        lambda value, combo=selector: _apply_boolean_selector_color(combo, value)
+    )
+
+
 def _apply_comfortable_column_widths(
     table: QTableWidget,
     minimum_widths: list[int],
@@ -51,6 +87,7 @@ def refresh_urls_table(
         signal_selector.addItems(["True", "False"])
         signal_selector.setCurrentText("True" if media.greenwich_time_signal_enabled else "False")
         signal_selector.setToolTip("Allow Greenwich Time Signal while this stream is active")
+        _configure_boolean_selector(signal_selector)
         signal_selector.currentTextChanged.connect(
             lambda value, media_id=media.id: on_greenwich_time_signal_changed(media_id, value)
         )
@@ -91,6 +128,7 @@ def refresh_cron_table(
         fade_in_selector.addItems(["True", "False"])
         fade_in_selector.setCurrentText("True" if entry.fade_in else "False")
         fade_in_selector.setToolTip(media_source)
+        _configure_boolean_selector(fade_in_selector)
         fade_in_selector.currentTextChanged.connect(
             lambda value, entry_id=entry.id: on_fade_in_changed(entry_id, value)
         )
@@ -100,6 +138,7 @@ def refresh_cron_table(
         fade_out_selector.addItems(["True", "False"])
         fade_out_selector.setCurrentText("True" if entry.fade_out else "False")
         fade_out_selector.setToolTip(media_source)
+        _configure_boolean_selector(fade_out_selector)
         fade_out_selector.currentTextChanged.connect(
             lambda value, entry_id=entry.id: on_fade_out_changed(entry_id, value)
         )
@@ -179,10 +218,10 @@ def refresh_schedule_table(
         fade_in_selector.setCurrentText("True" if entry.fade_in else "False")
         fade_in_selector.setEnabled(not is_locked)
         fade_in_selector.setToolTip(tooltip)
+        _configure_boolean_selector(fade_in_selector)
         fade_in_selector.currentTextChanged.connect(
             lambda value, entry_id=entry.id: on_fade_in_changed(entry_id, value)
         )
-        apply_widget_palette(fade_in_selector, palette)
         schedule_table.setCellWidget(row, 3, fade_in_selector)
 
         fade_out_selector = NoScrollComboBox(schedule_table)
@@ -190,10 +229,10 @@ def refresh_schedule_table(
         fade_out_selector.setCurrentText("True" if entry.fade_out else "False")
         fade_out_selector.setEnabled(not is_locked)
         fade_out_selector.setToolTip(tooltip)
+        _configure_boolean_selector(fade_out_selector)
         fade_out_selector.currentTextChanged.connect(
             lambda value, entry_id=entry.id: on_fade_out_changed(entry_id, value)
         )
-        apply_widget_palette(fade_out_selector, palette)
         schedule_table.setCellWidget(row, 4, fade_out_selector)
 
         status_selector = NoScrollComboBox(schedule_table)

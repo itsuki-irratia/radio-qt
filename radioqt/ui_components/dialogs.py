@@ -32,6 +32,41 @@ from ..cron import CronExpression, CronParseError
 from ..models import LibraryTab
 
 
+def _apply_boolean_selector_color(selector: QComboBox, value: str) -> None:
+    if value == "True":
+        selector.setStyleSheet(
+            "QComboBox {"
+            "background-color: #e8f5e9;"
+            "color: #1b5e20;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            "selection-background-color: #2e7d32;"
+            "selection-color: #ffffff;"
+            "}"
+        )
+        return
+    if value == "False":
+        selector.setStyleSheet(
+            "QComboBox {"
+            "background-color: #ffebee;"
+            "color: #b71c1c;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            "selection-background-color: #c62828;"
+            "selection-color: #ffffff;"
+            "}"
+        )
+        return
+    selector.setStyleSheet("")
+
+
+def _configure_boolean_selector(selector: QComboBox) -> None:
+    _apply_boolean_selector_color(selector, selector.currentText())
+    selector.currentTextChanged.connect(
+        lambda value, combo=selector: _apply_boolean_selector_color(combo, value)
+    )
+
+
 def _cron_help_html() -> str:
     return """
     <style>
@@ -288,21 +323,25 @@ class ConfigurationDialog(QDialog):
         self._filesystem_default_fade_in_selector.setCurrentText(
             "True" if filesystem_default_fade_in else "False"
         )
+        _configure_boolean_selector(self._filesystem_default_fade_in_selector)
         self._filesystem_default_fade_out_selector = QComboBox(self)
         self._filesystem_default_fade_out_selector.addItems(["True", "False"])
         self._filesystem_default_fade_out_selector.setCurrentText(
             "True" if filesystem_default_fade_out else "False"
         )
+        _configure_boolean_selector(self._filesystem_default_fade_out_selector)
         self._streams_default_fade_in_selector = QComboBox(self)
         self._streams_default_fade_in_selector.addItems(["True", "False"])
         self._streams_default_fade_in_selector.setCurrentText(
             "True" if streams_default_fade_in else "False"
         )
+        _configure_boolean_selector(self._streams_default_fade_in_selector)
         self._streams_default_fade_out_selector = QComboBox(self)
         self._streams_default_fade_out_selector.addItems(["True", "False"])
         self._streams_default_fade_out_selector.setCurrentText(
             "True" if streams_default_fade_out else "False"
         )
+        _configure_boolean_selector(self._streams_default_fade_out_selector)
         self._font_size_spinbox = QSpinBox(self)
         self._font_size_spinbox.setRange(6, 72)
         self._font_size_spinbox.setValue(max(6, int(font_size_points)))
@@ -318,11 +357,21 @@ class ConfigurationDialog(QDialog):
         self._schedule_width_spinbox.setValue(normalized_schedule_width_percent)
         self._media_library_width_spinbox.valueChanged.connect(self._on_media_library_width_changed)
         self._schedule_width_spinbox.valueChanged.connect(self._on_schedule_width_changed)
+        self._panel_widths_widget = QWidget(self)
+        self._panel_widths_layout = QHBoxLayout(self._panel_widths_widget)
+        self._panel_widths_layout.setContentsMargins(0, 0, 0, 0)
+        self._panel_widths_layout.setSpacing(6)
+        self._panel_widths_layout.addWidget(QLabel("Media Library", self._panel_widths_widget))
+        self._panel_widths_layout.addWidget(self._media_library_width_spinbox)
+        self._panel_widths_layout.addWidget(QLabel("Schedule", self._panel_widths_widget))
+        self._panel_widths_layout.addWidget(self._schedule_width_spinbox)
+        self._panel_widths_layout.addStretch()
         self._greenwich_time_signal_selector = QComboBox(self)
         self._greenwich_time_signal_selector.addItems(["True", "False"])
         self._greenwich_time_signal_selector.setCurrentText(
             "True" if greenwich_time_signal_enabled else "False"
         )
+        _configure_boolean_selector(self._greenwich_time_signal_selector)
         self._greenwich_time_signal_path_edit = QLineEdit(self)
         self._greenwich_time_signal_path_edit.setPlaceholderText(
             "Path to Greenwich Time Signal audio"
@@ -364,7 +413,7 @@ class ConfigurationDialog(QDialog):
         general_layout.setContentsMargins(0, 0, 0, 0)
         self._properties_table = QTableWidget(self)
         self._properties_table.setColumnCount(2)
-        self._properties_table.setRowCount(3)
+        self._properties_table.setRowCount(2)
         self._properties_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._properties_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._properties_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -376,19 +425,13 @@ class ConfigurationDialog(QDialog):
 
         font_size_item = QTableWidgetItem("Font size (pt)")
         font_size_item.setFlags(font_size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        media_library_width_item = QTableWidgetItem("Media Library Width (%)")
-        media_library_width_item.setFlags(
-            media_library_width_item.flags() & ~Qt.ItemFlag.ItemIsEditable
-        )
-        schedule_width_item = QTableWidgetItem("Schedule Width (%)")
-        schedule_width_item.setFlags(schedule_width_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        panel_width_item = QTableWidgetItem("Panel Widths (%)")
+        panel_width_item.setFlags(panel_width_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
         self._properties_table.setItem(0, 0, font_size_item)
         self._properties_table.setCellWidget(0, 1, self._font_size_spinbox)
-        self._properties_table.setItem(1, 0, media_library_width_item)
-        self._properties_table.setCellWidget(1, 1, self._media_library_width_spinbox)
-        self._properties_table.setItem(2, 0, schedule_width_item)
-        self._properties_table.setCellWidget(2, 1, self._schedule_width_spinbox)
+        self._properties_table.setItem(1, 0, panel_width_item)
+        self._properties_table.setCellWidget(1, 1, self._panel_widths_widget)
         self._properties_table.resizeColumnsToContents()
         general_layout.addWidget(self._properties_table, 1)
 
