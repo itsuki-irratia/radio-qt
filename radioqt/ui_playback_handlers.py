@@ -355,6 +355,7 @@ class MainWindowPlaybackHandlersMixin:
             self._set_automation_status(False)
             self._scheduler.stop()
             self._append_log("Automation status changed to Stopped")
+        self._greenwich_time_signal_player.stop()
         self._player.clear_current_media()
         self._current_playback_position_ms = 0
         self._update_now_playing_label()
