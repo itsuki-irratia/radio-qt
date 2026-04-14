@@ -452,15 +452,12 @@ class ConfigurationDialog(QDialog):
 
         library_tabs_buttons = QHBoxLayout()
         self._add_library_tab_button = QPushButton("Add Tab", custom_paths_page)
-        self._browse_library_path_button = QPushButton("Browse Path...", custom_paths_page)
         self._remove_library_tab_button = QPushButton(custom_paths_page)
         self._remove_library_tab_button.setToolTip("Remove selected tab")
         self._remove_library_tab_button.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
         self._add_library_tab_button.clicked.connect(self._add_library_tab_row)
         self._remove_library_tab_button.clicked.connect(self._remove_selected_library_tab_row)
-        self._browse_library_path_button.clicked.connect(self._browse_selected_library_tab_path)
         library_tabs_buttons.addWidget(self._add_library_tab_button)
-        library_tabs_buttons.addWidget(self._browse_library_path_button)
         library_tabs_buttons.addWidget(self._remove_library_tab_button)
         library_tabs_buttons.addStretch()
         custom_paths_layout.addWidget(self._library_tabs_table, 1)
@@ -567,8 +564,49 @@ class ConfigurationDialog(QDialog):
         row = self._library_tabs_table.rowCount()
         self._library_tabs_table.insertRow(row)
         self._library_tabs_table.setItem(row, 0, QTableWidgetItem(title))
-        self._library_tabs_table.setItem(row, 1, QTableWidgetItem(path))
+        self._library_tabs_table.setCellWidget(row, 1, self._build_library_tab_path_widget(path))
         self._library_tabs_table.resizeColumnsToContents()
+
+    def _build_library_tab_path_widget(self, path: str = "") -> QWidget:
+        path_widget = QWidget(self._library_tabs_table)
+        path_layout = QHBoxLayout(path_widget)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(6)
+
+        path_edit = QLineEdit(path_widget)
+        path_edit.setObjectName("library_tab_path_edit")
+        path_edit.setPlaceholderText("Path to directory")
+        path_edit.setText(path.strip())
+
+        browse_button = QPushButton("Browse...", path_widget)
+        browse_button.clicked.connect(
+            lambda: self._browse_library_tab_path_line_edit(path_edit)
+        )
+        path_layout.addWidget(path_edit, 1)
+        path_layout.addWidget(browse_button)
+        return path_widget
+
+    @staticmethod
+    def _library_tab_path_edit(path_widget: QWidget | None) -> QLineEdit | None:
+        if path_widget is None:
+            return None
+        return path_widget.findChild(QLineEdit, "library_tab_path_edit")
+
+    def _library_tab_path_text(self, row: int) -> str:
+        path_widget = self._library_tabs_table.cellWidget(row, 1)
+        path_edit = self._library_tab_path_edit(path_widget)
+        if path_edit is not None:
+            return path_edit.text().strip()
+        path_item = self._library_tabs_table.item(row, 1)
+        return path_item.text().strip() if path_item is not None else ""
+
+    def _browse_library_tab_path_line_edit(self, path_edit: QLineEdit) -> None:
+        current_path = path_edit.text().strip()
+        base_dir = self._normalize_directory_path(current_path) if current_path else str(Path.home())
+        selected_dir = QFileDialog.getExistingDirectory(self, "Choose Library Tab Path", base_dir)
+        if not selected_dir:
+            return
+        path_edit.setText(self._normalize_directory_path(selected_dir))
 
     @staticmethod
     def _normalize_extension_token(raw_extension: str) -> str:
@@ -601,9 +639,8 @@ class ConfigurationDialog(QDialog):
         if current_row < 0:
             return
         title_item = self._library_tabs_table.item(current_row, 0)
-        path_item = self._library_tabs_table.item(current_row, 1)
         title = title_item.text().strip() if title_item is not None else ""
-        path = path_item.text().strip() if path_item is not None else ""
+        path = self._library_tab_path_text(current_row)
         details = title or path or f"row {current_row + 1}"
         result = QMessageBox.question(
             self,
@@ -634,24 +671,6 @@ class ConfigurationDialog(QDialog):
             return
         self._supported_extensions_table.removeRow(current_row)
 
-    def _browse_selected_library_tab_path(self) -> None:
-        current_row = self._library_tabs_table.currentRow()
-        if current_row < 0:
-            QMessageBox.information(self, "No Selection", "Select a tab row first.")
-            return
-        current_path_item = self._library_tabs_table.item(current_row, 1)
-        current_path = current_path_item.text().strip() if current_path_item is not None else ""
-        base_dir = self._normalize_directory_path(current_path) if current_path else str(Path.home())
-        selected_dir = QFileDialog.getExistingDirectory(self, "Choose Library Tab Path", base_dir)
-        if not selected_dir:
-            return
-        normalized_path = self._normalize_directory_path(selected_dir)
-        if current_path_item is None:
-            self._library_tabs_table.setItem(current_row, 1, QTableWidgetItem(normalized_path))
-        else:
-            current_path_item.setText(normalized_path)
-        self._library_tabs_table.resizeColumnsToContents()
-
     def _browse_greenwich_time_signal_path(self) -> None:
         current_path = self._greenwich_time_signal_path_edit.text().strip()
         base_dir = str(Path(current_path).expanduser().parent) if current_path else str(Path.home())
@@ -669,9 +688,8 @@ class ConfigurationDialog(QDialog):
         configured_tabs: list[LibraryTab] = []
         for row in range(self._library_tabs_table.rowCount()):
             title_item = self._library_tabs_table.item(row, 0)
-            path_item = self._library_tabs_table.item(row, 1)
             title = title_item.text().strip() if title_item is not None else ""
-            path = path_item.text().strip() if path_item is not None else ""
+            path = self._library_tab_path_text(row)
             if not title and not path:
                 continue
             if not title or not path:
@@ -737,11 +755,44 @@ class ConfigurationDialog(QDialog):
             return None
         return configured_tabs, configured_supported_extensions
 
+    def _validate_greenwich_time_signal_path(self, *, show_warning: bool) -> bool:
+        enabled = self.greenwich_time_signal_enabled()
+        raw_path = self.greenwich_time_signal_path()
+        if not raw_path:
+            if enabled and show_warning:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Greenwich Time Signal",
+                    "Audio Path is required when Greenwich Time Signal is enabled.",
+                )
+            return not enabled
+
+        candidate = Path(raw_path).expanduser()
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if not resolved.is_file():
+            if show_warning:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Greenwich Time Signal Path",
+                    f"Audio file does not exist:\n{resolved}",
+                )
+            return False
+
+        normalized_path = str(resolved)
+        if normalized_path != raw_path:
+            self._greenwich_time_signal_path_edit.setText(normalized_path)
+        return True
+
     def _on_settings_section_changed(self, index: int) -> None:
         if 0 <= index < self._settings_pages.count():
             self._settings_pages.setCurrentIndex(index)
 
     def reject(self) -> None:
+        if not self._validate_greenwich_time_signal_path(show_warning=True):
+            return
         collected_settings = self._collect_settings_values(show_warning=True)
         if collected_settings is None:
             return
@@ -751,6 +802,9 @@ class ConfigurationDialog(QDialog):
         super().accept()
 
     def closeEvent(self, event) -> None:
+        if not self._validate_greenwich_time_signal_path(show_warning=True):
+            event.ignore()
+            return
         collected_settings = self._collect_settings_values(show_warning=True)
         if collected_settings is None:
             event.ignore()

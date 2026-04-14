@@ -190,8 +190,22 @@ class ScheduleEntry:
     cron_fade_out_override: bool | None = None
 
     @classmethod
-    def create(cls, media_id: str, start_at: datetime, hard_sync: bool = True) -> "ScheduleEntry":
-        return cls(id=str(uuid4()), media_id=media_id, start_at=start_at, hard_sync=hard_sync)
+    def create(
+        cls,
+        media_id: str,
+        start_at: datetime,
+        hard_sync: bool = True,
+        fade_in: bool = False,
+        fade_out: bool = False,
+    ) -> "ScheduleEntry":
+        return cls(
+            id=str(uuid4()),
+            media_id=media_id,
+            start_at=start_at,
+            hard_sync=hard_sync,
+            fade_in=fade_in,
+            fade_out=fade_out,
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ScheduleEntry":

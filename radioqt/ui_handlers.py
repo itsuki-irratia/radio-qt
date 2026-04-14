@@ -65,6 +65,9 @@ class MainWindowHandlersMixin:
         self._last_source_panel = "urls" if panel_kind == "urls" else "filesystem"
 
     def _default_fade_flags_for_media(self, media_id: str) -> tuple[bool, bool]:
+        panel_kind, _, _ = self._current_library_tab_descriptor()
+        if panel_kind == "urls":
+            return bool(self._streams_default_fade_in), bool(self._streams_default_fade_out)
         media = self._media_items.get(media_id)
         if media is not None and is_stream_source(media.source):
             return bool(self._streams_default_fade_in), bool(self._streams_default_fade_out)
