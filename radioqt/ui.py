@@ -676,6 +676,7 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._add_cron_button.clicked.connect(self._add_cron_schedule)
         self._schedule_date_selector.dateChanged.connect(self._on_schedule_filter_date_changed)
         self._schedule_focus_checkbox.toggled.connect(self._on_schedule_auto_focus_toggled)
+        self._schedule_table.cellPressed.connect(self._on_schedule_table_cell_pressed)
 
         self._play_button.clicked.connect(self._on_play_clicked)
         self._stop_button.clicked.connect(self._on_stop_clicked)

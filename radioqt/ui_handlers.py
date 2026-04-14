@@ -34,8 +34,21 @@ from .ui_components import CronDialog, ScheduleDialog
 
 
 class MainWindowHandlersMixin:
+    def _disable_schedule_auto_focus(self, *, reason: str) -> None:
+        if not self._schedule_auto_focus_enabled:
+            return
+        self._schedule_auto_focus_enabled = False
+        self._schedule_focus_checkbox.blockSignals(True)
+        self._schedule_focus_checkbox.setChecked(False)
+        self._schedule_focus_checkbox.blockSignals(False)
+        self._save_state()
+        self._append_log(reason)
+
     @Slot(QDate)
     def _on_schedule_filter_date_changed(self, selected_date: QDate) -> None:
+        self._disable_schedule_auto_focus(
+            reason="Focus current program disabled by manual date change"
+        )
         self._schedule_filter_date = selected_date.toPython()
         self._resync_schedule_runtime(refresh_table=True)
 
@@ -45,6 +58,15 @@ class MainWindowHandlersMixin:
         self._save_state()
         if checked:
             self._apply_schedule_auto_focus(force=True)
+
+    @Slot(int, int)
+    def _on_schedule_table_cell_pressed(self, row: int, column: int) -> None:
+        del column
+        if row < 0:
+            return
+        self._disable_schedule_auto_focus(
+            reason="Focus current program disabled by manual timeline selection"
+        )
 
     @Slot(QModelIndex)
     def _on_filesystem_selected(self, _: QModelIndex) -> None:
