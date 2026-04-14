@@ -1,4 +1,4 @@
-from .scheduling.logic import (
+from ..scheduling.logic import (
     active_schedule_entry_at,
     normalize_overdue_one_shots,
     normalized_start,

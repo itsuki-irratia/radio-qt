@@ -9,7 +9,7 @@ from PySide6.QtCore import QLibraryInfo
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from .ui import MainWindow
+from ..ui import MainWindow
 
 
 def _candidate_qt_plugin_roots() -> list[Path]:

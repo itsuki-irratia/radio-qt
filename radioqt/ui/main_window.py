@@ -37,8 +37,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .app_config import AppConfig, load_app_config, save_app_config
-from .duration_probe import (
+from ..app_config import AppConfig, load_app_config, save_app_config
+from ..duration_probe import (
     duration_probe_cache_key_from_path,
     duration_probe_cache_key_from_source,
     duration_probe_cache_lookup,
@@ -47,7 +47,7 @@ from .duration_probe import (
     sanitize_duration_probe_cache,
     store_duration_probe_cache,
 )
-from .library import (
+from ..library import (
     VIDEO_EXTENSIONS,
     is_stream_source,
     local_media_path_from_source,
@@ -56,7 +56,7 @@ from .library import (
     selected_filesystem_media_id,
     selected_url_media_id,
 )
-from .models import (
+from ..models import (
     AppState,
     CronEntry,
     DEFAULT_SUPPORTED_EXTENSIONS,
@@ -69,8 +69,8 @@ from .models import (
     SCHEDULE_STATUS_PENDING,
     ScheduleEntry,
 )
-from .player import MediaPlayerController
-from .scheduling import (
+from ..player import MediaPlayerController
+from ..scheduling import (
     RadioScheduler,
     active_schedule_entry_at,
     current_schedule_entry_for_playback,
@@ -86,10 +86,8 @@ from .scheduling import (
     schedule_entry_window_details,
     visible_schedule_entries,
 )
-from .storage import load_state, save_state
-from .ui_handlers import MainWindowHandlersMixin
-from .ui_playback_handlers import MainWindowPlaybackHandlersMixin
-from .ui_components import (
+from ..storage import load_state, save_state
+from ..ui_components import (
     ConfigurationDialog,
     CronHelpDialog,
     FullscreenOverlay,
@@ -99,6 +97,8 @@ from .ui_components import (
     refresh_schedule_table,
     refresh_urls_table,
 )
+from .handlers import MainWindowHandlersMixin
+from .playback_handlers import MainWindowPlaybackHandlersMixin
 
 
 class _DurationProbeDispatcher(QObject):

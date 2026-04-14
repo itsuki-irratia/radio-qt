@@ -1,36 +1,40 @@
-fade: 5
-fade_in_seconds: 5
-fade_out_seconds: 5
-filesystem_default_fade_in: false
-filesystem_default_fade_out: true
-streams_default_fade_in: false
-streams_default_fade_out: false
-media_library_width_percent: 40
-schedule_width_percent: 60
-font:
-  size: 12
-library_tabs:
-  - title: "Home"
-    path: "/home/zital"
-supported_extensions:
-  - "mp3"
-  - "ogg"
-  - "opus"
-  - "mp4"
-  - "webm"
-  - "aac"
-  - "mkv"
-  - "mpg"
-  - "mpeg"
-  - "m3u"
-  - "m3u8"
-  - "pls"
-  - "xspf"
-  - "mov"
-  - "wav"
-  - "flac"
-  - "m4a"
-  - "avi"
-  - "flv"
-greenwich_time_signal_enabled: true
-greenwich_time_signal_path: "/home/zital/Gts_(bbc)_pips.ogg"
+view:
+  font_size: 12
+  media_library_width_percent: 40
+  schedule_width_percent: 60
+fade:
+  seconds: 5
+  filesystem:
+    default_fade_in: false
+    default_fade_out: true
+  streams:
+    default_fade_in: false
+    default_fade_out: false
+greenwich_time_signal:
+  enabled: true
+  path: "/home/zital/Gts_(bbc)_pips.ogg"
+custom_paths:
+  tabs:
+    - title: "Home"
+      path: "/home/zital"
+extensions:
+  supported:
+    - "mp3"
+    - "ogg"
+    - "opus"
+    - "mp4"
+    - "webm"
+    - "aac"
+    - "mkv"
+    - "mpg"
+    - "mpeg"
+    - "m3u"
+    - "m3u8"
+    - "pls"
+    - "xspf"
+    - "mov"
+    - "wav"
+    - "flac"
+    - "m4a"
+    - "avi"
+    - "flv"

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-from .models import AppState
+from ..models import AppState
 
 
 def _db_bool_to_python(value: object, default: bool = False) -> bool:

@@ -30,41 +30,26 @@ from PySide6.QtWidgets import (
 
 from ..cron import CronExpression, CronParseError
 from ..models import LibraryTab
+from .boolean_selectors import _configure_boolean_selector
 
 
-def _apply_boolean_selector_color(selector: QComboBox, value: str) -> None:
-    if value == "True":
-        selector.setStyleSheet(
-            "QComboBox {"
-            "background-color: #e8f5e9;"
-            "color: #1b5e20;"
-            "}"
-            "QComboBox QAbstractItemView {"
-            "selection-background-color: #2e7d32;"
-            "selection-color: #ffffff;"
-            "}"
-        )
-        return
-    if value == "False":
-        selector.setStyleSheet(
-            "QComboBox {"
-            "background-color: #ffebee;"
-            "color: #b71c1c;"
-            "}"
-            "QComboBox QAbstractItemView {"
-            "selection-background-color: #c62828;"
-            "selection-color: #ffffff;"
-            "}"
-        )
-        return
-    selector.setStyleSheet("")
+def _make_readonly_label_item(text: str) -> QTableWidgetItem:
+    item = QTableWidgetItem(text)
+    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+    return item
 
 
-def _configure_boolean_selector(selector: QComboBox) -> None:
-    _apply_boolean_selector_color(selector, selector.currentText())
-    selector.currentTextChanged.connect(
-        lambda value, combo=selector: _apply_boolean_selector_color(combo, value)
-    )
+def _configure_settings_table(table: QTableWidget, *, row_count: int) -> None:
+    table.setColumnCount(2)
+    table.setRowCount(row_count)
+    table.setSelectionBehavior(QAbstractItemView.SelectRows)
+    table.setSelectionMode(QAbstractItemView.SingleSelection)
+    table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().setVisible(False)
+    table.horizontalHeader().setStretchLastSection(True)
+    table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
 
 def _cron_help_html() -> str:
@@ -397,11 +382,11 @@ class ConfigurationDialog(QDialog):
         self._configured_supported_extensions: list[str] = list(supported_extensions)
 
         self._settings_sections_list = QListWidget(self)
-        self._settings_sections_list.addItem("General Settings")
-        self._settings_sections_list.addItem("Fade")
-        self._settings_sections_list.addItem("Greenwich Time Signal")
         self._settings_sections_list.addItem("Custom Paths")
         self._settings_sections_list.addItem("Extensions")
+        self._settings_sections_list.addItem("Fade")
+        self._settings_sections_list.addItem("Greenwich Time Signal")
+        self._settings_sections_list.addItem("View")
         self._settings_sections_list.setFixedWidth(190)
         self._settings_sections_list.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
@@ -412,25 +397,11 @@ class ConfigurationDialog(QDialog):
         general_layout = QVBoxLayout(general_page)
         general_layout.setContentsMargins(0, 0, 0, 0)
         self._properties_table = QTableWidget(self)
-        self._properties_table.setColumnCount(2)
-        self._properties_table.setRowCount(2)
-        self._properties_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._properties_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self._properties_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._properties_table.setAlternatingRowColors(True)
-        self._properties_table.verticalHeader().setVisible(False)
-        self._properties_table.horizontalHeader().setVisible(False)
-        self._properties_table.horizontalHeader().setStretchLastSection(True)
-        self._properties_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        _configure_settings_table(self._properties_table, row_count=2)
 
-        font_size_item = QTableWidgetItem("Font size (pt)")
-        font_size_item.setFlags(font_size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        panel_width_item = QTableWidgetItem("Panel Widths (%)")
-        panel_width_item.setFlags(panel_width_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
-        self._properties_table.setItem(0, 0, font_size_item)
+        self._properties_table.setItem(0, 0, _make_readonly_label_item("Font size (pt)"))
         self._properties_table.setCellWidget(0, 1, self._font_size_spinbox)
-        self._properties_table.setItem(1, 0, panel_width_item)
+        self._properties_table.setItem(1, 0, _make_readonly_label_item("Panel Widths (%)"))
         self._properties_table.setCellWidget(1, 1, self._panel_widths_widget)
         self._properties_table.resizeColumnsToContents()
         general_layout.addWidget(self._properties_table, 1)
@@ -439,37 +410,17 @@ class ConfigurationDialog(QDialog):
         fade_layout = QVBoxLayout(fade_page)
         fade_layout.setContentsMargins(0, 0, 0, 0)
         self._fade_table = QTableWidget(self)
-        self._fade_table.setColumnCount(2)
-        self._fade_table.setRowCount(5)
-        self._fade_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._fade_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self._fade_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._fade_table.setAlternatingRowColors(True)
-        self._fade_table.verticalHeader().setVisible(False)
-        self._fade_table.horizontalHeader().setVisible(False)
-        self._fade_table.horizontalHeader().setStretchLastSection(True)
-        self._fade_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        _configure_settings_table(self._fade_table, row_count=5)
 
-        fade_duration_item = QTableWidgetItem("In / Out Seconds")
-        fade_duration_item.setFlags(fade_duration_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        filesystem_fade_in_item = QTableWidgetItem("Filesystem -> Default Fade In")
-        filesystem_fade_in_item.setFlags(filesystem_fade_in_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        filesystem_fade_out_item = QTableWidgetItem("Filesystem -> Default Fade Out")
-        filesystem_fade_out_item.setFlags(filesystem_fade_out_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        streams_fade_in_item = QTableWidgetItem("Streams -> Default Fade In")
-        streams_fade_in_item.setFlags(streams_fade_in_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        streams_fade_out_item = QTableWidgetItem("Streams -> Default Fade Out")
-        streams_fade_out_item.setFlags(streams_fade_out_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
-        self._fade_table.setItem(0, 0, fade_duration_item)
+        self._fade_table.setItem(0, 0, _make_readonly_label_item("In / Out Seconds"))
         self._fade_table.setCellWidget(0, 1, self._fade_duration_spinbox)
-        self._fade_table.setItem(1, 0, filesystem_fade_in_item)
+        self._fade_table.setItem(1, 0, _make_readonly_label_item("Filesystem -> Default Fade In"))
         self._fade_table.setCellWidget(1, 1, self._filesystem_default_fade_in_selector)
-        self._fade_table.setItem(2, 0, filesystem_fade_out_item)
+        self._fade_table.setItem(2, 0, _make_readonly_label_item("Filesystem -> Default Fade Out"))
         self._fade_table.setCellWidget(2, 1, self._filesystem_default_fade_out_selector)
-        self._fade_table.setItem(3, 0, streams_fade_in_item)
+        self._fade_table.setItem(3, 0, _make_readonly_label_item("Streams -> Default Fade In"))
         self._fade_table.setCellWidget(3, 1, self._streams_default_fade_in_selector)
-        self._fade_table.setItem(4, 0, streams_fade_out_item)
+        self._fade_table.setItem(4, 0, _make_readonly_label_item("Streams -> Default Fade Out"))
         self._fade_table.setCellWidget(4, 1, self._streams_default_fade_out_selector)
         self._fade_table.resizeColumnsToContents()
         fade_layout.addWidget(self._fade_table, 1)
@@ -478,25 +429,11 @@ class ConfigurationDialog(QDialog):
         greenwich_layout = QVBoxLayout(greenwich_page)
         greenwich_layout.setContentsMargins(0, 0, 0, 0)
         self._greenwich_table = QTableWidget(self)
-        self._greenwich_table.setColumnCount(2)
-        self._greenwich_table.setRowCount(2)
-        self._greenwich_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._greenwich_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self._greenwich_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._greenwich_table.setAlternatingRowColors(True)
-        self._greenwich_table.verticalHeader().setVisible(False)
-        self._greenwich_table.horizontalHeader().setVisible(False)
-        self._greenwich_table.horizontalHeader().setStretchLastSection(True)
-        self._greenwich_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        _configure_settings_table(self._greenwich_table, row_count=2)
 
-        signal_enabled_item = QTableWidgetItem("Enabled")
-        signal_enabled_item.setFlags(signal_enabled_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        signal_path_item = QTableWidgetItem("Audio Path")
-        signal_path_item.setFlags(signal_path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
-        self._greenwich_table.setItem(0, 0, signal_enabled_item)
+        self._greenwich_table.setItem(0, 0, _make_readonly_label_item("Enabled"))
         self._greenwich_table.setCellWidget(0, 1, self._greenwich_time_signal_selector)
-        self._greenwich_table.setItem(1, 0, signal_path_item)
+        self._greenwich_table.setItem(1, 0, _make_readonly_label_item("Audio Path"))
         self._greenwich_table.setCellWidget(1, 1, self._greenwich_time_signal_path_widget)
         self._greenwich_table.resizeColumnsToContents()
         greenwich_layout.addWidget(self._greenwich_table, 1)
@@ -562,11 +499,11 @@ class ConfigurationDialog(QDialog):
         extensions_layout.addWidget(self._supported_extensions_table, 1)
         extensions_layout.addLayout(extensions_buttons)
 
-        self._settings_pages.addWidget(general_page)
-        self._settings_pages.addWidget(fade_page)
-        self._settings_pages.addWidget(greenwich_page)
         self._settings_pages.addWidget(custom_paths_page)
         self._settings_pages.addWidget(extensions_page)
+        self._settings_pages.addWidget(fade_page)
+        self._settings_pages.addWidget(greenwich_page)
+        self._settings_pages.addWidget(general_page)
         self._settings_sections_list.currentRowChanged.connect(self._on_settings_section_changed)
         self._settings_sections_list.setCurrentRow(0)
 

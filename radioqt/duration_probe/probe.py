@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
-from .library import local_media_path_from_source
+from ..library import local_media_path_from_source
 
 
 def sanitize_duration_probe_cache(

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .models import DEFAULT_SUPPORTED_EXTENSIONS, LibraryTab
+from ..models import DEFAULT_SUPPORTED_EXTENSIONS, LibraryTab
 
 
 def _safe_positive_int(value: Any, default: int) -> int:
@@ -74,7 +74,11 @@ class AppConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
-        shared_fade_duration_seconds = _safe_positive_int(data.get("fade"), 5)
+        fade_payload = data.get("fade")
+        if isinstance(fade_payload, dict):
+            shared_fade_duration_seconds = _safe_positive_int(fade_payload.get("seconds"), 5)
+        else:
+            shared_fade_duration_seconds = _safe_positive_int(fade_payload, 5)
         parsed_fade_in_duration_seconds = _safe_positive_int(
             data.get("fade_in_seconds"),
             _safe_positive_int(data.get("fade_in_duration_seconds"), shared_fade_duration_seconds),
@@ -88,12 +92,48 @@ class AppConfig:
             parsed_fade_in_duration_seconds,
             parsed_fade_out_duration_seconds,
         )
-        filesystem_default_fade_in = _safe_bool(data.get("filesystem_default_fade_in"), False)
-        filesystem_default_fade_out = _safe_bool(data.get("filesystem_default_fade_out"), False)
-        streams_default_fade_in = _safe_bool(data.get("streams_default_fade_in"), False)
-        streams_default_fade_out = _safe_bool(data.get("streams_default_fade_out"), False)
-        media_library_raw = data.get("media_library_width_percent")
-        schedule_raw = data.get("schedule_width_percent")
+        fade_filesystem_payload = (
+            fade_payload.get("filesystem", {}) if isinstance(fade_payload, dict) else {}
+        )
+        fade_streams_payload = (
+            fade_payload.get("streams", {}) if isinstance(fade_payload, dict) else {}
+        )
+        filesystem_default_fade_in = _safe_bool(
+            fade_filesystem_payload.get("default_fade_in")
+            if isinstance(fade_filesystem_payload, dict)
+            else None,
+            _safe_bool(data.get("filesystem_default_fade_in"), False),
+        )
+        filesystem_default_fade_out = _safe_bool(
+            fade_filesystem_payload.get("default_fade_out")
+            if isinstance(fade_filesystem_payload, dict)
+            else None,
+            _safe_bool(data.get("filesystem_default_fade_out"), False),
+        )
+        streams_default_fade_in = _safe_bool(
+            fade_streams_payload.get("default_fade_in")
+            if isinstance(fade_streams_payload, dict)
+            else None,
+            _safe_bool(data.get("streams_default_fade_in"), False),
+        )
+        streams_default_fade_out = _safe_bool(
+            fade_streams_payload.get("default_fade_out")
+            if isinstance(fade_streams_payload, dict)
+            else None,
+            _safe_bool(data.get("streams_default_fade_out"), False),
+        )
+
+        view_payload = data.get("view")
+        media_library_raw = (
+            view_payload.get("media_library_width_percent")
+            if isinstance(view_payload, dict)
+            else data.get("media_library_width_percent")
+        )
+        schedule_raw = (
+            view_payload.get("schedule_width_percent")
+            if isinstance(view_payload, dict)
+            else data.get("schedule_width_percent")
+        )
         if media_library_raw is None and schedule_raw is not None:
             schedule_width_percent = _safe_panel_percent(schedule_raw, 65)
             media_library_width_percent = 100 - schedule_width_percent
@@ -103,6 +143,10 @@ class AppConfig:
 
         font_size: int | None = None
         font_payload = data.get("font")
+        if isinstance(view_payload, dict) and "font_size" in view_payload:
+            font_size = _safe_positive_int(view_payload.get("font_size"), 10)
+        elif isinstance(view_payload, dict) and "font" in view_payload:
+            font_size = _safe_positive_int(view_payload.get("font"), 10)
         if isinstance(font_payload, dict) and "size" in font_payload:
             font_size = _safe_positive_int(font_payload.get("size"), 10)
         elif "font_size" in data:
@@ -126,6 +170,19 @@ class AppConfig:
                 signal_payload.get("path", greenwich_time_signal_path) or ""
             ).strip()
 
+        custom_paths_payload = data.get("custom_paths")
+        tabs_raw = (
+            custom_paths_payload.get("tabs")
+            if isinstance(custom_paths_payload, dict)
+            else data.get("library_tabs", [])
+        )
+        extensions_payload = data.get("extensions")
+        supported_extensions_raw = (
+            extensions_payload.get("supported")
+            if isinstance(extensions_payload, dict)
+            else data.get("supported_extensions")
+        )
+
         return cls(
             fade_in_duration_seconds=normalized_shared_fade_duration_seconds,
             fade_out_duration_seconds=normalized_shared_fade_duration_seconds,
@@ -138,10 +195,10 @@ class AppConfig:
             font_size=font_size,
             library_tabs=[
                 LibraryTab.from_dict(item)
-                for item in data.get("library_tabs", [])
+                for item in tabs_raw
                 if isinstance(item, dict)
             ],
-            supported_extensions=_normalize_extensions(data.get("supported_extensions")),
+            supported_extensions=_normalize_extensions(supported_extensions_raw),
             greenwich_time_signal_enabled=greenwich_time_signal_enabled,
             greenwich_time_signal_path=greenwich_time_signal_path,
         )
@@ -159,22 +216,32 @@ class AppConfig:
         )
         normalized_schedule_width_percent = 100 - normalized_media_library_width_percent
         return {
-            "fade": normalized_shared_fade_duration_seconds,
-            "fade_in_seconds": normalized_shared_fade_duration_seconds,
-            "fade_out_seconds": normalized_shared_fade_duration_seconds,
-            "filesystem_default_fade_in": bool(self.filesystem_default_fade_in),
-            "filesystem_default_fade_out": bool(self.filesystem_default_fade_out),
-            "streams_default_fade_in": bool(self.streams_default_fade_in),
-            "streams_default_fade_out": bool(self.streams_default_fade_out),
-            "media_library_width_percent": normalized_media_library_width_percent,
-            "schedule_width_percent": normalized_schedule_width_percent,
-            "font": {
-                "size": normalized_font_size,
+            "view": {
+                "font_size": normalized_font_size,
+                "media_library_width_percent": normalized_media_library_width_percent,
+                "schedule_width_percent": normalized_schedule_width_percent,
             },
-            "library_tabs": [tab.to_dict() for tab in self.library_tabs],
-            "supported_extensions": _normalize_extensions(self.supported_extensions),
-            "greenwich_time_signal_enabled": bool(self.greenwich_time_signal_enabled),
-            "greenwich_time_signal_path": str(self.greenwich_time_signal_path).strip(),
+            "fade": {
+                "seconds": normalized_shared_fade_duration_seconds,
+                "filesystem": {
+                    "default_fade_in": bool(self.filesystem_default_fade_in),
+                    "default_fade_out": bool(self.filesystem_default_fade_out),
+                },
+                "streams": {
+                    "default_fade_in": bool(self.streams_default_fade_in),
+                    "default_fade_out": bool(self.streams_default_fade_out),
+                },
+            },
+            "greenwich_time_signal": {
+                "enabled": bool(self.greenwich_time_signal_enabled),
+                "path": str(self.greenwich_time_signal_path).strip(),
+            },
+            "custom_paths": {
+                "tabs": [tab.to_dict() for tab in self.library_tabs],
+            },
+            "extensions": {
+                "supported": _normalize_extensions(self.supported_extensions),
+            },
         }
 
 
@@ -202,12 +269,95 @@ def _parse_settings_yaml(raw_text: str) -> dict[str, Any]:
         index += 1
         if not line.strip():
             continue
+        if line.startswith("view:"):
+            view_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                index += 1
+                if ":" not in detail:
+                    continue
+                key, value = detail.split(":", 1)
+                normalized_key = key.strip()
+                raw_value = value.strip()
+                if normalized_key in {
+                    "font_size",
+                    "font",
+                    "media_library_width_percent",
+                    "schedule_width_percent",
+                }:
+                    try:
+                        view_data[normalized_key] = int(raw_value)
+                    except ValueError:
+                        continue
+            if view_data:
+                data["view"] = view_data
+            continue
         if line.startswith("fade:"):
             raw_value = line.split(":", 1)[1].strip()
-            try:
-                data["fade"] = int(raw_value)
-            except ValueError:
-                pass
+            if raw_value:
+                try:
+                    data["fade"] = int(raw_value)
+                except ValueError:
+                    pass
+                continue
+            fade_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                index += 1
+                if detail.startswith("filesystem:"):
+                    filesystem_data: dict[str, Any] = {}
+                    while index < len(lines):
+                        section_line = lines[index].rstrip()
+                        if not section_line.startswith("    "):
+                            break
+                        section_detail = section_line[4:]
+                        index += 1
+                        if ":" not in section_detail:
+                            continue
+                        key, value = section_detail.split(":", 1)
+                        normalized_key = key.strip()
+                        raw_section_value = value.strip()
+                        if normalized_key in {"default_fade_in", "default_fade_out"}:
+                            filesystem_data[normalized_key] = _safe_bool(raw_section_value, False)
+                    if filesystem_data:
+                        fade_data["filesystem"] = filesystem_data
+                    continue
+                if detail.startswith("streams:"):
+                    streams_data: dict[str, Any] = {}
+                    while index < len(lines):
+                        section_line = lines[index].rstrip()
+                        if not section_line.startswith("    "):
+                            break
+                        section_detail = section_line[4:]
+                        index += 1
+                        if ":" not in section_detail:
+                            continue
+                        key, value = section_detail.split(":", 1)
+                        normalized_key = key.strip()
+                        raw_section_value = value.strip()
+                        if normalized_key in {"default_fade_in", "default_fade_out"}:
+                            streams_data[normalized_key] = _safe_bool(raw_section_value, False)
+                    if streams_data:
+                        fade_data["streams"] = streams_data
+                    continue
+                if ":" not in detail:
+                    continue
+                key, value = detail.split(":", 1)
+                normalized_key = key.strip()
+                raw_detail_value = value.strip()
+                if normalized_key == "seconds":
+                    try:
+                        fade_data["seconds"] = int(raw_detail_value)
+                    except ValueError:
+                        continue
+            if fade_data:
+                data["fade"] = fade_data
             continue
         if line.startswith("fade_in_duration_seconds:"):
             raw_value = line.split(":", 1)[1].strip()
@@ -302,6 +452,65 @@ def _parse_settings_yaml(raw_text: str) -> dict[str, Any]:
             if signal_data:
                 data["greenwich_time_signal"] = signal_data
             continue
+        if line.startswith("custom_paths:"):
+            custom_paths_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                if not detail.startswith("tabs:"):
+                    index += 1
+                    continue
+                index += 1
+                tabs: list[dict[str, str]] = []
+                while index < len(lines):
+                    item_line = lines[index].rstrip()
+                    if not item_line.startswith("    - "):
+                        break
+                    first = item_line[6:]
+                    tab: dict[str, str] = {}
+                    if ":" in first:
+                        key, value = first.split(":", 1)
+                        tab[key.strip()] = _parse_scalar(value)
+                    index += 1
+                    while index < len(lines):
+                        sub_line = lines[index].rstrip()
+                        if not sub_line.startswith("      "):
+                            break
+                        sub_detail = sub_line[6:]
+                        if ":" in sub_detail:
+                            key, value = sub_detail.split(":", 1)
+                            tab[key.strip()] = _parse_scalar(value)
+                        index += 1
+                    tabs.append(tab)
+                custom_paths_data["tabs"] = tabs
+            if custom_paths_data:
+                data["custom_paths"] = custom_paths_data
+            continue
+        if line.startswith("extensions:"):
+            extensions_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                if not detail.startswith("supported:"):
+                    index += 1
+                    continue
+                index += 1
+                supported: list[str] = []
+                while index < len(lines):
+                    item_line = lines[index].rstrip()
+                    if not item_line.startswith("    - "):
+                        break
+                    token = item_line[6:]
+                    supported.append(_parse_scalar(token))
+                    index += 1
+                extensions_data["supported"] = supported
+            if extensions_data:
+                data["extensions"] = extensions_data
+            continue
         if line.startswith("font:"):
             font_data: dict[str, Any] = {}
             while index < len(lines):
@@ -368,47 +577,70 @@ def _string_as_yaml(value: str) -> str:
 def _dump_settings_yaml(config: AppConfig) -> str:
     payload = config.to_dict()
     lines: list[str] = []
-    lines.append(f"fade: {int(payload['fade'])}")
-    lines.append(f"fade_in_seconds: {int(payload['fade_in_seconds'])}")
-    lines.append(f"fade_out_seconds: {int(payload['fade_out_seconds'])}")
+    view_payload = payload.get("view", {})
+    fade_payload = payload.get("fade", {})
+    filesystem_fade_payload = (
+        fade_payload.get("filesystem", {}) if isinstance(fade_payload, dict) else {}
+    )
+    streams_fade_payload = (
+        fade_payload.get("streams", {}) if isinstance(fade_payload, dict) else {}
+    )
+    greenwich_payload = payload.get("greenwich_time_signal", {})
+    custom_paths_payload = payload.get("custom_paths", {})
+    extensions_payload = payload.get("extensions", {})
+
+    lines.append("view:")
+    lines.append(f"  font_size: {int(view_payload.get('font_size', 10))}")
     lines.append(
-        "filesystem_default_fade_in: "
-        f"{'true' if payload['filesystem_default_fade_in'] else 'false'}"
+        f"  media_library_width_percent: {int(view_payload.get('media_library_width_percent', 35))}"
     )
     lines.append(
-        "filesystem_default_fade_out: "
-        f"{'true' if payload['filesystem_default_fade_out'] else 'false'}"
+        f"  schedule_width_percent: {int(view_payload.get('schedule_width_percent', 65))}"
+    )
+
+    lines.append("fade:")
+    lines.append(f"  seconds: {int(fade_payload.get('seconds', 5))}")
+    lines.append("  filesystem:")
+    lines.append(
+        "    default_fade_in: "
+        f"{'true' if filesystem_fade_payload.get('default_fade_in', False) else 'false'}"
     )
     lines.append(
-        "streams_default_fade_in: "
-        f"{'true' if payload['streams_default_fade_in'] else 'false'}"
+        "    default_fade_out: "
+        f"{'true' if filesystem_fade_payload.get('default_fade_out', False) else 'false'}"
+    )
+    lines.append("  streams:")
+    lines.append(
+        "    default_fade_in: "
+        f"{'true' if streams_fade_payload.get('default_fade_in', False) else 'false'}"
     )
     lines.append(
-        "streams_default_fade_out: "
-        f"{'true' if payload['streams_default_fade_out'] else 'false'}"
+        "    default_fade_out: "
+        f"{'true' if streams_fade_payload.get('default_fade_out', False) else 'false'}"
     )
-    lines.append(f"media_library_width_percent: {int(payload['media_library_width_percent'])}")
-    lines.append(f"schedule_width_percent: {int(payload['schedule_width_percent'])}")
-    font_payload = payload.get("font", {})
-    lines.append("font:")
-    lines.append(f"  size: {int(font_payload.get('size', 10))}")
-    lines.append("library_tabs:")
-    for tab in payload["library_tabs"]:
+
+    lines.append("greenwich_time_signal:")
+    lines.append(
+        "  enabled: "
+        f"{'true' if greenwich_payload.get('enabled', False) else 'false'}"
+    )
+    lines.append(
+        "  path: "
+        f"{_string_as_yaml(str(greenwich_payload.get('path', '')))}"
+    )
+
+    lines.append("custom_paths:")
+    lines.append("  tabs:")
+    for tab in custom_paths_payload.get("tabs", []):
         title = _string_as_yaml(str(tab.get("title", "")))
         path = _string_as_yaml(str(tab.get("path", "")))
-        lines.append(f"  - title: {title}")
-        lines.append(f"    path: {path}")
-    lines.append("supported_extensions:")
-    for extension in payload["supported_extensions"]:
-        lines.append(f"  - {_string_as_yaml(str(extension))}")
-    lines.append(
-        "greenwich_time_signal_enabled: "
-        f"{'true' if payload['greenwich_time_signal_enabled'] else 'false'}"
-    )
-    lines.append(
-        "greenwich_time_signal_path: "
-        f"{_string_as_yaml(str(payload['greenwich_time_signal_path']))}"
-    )
+        lines.append(f"    - title: {title}")
+        lines.append(f"      path: {path}")
+
+    lines.append("extensions:")
+    lines.append("  supported:")
+    for extension in extensions_payload.get("supported", []):
+        lines.append(f"    - {_string_as_yaml(str(extension))}")
     lines.append("")
     return "\n".join(lines)
 
