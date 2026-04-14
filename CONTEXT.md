@@ -102,7 +102,12 @@ Core runtime:
 - `radioqt/ui/handlers.py`: UI action handlers (library/schedule/CRON/settings interactions)
 - `radioqt/ui/playback_handlers.py`: playback/scheduler trigger handlers
 - `radioqt/player/controller.py`: media player wrapper + fade engine
-- `radioqt/storage/sqlite_store.py`: SQLite persistence + migrations
+- `radioqt/storage/io.py`: storage load/save orchestration
+- `radioqt/storage/schema.py`: SQLite connection/schema bootstrap
+- `radioqt/storage/migrations.py`: schema/data migrations
+- `radioqt/storage/read.py`: DB -> `AppState`
+- `radioqt/storage/write.py`: `AppState` -> DB
+- `radioqt/storage/sqlite_store.py`: compatibility facade/re-exports
 - `radioqt/app_config/schema.py`: settings dataclass and dict conversion
 - `radioqt/app_config/parser.py`: YAML parsing (with legacy key support)
 - `radioqt/app_config/serializer.py`: canonical YAML dump
@@ -110,7 +115,9 @@ Core runtime:
 - `radioqt/app_config/core.py`: compatibility facade/re-exports
 - `radioqt/models/entities.py`: dataclasses/constants
 - `radioqt/cron/expression.py`: CRON parser and matching
-- `radioqt/duration_probe/probe.py`: duration probe helpers and cache utilities
+- `radioqt/duration_probe/cache.py`: probe cache helpers and cache-key generation
+- `radioqt/duration_probe/ffprobe.py`: ffprobe-backed duration probing
+- `radioqt/duration_probe/probe.py`: compatibility facade/re-exports
 
 Packages:
 - `radioqt/scheduling/*`: scheduling logic, runtime, mutations, presentation, CRON runtime
@@ -135,7 +142,7 @@ Compatibility re-exports:
 
 ## Persistence
 
-### SQLite (`radioqt/storage/sqlite_store.py`)
+### SQLite (`radioqt/storage/io.py`, `schema.py`, `migrations.py`, `read.py`, `write.py`)
 
 Tables:
 - `media_items`
