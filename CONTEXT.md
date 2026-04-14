@@ -101,6 +101,8 @@ Core runtime:
 - `radioqt/ui/main_window.py`: main window + orchestration
 - `radioqt/ui/handlers.py`: UI action handlers (library/schedule/CRON/settings interactions)
 - `radioqt/ui/playback_handlers.py`: playback/scheduler trigger handlers
+- `radioqt/ui/library_selection.py`: library/schedule/CRON table refresh and selection helpers mixin
+- `radioqt/ui/layout_builders.py`: menu/layout/panel construction and filesystem-tab extension helpers mixin
 - `radioqt/ui/state_persistence.py`: state/settings persistence and startup load mixin
 - `radioqt/ui/settings_logging.py`: settings dialog and log actions mixin
 - `radioqt/ui/fullscreen_visuals.py`: fullscreen behavior and visual icon helpers mixin
