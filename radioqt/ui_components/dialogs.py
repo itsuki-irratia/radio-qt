@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
-    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -451,10 +450,13 @@ class ConfigurationDialog(QDialog):
             self._append_library_tab_row(tab.title, tab.path)
 
         library_tabs_buttons = QHBoxLayout()
-        self._add_library_tab_button = QPushButton("Add Tab", custom_paths_page)
-        self._remove_library_tab_button = QPushButton(custom_paths_page)
+        square_button_size = 30
+        self._add_library_tab_button = QPushButton("+", custom_paths_page)
+        self._add_library_tab_button.setToolTip("Add Tab")
+        self._add_library_tab_button.setFixedSize(square_button_size, square_button_size)
+        self._remove_library_tab_button = QPushButton("-", custom_paths_page)
         self._remove_library_tab_button.setToolTip("Remove selected tab")
-        self._remove_library_tab_button.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self._remove_library_tab_button.setFixedSize(square_button_size, square_button_size)
         self._add_library_tab_button.clicked.connect(self._add_library_tab_row)
         self._remove_library_tab_button.clicked.connect(self._remove_selected_library_tab_row)
         library_tabs_buttons.addWidget(self._add_library_tab_button)
@@ -479,10 +481,12 @@ class ConfigurationDialog(QDialog):
             self._append_extension_row(extension)
 
         extensions_buttons = QHBoxLayout()
-        self._add_extension_button = QPushButton("Add Extension", extensions_page)
-        self._remove_extension_button = QPushButton(extensions_page)
+        self._add_extension_button = QPushButton("+", extensions_page)
+        self._add_extension_button.setToolTip("Add Extension")
+        self._add_extension_button.setFixedSize(square_button_size, square_button_size)
+        self._remove_extension_button = QPushButton("-", extensions_page)
         self._remove_extension_button.setToolTip("Remove selected extension")
-        self._remove_extension_button.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self._remove_extension_button.setFixedSize(square_button_size, square_button_size)
         self._add_extension_button.clicked.connect(self._add_extension_row)
         self._remove_extension_button.clicked.connect(self._remove_selected_extension_row)
         extensions_buttons.addWidget(self._add_extension_button)
