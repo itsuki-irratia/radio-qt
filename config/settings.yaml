@@ -1,6 +1,12 @@
 fade: 5
+fade_in_seconds: 5
+fade_out_seconds: 5
+filesystem_default_fade_in: false
+filesystem_default_fade_out: false
+streams_default_fade_in: false
+streams_default_fade_out: false
 font:
-  size: 16
+  size: 12
 library_tabs:
 supported_extensions:
   - "mp3"
@@ -22,5 +28,5 @@ supported_extensions:
   - "m4a"
   - "avi"
   - "flv"
-greenwich_time_signal_enabled: true
+greenwich_time_signal_enabled: false
 greenwich_time_signal_path: "/home/zital/Gts_(bbc)_pips.ogg"

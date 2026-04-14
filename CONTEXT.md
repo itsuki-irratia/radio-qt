@@ -208,7 +208,7 @@ Main areas:
   - Play, Stop, Mute, manual Fade In, manual Fade Out, Volume slider
 - Media Library panel:
   - `Filesystem` tab
-  - `Streamings` tab
+  - `Streams` tab
   - optional custom filesystem tabs from settings
 - Schedule panel (`QTabWidget`):
   - `Date Time` tab (schedule table)

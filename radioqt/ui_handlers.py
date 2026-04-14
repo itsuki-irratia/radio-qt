@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QDialog, QInputDialog, QMenu, QMessageBox
 
 from .library import (
     add_stream_media_item,
+    is_stream_source,
     remove_media_from_library,
     selected_url_media_id,
     update_stream_greenwich_time_signal,
@@ -62,6 +63,12 @@ class MainWindowHandlersMixin:
             return
         panel_kind, _, _ = self._library_tab_sources.get(tab_widget, ("filesystem", None, None))
         self._last_source_panel = "urls" if panel_kind == "urls" else "filesystem"
+
+    def _default_fade_flags_for_media(self, media_id: str) -> tuple[bool, bool]:
+        media = self._media_items.get(media_id)
+        if media is not None and is_stream_source(media.source):
+            return bool(self._streams_default_fade_in), bool(self._streams_default_fade_out)
+        return bool(self._filesystem_default_fade_in), bool(self._filesystem_default_fade_out)
 
     @Slot()
     def _add_media_url(self) -> None:
@@ -230,6 +237,7 @@ class MainWindowHandlersMixin:
 
         self._refresh_cron_schedule_entries(self._runtime_cron_dates())
         self._recalculate_schedule_durations()
+        default_fade_in, default_fade_out = self._default_fade_flags_for_media(media_id)
         dialog = ScheduleDialog(self, initial_start_at=self._default_next_schedule_start())
         if dialog.exec() != QDialog.Accepted:
             return
@@ -238,6 +246,8 @@ class MainWindowHandlersMixin:
             media_id=media_id,
             start_at=dialog.selected_datetime(),
             reference_time=datetime.now().astimezone(),
+            fade_in=default_fade_in,
+            fade_out=default_fade_out,
         )
         self._schedule_entries.append(entry)
 
@@ -358,7 +368,12 @@ class MainWindowHandlersMixin:
             QMessageBox.information(self, "No Selection", "Select a media item from library first.")
             return
 
-        dialog = CronDialog(self)
+        default_fade_in, default_fade_out = self._default_fade_flags_for_media(media_id)
+        dialog = CronDialog(
+            self,
+            initial_fade_in=default_fade_in,
+            initial_fade_out=default_fade_out,
+        )
         if dialog.exec() != QDialog.Accepted:
             return
 

@@ -143,6 +143,10 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._logs_visible = True
         self._fade_in_duration_seconds = 5
         self._fade_out_duration_seconds = 5
+        self._filesystem_default_fade_in = False
+        self._filesystem_default_fade_out = False
+        self._streams_default_fade_in = False
+        self._streams_default_fade_out = False
         self._greenwich_time_signal_enabled = False
         self._greenwich_time_signal_path = ""
         self._fullscreen_active = False
@@ -430,13 +434,13 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             self._filesystem_model,
         )
 
-        # --- Streamings tab ---
+        # --- Streams tab ---
         self._streamings_tab_widget = QWidget()
         streamings_layout = QVBoxLayout(self._streamings_tab_widget)
         streamings_layout.setContentsMargins(8, 8, 8, 8)
 
         streamings_header_row = QHBoxLayout()
-        streamings_header_row.addWidget(QLabel("Streamings", self._streamings_tab_widget))
+        streamings_header_row.addWidget(QLabel("Streams", self._streamings_tab_widget))
         streamings_header_row.addStretch()
         self._add_stream_button = QPushButton("+", self._streamings_tab_widget)
         self._add_stream_button.setToolTip("Add Streaming")
@@ -457,7 +461,7 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._urls_table.customContextMenuRequested.connect(self._on_urls_context_menu)
         streamings_layout.addWidget(self._urls_table)
 
-        self._library_tabs.addTab(self._streamings_tab_widget, "Streamings")
+        self._library_tabs.addTab(self._streamings_tab_widget, "Streams")
         self._library_tab_sources[self._streamings_tab_widget] = ("urls", None, None)
 
         self._add_schedule_button = QPushButton("Schedule Selected Media")
@@ -793,9 +797,16 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._supported_extensions = self._normalize_supported_extensions(app_config.supported_extensions)
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
         self._logs_visible = state.logs_visible
-        shared_fade_seconds = max(1, app_config.fade_duration_seconds)
-        self._fade_in_duration_seconds = shared_fade_seconds
-        self._fade_out_duration_seconds = shared_fade_seconds
+        shared_fade_duration_seconds = max(
+            1,
+            max(app_config.fade_in_duration_seconds, app_config.fade_out_duration_seconds),
+        )
+        self._fade_in_duration_seconds = shared_fade_duration_seconds
+        self._fade_out_duration_seconds = shared_fade_duration_seconds
+        self._filesystem_default_fade_in = bool(app_config.filesystem_default_fade_in)
+        self._filesystem_default_fade_out = bool(app_config.filesystem_default_fade_out)
+        self._streams_default_fade_in = bool(app_config.streams_default_fade_in)
+        self._streams_default_fade_out = bool(app_config.streams_default_fade_out)
         self._greenwich_time_signal_enabled = bool(app_config.greenwich_time_signal_enabled)
         self._greenwich_time_signal_path = str(app_config.greenwich_time_signal_path).strip()
         if app_config.font_size is not None:
@@ -879,8 +890,17 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         save_state(self._state_path, state)
 
     def _save_settings(self) -> None:
+        shared_fade_duration_seconds = max(
+            1,
+            max(self._fade_in_duration_seconds, self._fade_out_duration_seconds),
+        )
         app_config = AppConfig(
-            fade_duration_seconds=max(self._fade_in_duration_seconds, self._fade_out_duration_seconds),
+            fade_in_duration_seconds=shared_fade_duration_seconds,
+            fade_out_duration_seconds=shared_fade_duration_seconds,
+            filesystem_default_fade_in=self._filesystem_default_fade_in,
+            filesystem_default_fade_out=self._filesystem_default_fade_out,
+            streams_default_fade_in=self._streams_default_fade_in,
+            streams_default_fade_out=self._streams_default_fade_out,
             font_size=self._font_size_points,
             library_tabs=list(self._library_tab_configs),
             supported_extensions=list(self._supported_extensions),
@@ -899,7 +919,12 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
 
         # Seed initial YAML config from legacy DB settings if available.
         seeded_config = AppConfig(
-            fade_duration_seconds=max(1, state.fade_in_duration_seconds, state.fade_out_duration_seconds),
+            fade_in_duration_seconds=max(1, state.fade_in_duration_seconds),
+            fade_out_duration_seconds=max(1, state.fade_out_duration_seconds),
+            filesystem_default_fade_in=False,
+            filesystem_default_fade_out=False,
+            streams_default_fade_in=False,
+            streams_default_fade_out=False,
             font_size=self._font_size_points,
             library_tabs=list(state.library_tabs),
             supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
@@ -1692,6 +1717,10 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             self,
             fade_in_duration_seconds=self._fade_in_duration_seconds,
             fade_out_duration_seconds=self._fade_out_duration_seconds,
+            filesystem_default_fade_in=self._filesystem_default_fade_in,
+            filesystem_default_fade_out=self._filesystem_default_fade_out,
+            streams_default_fade_in=self._streams_default_fade_in,
+            streams_default_fade_out=self._streams_default_fade_out,
             font_size_points=self._font_size_points,
             greenwich_time_signal_enabled=self._greenwich_time_signal_enabled,
             greenwich_time_signal_path=self._greenwich_time_signal_path,
@@ -1701,15 +1730,23 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         if dialog.exec() != QDialog.Accepted:
             return
 
-        next_shared_fade_duration = max(1, dialog.fade_duration_seconds())
+        next_shared_fade_duration_seconds = max(1, dialog.fade_duration_seconds())
+        next_filesystem_default_fade_in = bool(dialog.filesystem_default_fade_in())
+        next_filesystem_default_fade_out = bool(dialog.filesystem_default_fade_out())
+        next_streams_default_fade_in = bool(dialog.streams_default_fade_in())
+        next_streams_default_fade_out = bool(dialog.streams_default_fade_out())
         next_font_size_points = max(1, dialog.font_size_points())
         next_greenwich_time_signal_enabled = bool(dialog.greenwich_time_signal_enabled())
         next_greenwich_time_signal_path = dialog.greenwich_time_signal_path()
         next_library_tabs = dialog.library_tabs()
         next_supported_extensions = self._normalize_supported_extensions(dialog.supported_extensions())
         fade_changed = not (
-            next_shared_fade_duration == self._fade_in_duration_seconds
-            and next_shared_fade_duration == self._fade_out_duration_seconds
+            next_shared_fade_duration_seconds == self._fade_in_duration_seconds
+            and next_shared_fade_duration_seconds == self._fade_out_duration_seconds
+            and next_filesystem_default_fade_in == self._filesystem_default_fade_in
+            and next_filesystem_default_fade_out == self._filesystem_default_fade_out
+            and next_streams_default_fade_in == self._streams_default_fade_in
+            and next_streams_default_fade_out == self._streams_default_fade_out
         )
         font_size_changed = next_font_size_points != self._font_size_points
         greenwich_time_signal_changed = (
@@ -1729,8 +1766,12 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
             return
 
         if fade_changed:
-            self._fade_in_duration_seconds = next_shared_fade_duration
-            self._fade_out_duration_seconds = next_shared_fade_duration
+            self._fade_in_duration_seconds = next_shared_fade_duration_seconds
+            self._fade_out_duration_seconds = next_shared_fade_duration_seconds
+            self._filesystem_default_fade_in = next_filesystem_default_fade_in
+            self._filesystem_default_fade_out = next_filesystem_default_fade_out
+            self._streams_default_fade_in = next_streams_default_fade_in
+            self._streams_default_fade_out = next_streams_default_fade_out
         if font_size_changed:
             self._apply_global_font_size(next_font_size_points)
         if greenwich_time_signal_changed:
@@ -1746,6 +1787,10 @@ class MainWindow(MainWindowHandlersMixin, MainWindowPlaybackHandlersMixin, QMain
         self._append_log(
             f"Updated settings: fade in={self._fade_in_duration_seconds}s, "
             f"fade out={self._fade_out_duration_seconds}s, "
+            f"filesystem_fade_in={'True' if self._filesystem_default_fade_in else 'False'}, "
+            f"filesystem_fade_out={'True' if self._filesystem_default_fade_out else 'False'}, "
+            f"streams_fade_in={'True' if self._streams_default_fade_in else 'False'}, "
+            f"streams_fade_out={'True' if self._streams_default_fade_out else 'False'}, "
             f"greenwich_time_signal={'True' if self._greenwich_time_signal_enabled else 'False'}, "
             f"font={self._font_size_points}pt, "
             f"custom library tabs={len(self._library_tab_configs)}, "

@@ -33,11 +33,15 @@ def create_schedule_entry(
     media_id: str,
     start_at: datetime,
     reference_time: datetime,
+    fade_in: bool = False,
+    fade_out: bool = False,
 ) -> ScheduleEntry:
     entry = ScheduleEntry.create(
         media_id=media_id,
         start_at=start_at,
         hard_sync=True,
+        fade_in=fade_in,
+        fade_out=fade_out,
     )
     if entry.one_shot and normalized_start(entry.start_at, reference_time) <= reference_time:
         entry.status = SCHEDULE_STATUS_MISSED

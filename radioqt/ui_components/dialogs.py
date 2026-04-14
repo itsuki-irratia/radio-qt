@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QListWidget,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QStyle,
@@ -260,6 +261,10 @@ class ConfigurationDialog(QDialog):
         *,
         fade_in_duration_seconds: int,
         fade_out_duration_seconds: int,
+        filesystem_default_fade_in: bool,
+        filesystem_default_fade_out: bool,
+        streams_default_fade_in: bool,
+        streams_default_fade_out: bool,
         font_size_points: int,
         greenwich_time_signal_enabled: bool,
         greenwich_time_signal_path: str,
@@ -270,13 +275,33 @@ class ConfigurationDialog(QDialog):
         self.setWindowTitle("Settings")
         self.resize(760, 520)
 
-        shared_initial_duration = max(
+        shared_fade_duration_seconds = max(
             1,
-            int(round((max(1, fade_in_duration_seconds) + max(1, fade_out_duration_seconds)) / 2)),
+            max(int(fade_in_duration_seconds), int(fade_out_duration_seconds)),
         )
         self._fade_duration_spinbox = QSpinBox(self)
         self._fade_duration_spinbox.setRange(1, 120)
-        self._fade_duration_spinbox.setValue(shared_initial_duration)
+        self._fade_duration_spinbox.setValue(shared_fade_duration_seconds)
+        self._filesystem_default_fade_in_selector = QComboBox(self)
+        self._filesystem_default_fade_in_selector.addItems(["True", "False"])
+        self._filesystem_default_fade_in_selector.setCurrentText(
+            "True" if filesystem_default_fade_in else "False"
+        )
+        self._filesystem_default_fade_out_selector = QComboBox(self)
+        self._filesystem_default_fade_out_selector.addItems(["True", "False"])
+        self._filesystem_default_fade_out_selector.setCurrentText(
+            "True" if filesystem_default_fade_out else "False"
+        )
+        self._streams_default_fade_in_selector = QComboBox(self)
+        self._streams_default_fade_in_selector.addItems(["True", "False"])
+        self._streams_default_fade_in_selector.setCurrentText(
+            "True" if streams_default_fade_in else "False"
+        )
+        self._streams_default_fade_out_selector = QComboBox(self)
+        self._streams_default_fade_out_selector.addItems(["True", "False"])
+        self._streams_default_fade_out_selector.setCurrentText(
+            "True" if streams_default_fade_out else "False"
+        )
         self._font_size_spinbox = QSpinBox(self)
         self._font_size_spinbox.setRange(6, 72)
         self._font_size_spinbox.setValue(max(6, int(font_size_points)))
@@ -311,18 +336,22 @@ class ConfigurationDialog(QDialog):
 
         self._settings_sections_list = QListWidget(self)
         self._settings_sections_list.addItem("General Settings")
+        self._settings_sections_list.addItem("Fade")
         self._settings_sections_list.addItem("Greenwich Time Signal")
         self._settings_sections_list.addItem("Custom Paths")
         self._settings_sections_list.addItem("Extensions")
         self._settings_sections_list.setFixedWidth(190)
+        self._settings_sections_list.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
         self._settings_pages = QStackedWidget(self)
+        self._settings_pages.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         general_page = QWidget(self)
         general_layout = QVBoxLayout(general_page)
+        general_layout.setContentsMargins(0, 0, 0, 0)
         self._properties_table = QTableWidget(self)
         self._properties_table.setColumnCount(2)
-        self._properties_table.setRowCount(2)
+        self._properties_table.setRowCount(1)
         self._properties_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._properties_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._properties_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -330,22 +359,58 @@ class ConfigurationDialog(QDialog):
         self._properties_table.verticalHeader().setVisible(False)
         self._properties_table.horizontalHeader().setVisible(False)
         self._properties_table.horizontalHeader().setStretchLastSection(True)
+        self._properties_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        fade_duration_item = QTableWidgetItem("Fade In / Fade Out in seconds")
-        fade_duration_item.setFlags(fade_duration_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         font_size_item = QTableWidgetItem("Font size (pt)")
         font_size_item.setFlags(font_size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
-        self._properties_table.setItem(0, 0, fade_duration_item)
-        self._properties_table.setCellWidget(0, 1, self._fade_duration_spinbox)
-        self._properties_table.setItem(1, 0, font_size_item)
-        self._properties_table.setCellWidget(1, 1, self._font_size_spinbox)
+        self._properties_table.setItem(0, 0, font_size_item)
+        self._properties_table.setCellWidget(0, 1, self._font_size_spinbox)
         self._properties_table.resizeColumnsToContents()
-        general_layout.addWidget(self._properties_table)
-        general_layout.addStretch()
+        general_layout.addWidget(self._properties_table, 1)
+
+        fade_page = QWidget(self)
+        fade_layout = QVBoxLayout(fade_page)
+        fade_layout.setContentsMargins(0, 0, 0, 0)
+        self._fade_table = QTableWidget(self)
+        self._fade_table.setColumnCount(2)
+        self._fade_table.setRowCount(5)
+        self._fade_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._fade_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._fade_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._fade_table.setAlternatingRowColors(True)
+        self._fade_table.verticalHeader().setVisible(False)
+        self._fade_table.horizontalHeader().setVisible(False)
+        self._fade_table.horizontalHeader().setStretchLastSection(True)
+        self._fade_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        fade_duration_item = QTableWidgetItem("In / Out Seconds")
+        fade_duration_item.setFlags(fade_duration_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        filesystem_fade_in_item = QTableWidgetItem("Filesystem -> Default Fade In")
+        filesystem_fade_in_item.setFlags(filesystem_fade_in_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        filesystem_fade_out_item = QTableWidgetItem("Filesystem -> Default Fade Out")
+        filesystem_fade_out_item.setFlags(filesystem_fade_out_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        streams_fade_in_item = QTableWidgetItem("Streams -> Default Fade In")
+        streams_fade_in_item.setFlags(streams_fade_in_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        streams_fade_out_item = QTableWidgetItem("Streams -> Default Fade Out")
+        streams_fade_out_item.setFlags(streams_fade_out_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+        self._fade_table.setItem(0, 0, fade_duration_item)
+        self._fade_table.setCellWidget(0, 1, self._fade_duration_spinbox)
+        self._fade_table.setItem(1, 0, filesystem_fade_in_item)
+        self._fade_table.setCellWidget(1, 1, self._filesystem_default_fade_in_selector)
+        self._fade_table.setItem(2, 0, filesystem_fade_out_item)
+        self._fade_table.setCellWidget(2, 1, self._filesystem_default_fade_out_selector)
+        self._fade_table.setItem(3, 0, streams_fade_in_item)
+        self._fade_table.setCellWidget(3, 1, self._streams_default_fade_in_selector)
+        self._fade_table.setItem(4, 0, streams_fade_out_item)
+        self._fade_table.setCellWidget(4, 1, self._streams_default_fade_out_selector)
+        self._fade_table.resizeColumnsToContents()
+        fade_layout.addWidget(self._fade_table, 1)
 
         greenwich_page = QWidget(self)
         greenwich_layout = QVBoxLayout(greenwich_page)
+        greenwich_layout.setContentsMargins(0, 0, 0, 0)
         self._greenwich_table = QTableWidget(self)
         self._greenwich_table.setColumnCount(2)
         self._greenwich_table.setRowCount(2)
@@ -356,6 +421,7 @@ class ConfigurationDialog(QDialog):
         self._greenwich_table.verticalHeader().setVisible(False)
         self._greenwich_table.horizontalHeader().setVisible(False)
         self._greenwich_table.horizontalHeader().setStretchLastSection(True)
+        self._greenwich_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         signal_enabled_item = QTableWidgetItem("Enabled")
         signal_enabled_item.setFlags(signal_enabled_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -367,11 +433,11 @@ class ConfigurationDialog(QDialog):
         self._greenwich_table.setItem(1, 0, signal_path_item)
         self._greenwich_table.setCellWidget(1, 1, self._greenwich_time_signal_path_widget)
         self._greenwich_table.resizeColumnsToContents()
-        greenwich_layout.addWidget(self._greenwich_table)
-        greenwich_layout.addStretch()
+        greenwich_layout.addWidget(self._greenwich_table, 1)
 
         custom_paths_page = QWidget(self)
         custom_paths_layout = QVBoxLayout(custom_paths_page)
+        custom_paths_layout.setContentsMargins(0, 0, 0, 0)
         self._library_tabs_table = QTableWidget(custom_paths_page)
         self._library_tabs_table.setColumnCount(2)
         self._library_tabs_table.setHorizontalHeaderLabels(["Title", "Path"])
@@ -402,6 +468,7 @@ class ConfigurationDialog(QDialog):
 
         extensions_page = QWidget(self)
         extensions_layout = QVBoxLayout(extensions_page)
+        extensions_layout.setContentsMargins(0, 0, 0, 0)
         self._supported_extensions_table = QTableWidget(extensions_page)
         self._supported_extensions_table.setColumnCount(1)
         self._supported_extensions_table.setHorizontalHeaderLabels(["Extension"])
@@ -428,6 +495,7 @@ class ConfigurationDialog(QDialog):
         extensions_layout.addLayout(extensions_buttons)
 
         self._settings_pages.addWidget(general_page)
+        self._settings_pages.addWidget(fade_page)
         self._settings_pages.addWidget(greenwich_page)
         self._settings_pages.addWidget(custom_paths_page)
         self._settings_pages.addWidget(extensions_page)
@@ -435,6 +503,8 @@ class ConfigurationDialog(QDialog):
         self._settings_sections_list.setCurrentRow(0)
 
         settings_layout = QHBoxLayout()
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setSpacing(8)
         settings_layout.addWidget(self._settings_sections_list)
         settings_layout.addWidget(self._settings_pages, 1)
 
@@ -443,6 +513,24 @@ class ConfigurationDialog(QDialog):
 
     def fade_duration_seconds(self) -> int:
         return self._fade_duration_spinbox.value()
+
+    def fade_in_duration_seconds(self) -> int:
+        return self._fade_duration_spinbox.value()
+
+    def fade_out_duration_seconds(self) -> int:
+        return self._fade_duration_spinbox.value()
+
+    def filesystem_default_fade_in(self) -> bool:
+        return self._filesystem_default_fade_in_selector.currentText() == "True"
+
+    def filesystem_default_fade_out(self) -> bool:
+        return self._filesystem_default_fade_out_selector.currentText() == "True"
+
+    def streams_default_fade_in(self) -> bool:
+        return self._streams_default_fade_in_selector.currentText() == "True"
+
+    def streams_default_fade_out(self) -> bool:
+        return self._streams_default_fade_out_selector.currentText() == "True"
 
     def font_size_points(self) -> int:
         return self._font_size_spinbox.value()

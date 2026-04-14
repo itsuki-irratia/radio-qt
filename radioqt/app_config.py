@@ -50,7 +50,12 @@ def _normalize_extensions(raw_values: Any) -> list[str]:
 
 @dataclass(slots=True)
 class AppConfig:
-    fade_duration_seconds: int = 5
+    fade_in_duration_seconds: int = 5
+    fade_out_duration_seconds: int = 5
+    filesystem_default_fade_in: bool = False
+    filesystem_default_fade_out: bool = False
+    streams_default_fade_in: bool = False
+    streams_default_fade_out: bool = False
     font_size: int | None = None
     library_tabs: list[LibraryTab] = field(default_factory=list)
     supported_extensions: list[str] = field(default_factory=lambda: list(DEFAULT_SUPPORTED_EXTENSIONS))
@@ -59,11 +64,24 @@ class AppConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
-        fade_duration_seconds = _safe_positive_int(data.get("fade"), 5)
-        if "fade" not in data:
-            fade_in_legacy = _safe_positive_int(data.get("fade_in_duration_seconds"), 5)
-            fade_out_legacy = _safe_positive_int(data.get("fade_out_duration_seconds"), 5)
-            fade_duration_seconds = max(fade_in_legacy, fade_out_legacy)
+        shared_fade_duration_seconds = _safe_positive_int(data.get("fade"), 5)
+        parsed_fade_in_duration_seconds = _safe_positive_int(
+            data.get("fade_in_seconds"),
+            _safe_positive_int(data.get("fade_in_duration_seconds"), shared_fade_duration_seconds),
+        )
+        parsed_fade_out_duration_seconds = _safe_positive_int(
+            data.get("fade_out_seconds"),
+            _safe_positive_int(data.get("fade_out_duration_seconds"), shared_fade_duration_seconds),
+        )
+        normalized_shared_fade_duration_seconds = max(
+            shared_fade_duration_seconds,
+            parsed_fade_in_duration_seconds,
+            parsed_fade_out_duration_seconds,
+        )
+        filesystem_default_fade_in = _safe_bool(data.get("filesystem_default_fade_in"), False)
+        filesystem_default_fade_out = _safe_bool(data.get("filesystem_default_fade_out"), False)
+        streams_default_fade_in = _safe_bool(data.get("streams_default_fade_in"), False)
+        streams_default_fade_out = _safe_bool(data.get("streams_default_fade_out"), False)
 
         font_size: int | None = None
         font_payload = data.get("font")
@@ -91,7 +109,12 @@ class AppConfig:
             ).strip()
 
         return cls(
-            fade_duration_seconds=fade_duration_seconds,
+            fade_in_duration_seconds=normalized_shared_fade_duration_seconds,
+            fade_out_duration_seconds=normalized_shared_fade_duration_seconds,
+            filesystem_default_fade_in=filesystem_default_fade_in,
+            filesystem_default_fade_out=filesystem_default_fade_out,
+            streams_default_fade_in=streams_default_fade_in,
+            streams_default_fade_out=streams_default_fade_out,
             font_size=font_size,
             library_tabs=[
                 LibraryTab.from_dict(item)
@@ -105,8 +128,19 @@ class AppConfig:
 
     def to_dict(self) -> dict[str, Any]:
         normalized_font_size = max(1, self.font_size if self.font_size is not None else 10)
+        normalized_shared_fade_duration_seconds = max(
+            1,
+            int(self.fade_in_duration_seconds),
+            int(self.fade_out_duration_seconds),
+        )
         return {
-            "fade": max(1, self.fade_duration_seconds),
+            "fade": normalized_shared_fade_duration_seconds,
+            "fade_in_seconds": normalized_shared_fade_duration_seconds,
+            "fade_out_seconds": normalized_shared_fade_duration_seconds,
+            "filesystem_default_fade_in": bool(self.filesystem_default_fade_in),
+            "filesystem_default_fade_out": bool(self.filesystem_default_fade_out),
+            "streams_default_fade_in": bool(self.streams_default_fade_in),
+            "streams_default_fade_out": bool(self.streams_default_fade_out),
             "font": {
                 "size": normalized_font_size,
             },
@@ -155,12 +189,42 @@ def _parse_settings_yaml(raw_text: str) -> dict[str, Any]:
             except ValueError:
                 pass
             continue
+        if line.startswith("fade_in_seconds:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["fade_in_seconds"] = int(raw_value)
+            except ValueError:
+                pass
+            continue
         if line.startswith("fade_out_duration_seconds:"):
             raw_value = line.split(":", 1)[1].strip()
             try:
                 data["fade_out_duration_seconds"] = int(raw_value)
             except ValueError:
                 pass
+            continue
+        if line.startswith("fade_out_seconds:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["fade_out_seconds"] = int(raw_value)
+            except ValueError:
+                pass
+            continue
+        if line.startswith("filesystem_default_fade_in:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["filesystem_default_fade_in"] = _safe_bool(raw_value, False)
+            continue
+        if line.startswith("filesystem_default_fade_out:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["filesystem_default_fade_out"] = _safe_bool(raw_value, False)
+            continue
+        if line.startswith("streams_default_fade_in:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["streams_default_fade_in"] = _safe_bool(raw_value, False)
+            continue
+        if line.startswith("streams_default_fade_out:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["streams_default_fade_out"] = _safe_bool(raw_value, False)
             continue
         if line.startswith("font_size:"):
             raw_value = line.split(":", 1)[1].strip()
@@ -264,6 +328,24 @@ def _dump_settings_yaml(config: AppConfig) -> str:
     payload = config.to_dict()
     lines: list[str] = []
     lines.append(f"fade: {int(payload['fade'])}")
+    lines.append(f"fade_in_seconds: {int(payload['fade_in_seconds'])}")
+    lines.append(f"fade_out_seconds: {int(payload['fade_out_seconds'])}")
+    lines.append(
+        "filesystem_default_fade_in: "
+        f"{'true' if payload['filesystem_default_fade_in'] else 'false'}"
+    )
+    lines.append(
+        "filesystem_default_fade_out: "
+        f"{'true' if payload['filesystem_default_fade_out'] else 'false'}"
+    )
+    lines.append(
+        "streams_default_fade_in: "
+        f"{'true' if payload['streams_default_fade_in'] else 'false'}"
+    )
+    lines.append(
+        "streams_default_fade_out: "
+        f"{'true' if payload['streams_default_fade_out'] else 'false'}"
+    )
     font_payload = payload.get("font", {})
     lines.append("font:")
     lines.append(f"  size: {int(font_payload.get('size', 10))}")
