@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+
+from PySide6.QtCore import Slot
+from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
+
+from ..ui_components import ConfigurationDialog, CronHelpDialog
+
+
+class MainWindowSettingsLoggingMixin:
+    @Slot(str)
+    def _append_log(self, message: str) -> None:
+        timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
+        self._log_view.appendPlainText(f"[{timestamp}] {message}")
+
+    @Slot(bool)
+    def _set_logs_visible(self, visible: bool) -> None:
+        self._logs_group.setVisible(bool(visible))
+
+    @Slot(bool)
+    def _on_logs_visibility_toggled(self, checked: bool) -> None:
+        self._logs_visible = bool(checked)
+        self._set_logs_visible(self._logs_visible)
+        self._save_state()
+
+    @Slot()
+    def _export_logs(self) -> None:
+        default_name = f"radioqt-log-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S')}.log"
+        target_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Logs",
+            str(Path.cwd() / default_name),
+            "Log Files (*.log);;Text Files (*.txt);;All Files (*)",
+        )
+        if not target_path:
+            return
+
+        try:
+            Path(target_path).write_text(self._log_view.toPlainText(), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Export Failed", f"Could not export logs:\n{exc}")
+            return
+
+        self._append_log(f"Exported logs to {target_path}")
+
+    @Slot()
+    def _show_cron_help(self) -> None:
+        dialog = CronHelpDialog(self)
+        dialog.exec()
+
+    @Slot()
+    def _open_configuration_dialog(self) -> None:
+        dialog = ConfigurationDialog(
+            self,
+            fade_in_duration_seconds=self._fade_in_duration_seconds,
+            fade_out_duration_seconds=self._fade_out_duration_seconds,
+            filesystem_default_fade_in=self._filesystem_default_fade_in,
+            filesystem_default_fade_out=self._filesystem_default_fade_out,
+            streams_default_fade_in=self._streams_default_fade_in,
+            streams_default_fade_out=self._streams_default_fade_out,
+            media_library_width_percent=self._media_library_width_percent,
+            schedule_width_percent=self._schedule_width_percent,
+            font_size_points=self._font_size_points,
+            greenwich_time_signal_enabled=self._greenwich_time_signal_enabled,
+            greenwich_time_signal_path=self._greenwich_time_signal_path,
+            library_tabs=self._library_tab_configs,
+            supported_extensions=self._supported_extensions,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        next_shared_fade_duration_seconds = max(1, dialog.fade_duration_seconds())
+        next_filesystem_default_fade_in = bool(dialog.filesystem_default_fade_in())
+        next_filesystem_default_fade_out = bool(dialog.filesystem_default_fade_out())
+        next_streams_default_fade_in = bool(dialog.streams_default_fade_in())
+        next_streams_default_fade_out = bool(dialog.streams_default_fade_out())
+        next_media_library_width_percent = max(10, min(90, dialog.media_library_width_percent()))
+        next_schedule_width_percent = 100 - next_media_library_width_percent
+        next_font_size_points = max(1, dialog.font_size_points())
+        next_greenwich_time_signal_enabled = bool(dialog.greenwich_time_signal_enabled())
+        next_greenwich_time_signal_path = dialog.greenwich_time_signal_path()
+        next_library_tabs = dialog.library_tabs()
+        next_supported_extensions = self._normalize_supported_extensions(dialog.supported_extensions())
+        fade_changed = not (
+            next_shared_fade_duration_seconds == self._fade_in_duration_seconds
+            and next_shared_fade_duration_seconds == self._fade_out_duration_seconds
+            and next_filesystem_default_fade_in == self._filesystem_default_fade_in
+            and next_filesystem_default_fade_out == self._filesystem_default_fade_out
+            and next_streams_default_fade_in == self._streams_default_fade_in
+            and next_streams_default_fade_out == self._streams_default_fade_out
+        )
+        font_size_changed = next_font_size_points != self._font_size_points
+        panel_width_changed = not (
+            next_media_library_width_percent == self._media_library_width_percent
+            and next_schedule_width_percent == self._schedule_width_percent
+        )
+        greenwich_time_signal_changed = (
+            next_greenwich_time_signal_enabled != self._greenwich_time_signal_enabled
+            or next_greenwich_time_signal_path != self._greenwich_time_signal_path
+        )
+        library_tabs_changed = next_library_tabs != self._library_tab_configs
+        supported_extensions_changed = next_supported_extensions != self._supported_extensions
+
+        if (
+            not fade_changed
+            and not font_size_changed
+            and not panel_width_changed
+            and not greenwich_time_signal_changed
+            and not library_tabs_changed
+            and not supported_extensions_changed
+        ):
+            return
+
+        if fade_changed:
+            self._fade_in_duration_seconds = next_shared_fade_duration_seconds
+            self._fade_out_duration_seconds = next_shared_fade_duration_seconds
+            self._filesystem_default_fade_in = next_filesystem_default_fade_in
+            self._filesystem_default_fade_out = next_filesystem_default_fade_out
+            self._streams_default_fade_in = next_streams_default_fade_in
+            self._streams_default_fade_out = next_streams_default_fade_out
+        if font_size_changed:
+            self._apply_global_font_size(next_font_size_points)
+        if panel_width_changed:
+            self._apply_panel_width_split(next_media_library_width_percent)
+        if greenwich_time_signal_changed:
+            self._greenwich_time_signal_enabled = next_greenwich_time_signal_enabled
+            self._greenwich_time_signal_path = next_greenwich_time_signal_path
+        if supported_extensions_changed:
+            self._supported_extensions = next_supported_extensions
+            self._apply_supported_extensions_to_filesystem_models()
+        if library_tabs_changed:
+            self._library_tab_configs = next_library_tabs
+            self._rebuild_custom_library_tabs()
+        self._save_settings()
+        self._append_log(
+            f"Updated settings: fade in={self._fade_in_duration_seconds}s, "
+            f"fade out={self._fade_out_duration_seconds}s, "
+            f"filesystem_fade_in={'True' if self._filesystem_default_fade_in else 'False'}, "
+            f"filesystem_fade_out={'True' if self._filesystem_default_fade_out else 'False'}, "
+            f"streams_fade_in={'True' if self._streams_default_fade_in else 'False'}, "
+            f"streams_fade_out={'True' if self._streams_default_fade_out else 'False'}, "
+            f"greenwich_time_signal={'True' if self._greenwich_time_signal_enabled else 'False'}, "
+            f"media_library_width={self._media_library_width_percent}%, "
+            f"schedule_width={self._schedule_width_percent}%, "
+            f"font={self._font_size_points}pt, "
+            f"custom library tabs={len(self._library_tab_configs)}, "
+            f"extensions={','.join(self._supported_extensions)}"
+        )
