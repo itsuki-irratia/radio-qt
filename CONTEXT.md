@@ -104,6 +104,7 @@ Core runtime:
 - `radioqt/ui/state_persistence.py`: state/settings persistence and startup load mixin
 - `radioqt/ui/settings_logging.py`: settings dialog and log actions mixin
 - `radioqt/ui/fullscreen_visuals.py`: fullscreen behavior and visual icon helpers mixin
+- `radioqt/ui/schedule_timeline.py`: schedule/timeline runtime, coloring, focus and duration-probe mixin
 - `radioqt/player/controller.py`: media player wrapper + fade engine
 - `radioqt/storage/io.py`: storage load/save orchestration
 - `radioqt/storage/schema.py`: SQLite connection/schema bootstrap
