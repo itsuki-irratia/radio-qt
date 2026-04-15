@@ -17,13 +17,13 @@ RadioQt is a Python + Qt multimedia player for radio automation workflows:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ## Run
 
 ```bash
-PYTHONPATH=src python -m radioqt
+radioqt
 ```
 
 Default runtime paths:
@@ -34,7 +34,7 @@ Default runtime paths:
 You can override the config directory:
 
 ```bash
-PYTHONPATH=src python -m radioqt --config "/path/to/config-dir"
+radioqt --config "/path/to/config-dir"
 ```
 
 In that case, paths become:
@@ -66,17 +66,17 @@ sudo pacman -S --needed qt6-multimedia qt6-multimedia-ffmpeg qt6-multimedia-gstr
 - Then run:
 
 ```bash
-PYTHONPATH=src RADIOQT_MEDIA_BACKEND=gstreamer python -m radioqt
+RADIOQT_MEDIA_BACKEND=gstreamer radioqt
 ```
 
 - If you see repeated VAAPI decode errors (`invalid VAContextID`, `hardware accelerator failed to decode picture`), run with software decoding:
 
 ```bash
-PYTHONPATH=src RADIOQT_DISABLE_HW_DECODING=1 python -m radioqt
+RADIOQT_DISABLE_HW_DECODING=1 radioqt
 ```
 
 - To re-enable hardware decoding for testing:
 
 ```bash
-PYTHONPATH=src RADIOQT_DISABLE_HW_DECODING=0 python -m radioqt
+RADIOQT_DISABLE_HW_DECODING=0 radioqt
 ```

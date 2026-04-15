@@ -21,7 +21,7 @@ Current scope:
 - Runtime log panel + export
 
 Entrypoint:
-- `PYTHONPATH=src python -m radioqt`
+- `radioqt` (after `pip install -e .`)
 
 Default runtime files:
 - SQLite state: `$HOME/.config/radioqt/db.sqlite`
