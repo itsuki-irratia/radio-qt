@@ -23,7 +23,7 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python -m radioqt
+PYTHONPATH=src python -m radioqt
 ```
 
 Default runtime paths:
@@ -34,7 +34,7 @@ Default runtime paths:
 You can override the config directory:
 
 ```bash
-python -m radioqt --config "/path/to/config-dir"
+PYTHONPATH=src python -m radioqt --config "/path/to/config-dir"
 ```
 
 In that case, paths become:
@@ -66,17 +66,17 @@ sudo pacman -S --needed qt6-multimedia qt6-multimedia-ffmpeg qt6-multimedia-gstr
 - Then run:
 
 ```bash
-RADIOQT_MEDIA_BACKEND=gstreamer python -m radioqt
+PYTHONPATH=src RADIOQT_MEDIA_BACKEND=gstreamer python -m radioqt
 ```
 
 - If you see repeated VAAPI decode errors (`invalid VAContextID`, `hardware accelerator failed to decode picture`), run with software decoding:
 
 ```bash
-RADIOQT_DISABLE_HW_DECODING=1 python -m radioqt
+PYTHONPATH=src RADIOQT_DISABLE_HW_DECODING=1 python -m radioqt
 ```
 
 - To re-enable hardware decoding for testing:
 
 ```bash
-RADIOQT_DISABLE_HW_DECODING=0 python -m radioqt
+PYTHONPATH=src RADIOQT_DISABLE_HW_DECODING=0 python -m radioqt
 ```

@@ -21,11 +21,11 @@ Current scope:
 - Runtime log panel + export
 
 Entrypoint:
-- `python -m radioqt`
+- `PYTHONPATH=src python -m radioqt`
 
 Default runtime files:
-- SQLite state: `config/db.sqlite`
-- Settings YAML: `config/settings.yaml`
+- SQLite state: `$HOME/.config/radioqt/db.sqlite`
+- Settings YAML: `$HOME/.config/radioqt/settings.yaml`
 
 ## Startup / Loading Flow
 
@@ -33,7 +33,7 @@ Main startup path:
 1. `radioqt.__main__` -> `radioqt.main.run()`
 2. `_configure_multimedia_runtime()`
 3. `QApplication(...)`
-4. Optional app icon from `radioqt/radioqt.svg`
+4. Optional app icon from `src/radioqt/radioqt.svg`
 5. `MainWindow(config_dir=...)`
 6. Deferred load via `QTimer.singleShot(0, _finish_startup_load)`
 
@@ -51,13 +51,13 @@ Main window startup work:
 
 ## Legacy / Migration Behavior
 
-When `config/` is missing:
+When the configured runtime directory is missing:
 - Parent directories are created automatically
 - SQLite schema is auto-created
 - `settings.yaml` is auto-created
 
 Legacy compatibility:
-- If `config/db.sqlite` is missing and `state/radio_state.db` exists, DB is copied
+- If `./config/db.sqlite` is missing and `state/radio_state.db` exists, DB is copied (legacy local config mode)
 - If DB is missing and `state/radio_state.json` exists, JSON is copied to sibling `db.json` path for import flow
 - On first load, legacy JSON is imported only when DB is empty and migration flag is not set
 
@@ -70,7 +70,7 @@ DB migrations include:
 - Boolean normalization to textual `True`/`False`
 - Rebuild of boolean columns as `TEXT` when needed
 
-## Runtime Backend Configuration (`radioqt/main/runtime.py`)
+## Runtime Backend Configuration (`src/radioqt/main/runtime.py`)
 
 Environment controls:
 - `RADIOQT_MEDIA_BACKEND=auto` (default): Qt auto selection
@@ -95,48 +95,48 @@ Top-level:
 - `CONTEXT.md`: this file
 
 Core runtime:
-- `radioqt/main/application.py`: app bootstrap and `run()` entry wiring
-- `radioqt/main/runtime.py`: multimedia runtime env configuration
-- `radioqt/main/cli.py`: CLI parsing (`--config`)
-- `radioqt/ui/main_window.py`: main window + orchestration
-- `radioqt/ui/handlers.py`: UI action handlers (library/schedule/CRON/settings interactions)
-- `radioqt/ui/playback_handlers.py`: playback/scheduler trigger handlers
-- `radioqt/ui/library_selection.py`: library/schedule/CRON table refresh and selection helpers mixin
-- `radioqt/ui/layout_builders.py`: menu/layout/panel construction and filesystem-tab extension helpers mixin
-- `radioqt/ui/interaction_runtime.py`: runtime signal wiring and fullscreen keyboard/mouse event-filter mixin
-- `radioqt/ui/state_persistence.py`: state/settings persistence and startup load mixin
-- `radioqt/ui/settings_logging.py`: settings dialog and log actions mixin
-- `radioqt/ui/fullscreen_visuals.py`: fullscreen behavior and visual icon helpers mixin
-- `radioqt/ui/schedule_timeline.py`: schedule/timeline runtime, coloring, focus and duration-probe mixin
-- `radioqt/player/controller.py`: media player wrapper + fade engine
-- `radioqt/storage/io.py`: storage load/save orchestration
-- `radioqt/storage/schema.py`: SQLite connection/schema bootstrap
-- `radioqt/storage/migrations.py`: schema/data migrations
-- `radioqt/storage/read.py`: DB -> `AppState`
-- `radioqt/storage/write.py`: `AppState` -> DB
-- `radioqt/storage/sqlite_store.py`: compatibility facade/re-exports
-- `radioqt/app_config/schema.py`: settings dataclass and dict conversion
-- `radioqt/app_config/parser.py`: YAML parsing (with legacy key support)
-- `radioqt/app_config/serializer.py`: canonical YAML dump
-- `radioqt/app_config/io.py`: file load/save
-- `radioqt/app_config/core.py`: compatibility facade/re-exports
-- `radioqt/models/entities.py`: dataclasses/constants
-- `radioqt/cron/expression.py`: CRON parser and matching
-- `radioqt/duration_probe/cache.py`: probe cache helpers and cache-key generation
-- `radioqt/duration_probe/ffprobe.py`: ffprobe-backed duration probing
-- `radioqt/duration_probe/probe.py`: compatibility facade/re-exports
+- `src/radioqt/main/application.py`: app bootstrap and `run()` entry wiring
+- `src/radioqt/main/runtime.py`: multimedia runtime env configuration
+- `src/radioqt/main/cli.py`: CLI parsing (`--config`)
+- `src/radioqt/ui/main_window.py`: main window + orchestration
+- `src/radioqt/ui/handlers.py`: UI action handlers (library/schedule/CRON/settings interactions)
+- `src/radioqt/ui/playback_handlers.py`: playback/scheduler trigger handlers
+- `src/radioqt/ui/library_selection.py`: library/schedule/CRON table refresh and selection helpers mixin
+- `src/radioqt/ui/layout_builders.py`: menu/layout/panel construction and filesystem-tab extension helpers mixin
+- `src/radioqt/ui/interaction_runtime.py`: runtime signal wiring and fullscreen keyboard/mouse event-filter mixin
+- `src/radioqt/ui/state_persistence.py`: state/settings persistence and startup load mixin
+- `src/radioqt/ui/settings_logging.py`: settings dialog and log actions mixin
+- `src/radioqt/ui/fullscreen_visuals.py`: fullscreen behavior and visual icon helpers mixin
+- `src/radioqt/ui/schedule_timeline.py`: schedule/timeline runtime, coloring, focus and duration-probe mixin
+- `src/radioqt/player/controller.py`: media player wrapper + fade engine
+- `src/radioqt/storage/io.py`: storage load/save orchestration
+- `src/radioqt/storage/schema.py`: SQLite connection/schema bootstrap
+- `src/radioqt/storage/migrations.py`: schema/data migrations
+- `src/radioqt/storage/read.py`: DB -> `AppState`
+- `src/radioqt/storage/write.py`: `AppState` -> DB
+- `src/radioqt/storage/sqlite_store.py`: compatibility facade/re-exports
+- `src/radioqt/app_config/schema.py`: settings dataclass and dict conversion
+- `src/radioqt/app_config/parser.py`: YAML parsing (with legacy key support)
+- `src/radioqt/app_config/serializer.py`: canonical YAML dump
+- `src/radioqt/app_config/io.py`: file load/save
+- `src/radioqt/app_config/core.py`: compatibility facade/re-exports
+- `src/radioqt/models/entities.py`: dataclasses/constants
+- `src/radioqt/cron/expression.py`: CRON parser and matching
+- `src/radioqt/duration_probe/cache.py`: probe cache helpers and cache-key generation
+- `src/radioqt/duration_probe/ffprobe.py`: ffprobe-backed duration probing
+- `src/radioqt/duration_probe/probe.py`: compatibility facade/re-exports
 
 Packages:
-- `radioqt/scheduling/*`: scheduling logic, runtime, mutations, presentation, CRON runtime
-- `radioqt/playback/*`: queue actions + play decision orchestration
-- `radioqt/library/*`: source helpers + media actions
-- `radioqt/ui_components/*`: dialogs, tables, widgets
+- `src/radioqt/scheduling/*`: scheduling logic, runtime, mutations, presentation, CRON runtime
+- `src/radioqt/playback/*`: queue actions + play decision orchestration
+- `src/radioqt/library/*`: source helpers + media actions
+- `src/radioqt/ui_components/*`: dialogs, tables, widgets
 
 Compatibility re-exports:
-- `radioqt/scheduler/__init__.py`
-- `radioqt/schedule_logic/__init__.py`
+- `src/radioqt/scheduler/__init__.py`
+- `src/radioqt/schedule_logic/__init__.py`
 
-## Data Models (`radioqt/models/entities.py`)
+## Data Models (`src/radioqt/models/entities.py`)
 
 - `MediaItem`: `id`, `title`, `source`, `greenwich_time_signal_enabled`, `created_at`
 - `CronEntry`: `id`, `media_id`, `expression`, `hard_sync`, `fade_in`, `fade_out`, `enabled`, `created_at`
@@ -149,7 +149,7 @@ Compatibility re-exports:
 
 ## Persistence
 
-### SQLite (`radioqt/storage/io.py`, `schema.py`, `migrations.py`, `read.py`, `write.py`)
+### SQLite (`src/radioqt/storage/io.py`, `schema.py`, `migrations.py`, `read.py`, `write.py`)
 
 Tables:
 - `media_items`
@@ -172,7 +172,7 @@ Deprecated app_meta keys removed on write:
 - `fade_in_duration_seconds`
 - `fade_out_duration_seconds`
 
-### Settings YAML (`radioqt/app_config/schema.py`, `parser.py`, `serializer.py`, `io.py`)
+### Settings YAML (`src/radioqt/app_config/schema.py`, `parser.py`, `serializer.py`, `io.py`)
 
 Canonical YAML structure:
 - `view.font_size`
