@@ -16,8 +16,7 @@ class MainWindowInteractionRuntimeMixin:
         self._schedule_focus_checkbox.toggled.connect(self._on_schedule_auto_focus_toggled)
         self._schedule_table.cellPressed.connect(self._on_schedule_table_cell_pressed)
 
-        self._play_button.clicked.connect(self._on_play_clicked)
-        self._stop_button.clicked.connect(self._on_stop_clicked)
+        self._automation_status_button.clicked.connect(self._on_play_stop_clicked)
         self._mute_button.toggled.connect(self._on_mute_toggled)
         self._fade_in_button.clicked.connect(self._on_volume_fade_in_clicked)
         self._fade_out_button.clicked.connect(self._on_volume_fade_out_clicked)

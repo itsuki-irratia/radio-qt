@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Slot
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QStyle
+from PySide6.QtCore import Slot
 
 from ..library import VIDEO_EXTENSIONS, media_source_suffix
 
@@ -42,33 +40,29 @@ class MainWindowFullscreenVisualsMixin:
 
     def _set_automation_status(self, is_playing: bool) -> None:
         if is_playing:
-            self._play_button.setIcon(
-                self._tinted_standard_icon(QStyle.SP_MediaPlay, QColor("#198754"))
+            self._automation_status_button.setText("ONLINE")
+            self._automation_status_button.setStyleSheet(
+                "QPushButton {"
+                "background-color: #198754;"
+                "color: #ffffff;"
+                "border: 1px solid #146c43;"
+                "padding: 2px 8px;"
+                "font-weight: 700;"
+                "}"
             )
-            self._stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
+            self._automation_status_button.setToolTip("Stop")
             return
-        self._play_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
-        self._stop_button.setIcon(
-            self._tinted_standard_icon(QStyle.SP_MediaStop, QColor("#dc3545"))
+        self._automation_status_button.setText("OFFLINE")
+        self._automation_status_button.setStyleSheet(
+            "QPushButton {"
+            "background-color: #dc3545;"
+            "color: #ffffff;"
+            "border: 1px solid #b02a37;"
+            "padding: 2px 8px;"
+            "font-weight: 700;"
+            "}"
         )
-
-    def _tinted_standard_icon(
-        self,
-        standard_pixmap: QStyle.StandardPixmap,
-        color: QColor,
-    ) -> QIcon:
-        base_icon = self.style().standardIcon(standard_pixmap)
-        base_pixmap = base_icon.pixmap(20, 20)
-        if base_pixmap.isNull():
-            return base_icon
-        tinted = QPixmap(base_pixmap.size())
-        tinted.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(tinted)
-        painter.drawPixmap(0, 0, base_pixmap)
-        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
-        painter.fillRect(tinted.rect(), color)
-        painter.end()
-        return QIcon(tinted)
+        self._automation_status_button.setToolTip("Play")
 
     @Slot(bool)
     def _on_fullscreen_toggled(self, checked: bool) -> None:

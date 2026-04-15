@@ -14,6 +14,13 @@ from ..scheduling import prepare_schedule_entries_for_play
 
 
 class MainWindowPlaybackHandlersMixin:
+    @Slot()
+    def _on_play_stop_clicked(self) -> None:
+        if self._automation_playing:
+            self._on_stop_clicked()
+            return
+        self._on_play_clicked()
+
     @Slot(object)
     def _on_schedule_triggered(self, entry: ScheduleEntry) -> None:
         current_media_name = (
@@ -350,9 +357,9 @@ class MainWindowPlaybackHandlersMixin:
             if self._player.current_media is not None
             else "nothing"
         )
+        self._set_automation_status(False)
         if self._automation_playing:
             self._automation_playing = False
-            self._set_automation_status(False)
             self._scheduler.stop()
             self._append_log("Automation status changed to Stopped")
         self._greenwich_time_signal_player.stop()

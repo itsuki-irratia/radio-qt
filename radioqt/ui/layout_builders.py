@@ -70,12 +70,8 @@ class MainWindowLayoutBuildersMixin:
         playback_controls_layout = QHBoxLayout()
         control_button_size = QSize(36, 36)
         control_button_icon_size = QSize(20, 20)
-        self._play_button = QPushButton("")
-        self._play_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
-        self._play_button.setToolTip("Play")
-        self._stop_button = QPushButton("")
-        self._stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
-        self._stop_button.setToolTip("Stop")
+        self._automation_status_button = QPushButton("OFFLINE")
+        self._automation_status_button.setFixedSize(QSize(92, control_button_size.height()))
         self._set_automation_status(self._automation_playing)
         self._mute_button = QPushButton("")
         self._mute_button.setCheckable(True)
@@ -88,16 +84,13 @@ class MainWindowLayoutBuildersMixin:
         self._fade_out_button.setToolTip("Fade Out")
         self._fade_out_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowDown))
         for button in (
-            self._play_button,
-            self._stop_button,
             self._mute_button,
             self._fade_in_button,
             self._fade_out_button,
         ):
             button.setFixedSize(control_button_size)
             button.setIconSize(control_button_icon_size)
-        playback_controls_layout.addWidget(self._play_button)
-        playback_controls_layout.addWidget(self._stop_button)
+        playback_controls_layout.addWidget(self._automation_status_button)
         playback_controls_layout.addSpacing(control_button_size.width())
         playback_controls_layout.addWidget(self._mute_button)
         playback_controls_layout.addWidget(self._fade_in_button)
