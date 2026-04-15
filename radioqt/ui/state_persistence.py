@@ -179,6 +179,12 @@ class MainWindowStatePersistenceMixin:
 
     def _migrate_legacy_state_location_if_needed(self) -> None:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        # Legacy auto-migration is only enabled for the historical local config dir.
+        # With the default config moved to ~/.config/radioqt, silently importing
+        # from ./state would repopulate data after manual cleanup.
+        legacy_local_config_dir = (Path.cwd() / "config").expanduser()
+        if self._config_dir != legacy_local_config_dir:
+            return
         if not self._state_path.exists() and self._legacy_state_path.exists():
             try:
                 shutil.copy2(self._legacy_state_path, self._state_path)

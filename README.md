@@ -28,8 +28,8 @@ python -m radioqt
 
 Default runtime paths:
 
-- SQLite state: `config/db.sqlite`
-- App settings (YAML): `config/settings.yaml`
+- SQLite state: `$HOME/.config/radioqt/db.sqlite`
+- App settings (YAML): `$HOME/.config/radioqt/settings.yaml`
 
 You can override the config directory:
 
@@ -41,7 +41,7 @@ In that case, paths become:
 - `/path/to/config-dir/db.sqlite`
 - `/path/to/config-dir/settings.yaml`
 
-Legacy `state/radio_state.db` and `state/radio_state.json` are copied to the new location automatically when needed.
+Legacy `state/radio_state.db` and `state/radio_state.json` are auto-migrated when running with the historical local config dir (`--config ./config`).
 
 ## Basic workflow
 

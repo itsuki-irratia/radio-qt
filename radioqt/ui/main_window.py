@@ -48,6 +48,8 @@ from .schedule_timeline import MainWindowScheduleTimelineMixin
 from .settings_logging import MainWindowSettingsLoggingMixin
 from .state_persistence import MainWindowStatePersistenceMixin
 
+DEFAULT_CONFIG_DIR = Path.home() / ".config" / "radioqt"
+
 
 class _DurationProbeDispatcher(QObject):
     probe_finished = Signal(str, str, object, object)
@@ -80,7 +82,7 @@ class MainWindow(
         self.resize(1280, 820)
         self.setMinimumSize(960, 760)
 
-        self._config_dir = (config_dir or (Path.cwd() / "config")).expanduser()
+        self._config_dir = (config_dir or DEFAULT_CONFIG_DIR).expanduser()
         self._state_path = self._config_dir / "db.sqlite"
         self._settings_path = self._config_dir / "settings.yaml"
         self._legacy_state_path = Path.cwd() / "state" / "radio_state.db"
