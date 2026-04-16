@@ -408,6 +408,36 @@ Stop a specific PID (override lock file PID):
 radioqt-cli runtime stop --pid 12345 --force
 ```
 
+#### `runtime watch`
+
+Watches runtime lock/status changes in real time (good for SSH sessions).
+
+Basic watch:
+
+```bash
+radioqt-cli runtime watch
+```
+
+Press `Ctrl+C` to stop the watcher.
+
+One snapshot and exit:
+
+```bash
+radioqt-cli runtime watch --once
+```
+
+Watch for 30 seconds:
+
+```bash
+radioqt-cli runtime watch --timeout 30
+```
+
+Machine-readable watch stream:
+
+```bash
+radioqt-cli --json runtime watch
+```
+
 ## JSON output mode
 
 `--json` is a global flag. It works with all commands and returns compact JSON payloads suitable for scripting.
@@ -444,6 +474,8 @@ Example response:
   there is no active/known GUI PID in the runtime status file.
 - `PID ... is still running after ...`:
   graceful stop timed out; retry with `runtime stop --force`.
+- `Interval must be greater than zero`:
+  for `runtime watch`, use `--interval` values above `0`.
 
 ## Exit codes
 

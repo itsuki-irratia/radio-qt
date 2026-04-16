@@ -293,6 +293,31 @@ def test_runtime_set_status_requires_pid_when_online(tmp_path, capsys) -> None:
     assert "provide --pid" in capsys.readouterr().err
 
 
+def test_runtime_watch_once_json(tmp_path, capsys) -> None:
+    exit_code = run(["--json", "--config", str(tmp_path), "runtime", "watch", "--once"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["effective_status"] == "offline"
+    assert payload["lock_exists"] is False
+
+
+def test_runtime_watch_rejects_invalid_interval(tmp_path, capsys) -> None:
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "runtime",
+            "watch",
+            "--interval",
+            "0",
+            "--once",
+        ]
+    )
+    assert exit_code == 2
+    assert "Interval must be greater than zero" in capsys.readouterr().err
+
+
 def test_runtime_set_status_offline_keeps_lock_and_pid(tmp_path, capsys) -> None:
     run(
         [

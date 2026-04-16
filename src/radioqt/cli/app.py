@@ -807,33 +807,81 @@ def _validate_positive_pid(raw_pid: int | None) -> int | None:
     return raw_pid
 
 
-def _cmd_runtime_status(args: argparse.Namespace) -> int:
-    config_dir = _config_dir_from_args(args.config)
+def _runtime_status_payload(config_dir: Path) -> dict[str, object]:
     status_path = runtime_status_file_path(config_dir)
     view = resolve_runtime_status(config_dir)
     if view.stale:
         # Auto-heal stale lock files so "offline" is represented by lock absence.
         delete_runtime_lock(config_dir)
         view = resolve_runtime_status(config_dir)
+    return {
+        "ok": True,
+        "status": view.status,
+        "effective_status": view.effective_status,
+        "pid": view.pid,
+        "process_running": view.process_running,
+        "stale": view.stale,
+        "lock_exists": status_path.is_file(),
+        "status_path": str(status_path),
+    }
 
+
+def _runtime_status_text(payload: dict[str, object]) -> str:
+    pid_label = payload["pid"] if payload["pid"] is not None else "-"
+    return (
+        f"Runtime status: {payload['effective_status']} "
+        f"(pid={pid_label}, lock_exists={payload['lock_exists']}, "
+        f"process_running={payload['process_running']})"
+    )
+
+
+def _cmd_runtime_status(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    payload = _runtime_status_payload(config_dir)
     _print_success(
         args,
-        text=(
-            f"Runtime status: {view.effective_status}"
-            f" (pid={view.pid if view.pid is not None else '-'})"
-        ),
-        payload={
-            "ok": True,
-            "status": view.status,
-            "effective_status": view.effective_status,
-            "pid": view.pid,
-            "process_running": view.process_running,
-            "stale": view.stale,
-            "lock_exists": status_path.is_file(),
-            "status_path": str(status_path),
-        },
+        text=_runtime_status_text(payload),
+        payload=payload,
     )
     return 0
+
+
+def _cmd_runtime_watch(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    if args.interval <= 0:
+        raise CliError("Interval must be greater than zero")
+    if args.timeout is not None and args.timeout < 0:
+        raise CliError("Timeout must be zero or greater")
+
+    started_at = time.monotonic()
+    last_snapshot: str | None = None
+    emitted_events = 0
+    max_events = args.max_events
+    if max_events is not None and max_events <= 0:
+        raise CliError("max-events must be greater than zero")
+
+    try:
+        while True:
+            payload = _runtime_status_payload(config_dir)
+            snapshot = json.dumps(payload, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+            if snapshot != last_snapshot:
+                if _json_enabled(args):
+                    print(json.dumps(payload, separators=(",", ":"), ensure_ascii=True))
+                else:
+                    print(_runtime_status_text(payload))
+                last_snapshot = snapshot
+                emitted_events += 1
+                if max_events is not None and emitted_events >= max_events:
+                    return 0
+
+            if args.once:
+                return 0
+            if args.timeout is not None and (time.monotonic() - started_at) >= args.timeout:
+                return 0
+
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        return 130
 
 
 def _cmd_runtime_set_status(args: argparse.Namespace) -> int:
@@ -1126,6 +1174,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Send SIGKILL if SIGTERM does not stop the process",
     )
     runtime_stop_parser.set_defaults(handler=_cmd_runtime_stop)
+
+    runtime_watch_parser = runtime_subparsers.add_parser(
+        "watch",
+        help="Watch runtime lock/status changes in real time",
+    )
+    runtime_watch_parser.add_argument(
+        "--interval",
+        type=float,
+        default=1.0,
+        help="Polling interval in seconds (default: 1.0)",
+    )
+    runtime_watch_parser.add_argument(
+        "--timeout",
+        type=float,
+        help="Stop watching after this many seconds",
+    )
+    runtime_watch_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Print current status once and exit",
+    )
+    runtime_watch_parser.add_argument(
+        "--max-events",
+        type=int,
+        help="Stop after emitting this many status changes",
+    )
+    runtime_watch_parser.set_defaults(handler=_cmd_runtime_watch)
 
     return parser
 
