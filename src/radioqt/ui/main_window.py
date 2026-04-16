@@ -143,6 +143,8 @@ class MainWindow(
         self._schedule_focus_timer.setInterval(1000)
         self._external_state_sync_timer = QTimer(self)
         self._external_state_sync_timer.setInterval(2000)
+        self._runtime_control_timer = QTimer(self)
+        self._runtime_control_timer.setInterval(250)
         self._greenwich_time_signal_timer = QTimer(self)
         self._greenwich_time_signal_timer.setSingleShot(True)
         self._volume_fade_timer = QTimer(self)
@@ -169,6 +171,7 @@ class MainWindow(
         self._cron_refresh_timer.start()
         self._schedule_focus_timer.start()
         self._external_state_sync_timer.start()
+        self._runtime_control_timer.start()
         self._schedule_next_greenwich_time_signal()
 
     def _schedule_next_greenwich_time_signal(self) -> None:
@@ -326,6 +329,7 @@ class MainWindow(
         self._scheduler.stop()
         self._greenwich_time_signal_timer.stop()
         self._external_state_sync_timer.stop()
+        self._runtime_control_timer.stop()
         self._greenwich_time_signal_player.stop()
         self._volume_fade_timer.stop()
         self._duration_probe_executor.shutdown(wait=False, cancel_futures=True)

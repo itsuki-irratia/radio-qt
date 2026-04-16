@@ -14,6 +14,35 @@ from ..runtime_status import mark_runtime_offline, mark_runtime_online
 from ..scheduling import prepare_schedule_entries_for_play
 
 
+def resolve_fade_in_start_and_target(
+    *,
+    current_volume: int,
+    last_nonzero_volume: int,
+    fade_timer_active: bool,
+    current_fade_target_volume: int,
+) -> tuple[int, int]:
+    normalized_current = max(0, min(100, int(current_volume)))
+    fallback_target = last_nonzero_volume if last_nonzero_volume > 0 else 100
+    normalized_fade_target = max(0, min(100, int(current_fade_target_volume)))
+
+    # If fade-out is in progress, reverse smoothly from current level
+    # to the intended non-zero target instead of restarting from zero.
+    if (
+        fade_timer_active
+        and normalized_fade_target <= 0
+        and fallback_target > normalized_current
+    ):
+        return normalized_current, fallback_target
+
+    target_volume = normalized_current
+    if normalized_current <= 0:
+        target_volume = fallback_target
+    elif normalized_current <= 1 and fallback_target > normalized_current:
+        # Recover from edge cases where slider got stuck near zero.
+        target_volume = fallback_target
+    return 0, target_volume
+
+
 class MainWindowPlaybackHandlersMixin:
     @Slot()
     def _on_play_stop_clicked(self) -> None:
@@ -220,19 +249,18 @@ class MainWindowPlaybackHandlersMixin:
 
     @Slot()
     def _on_volume_fade_in_clicked(self) -> None:
-        current_volume = self._volume_slider.value()
-        target_volume = current_volume
-        if current_volume <= 0:
-            target_volume = self._last_nonzero_volume if self._last_nonzero_volume > 0 else 100
-        elif current_volume <= 1 and self._last_nonzero_volume > current_volume:
-            # Recover from edge cases where slider got stuck near zero.
-            target_volume = self._last_nonzero_volume
+        start_volume, target_volume = resolve_fade_in_start_and_target(
+            current_volume=self._volume_slider.value(),
+            last_nonzero_volume=self._last_nonzero_volume,
+            fade_timer_active=self._volume_fade_timer.isActive(),
+            current_fade_target_volume=self._volume_fade_target_volume,
+        )
         if self._mute_button.isChecked():
             self._mute_button.blockSignals(True)
             self._mute_button.setChecked(False)
             self._mute_button.blockSignals(False)
         self._start_volume_fade(
-            start_volume=0,
+            start_volume=start_volume,
             target_volume=target_volume,
             duration_ms=self._fade_in_duration_ms(),
         )

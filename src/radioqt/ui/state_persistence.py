@@ -10,6 +10,12 @@ from PySide6.QtWidgets import QApplication
 from ..app_config import AppConfig, load_app_config, save_app_config
 from ..duration_probe import sanitize_duration_probe_cache
 from ..models import AppState
+from ..runtime_control import (
+    drain_runtime_control_commands,
+    RUNTIME_CONTROL_ACTION_FADE_IN,
+    RUNTIME_CONTROL_ACTION_FADE_OUT,
+    RUNTIME_CONTROL_ACTION_SET_VOLUME,
+)
 from ..scheduling import initial_schedule_filter_date, prepare_schedule_entries_for_startup
 from ..storage import (
     load_state_with_version,
@@ -196,6 +202,41 @@ class MainWindowStatePersistenceMixin:
             )
         )
         self._reload_runtime_state_after_conflict()
+
+    def _process_runtime_control_commands(self) -> None:
+        commands = drain_runtime_control_commands(self._config_dir)
+        if not commands:
+            return
+        for command in commands:
+            if command.action == RUNTIME_CONTROL_ACTION_FADE_IN:
+                self._on_volume_fade_in_clicked()
+                self._append_log(f"Runtime CLI command executed: fade-in ({command.command_id})")
+                continue
+            if command.action == RUNTIME_CONTROL_ACTION_FADE_OUT:
+                self._on_volume_fade_out_clicked()
+                self._append_log(f"Runtime CLI command executed: fade-out ({command.command_id})")
+                continue
+            if command.action == RUNTIME_CONTROL_ACTION_SET_VOLUME:
+                if command.value is None:
+                    continue
+                self._apply_runtime_volume_value(command.value)
+                self._append_log(
+                    f"Runtime CLI command executed: set-volume {command.value}% ({command.command_id})"
+                )
+
+    def _apply_runtime_volume_value(self, value: int) -> None:
+        normalized_value = max(0, min(100, int(value)))
+        if normalized_value <= 0:
+            if not self._mute_button.isChecked():
+                self._mute_button.setChecked(True)
+            else:
+                self._volume_slider.setValue(0)
+            return
+        if self._mute_button.isChecked():
+            self._last_nonzero_volume = normalized_value
+            self._mute_button.setChecked(False)
+            return
+        self._volume_slider.setValue(normalized_value)
 
     def _save_settings(self) -> None:
         shared_fade_duration_seconds = max(

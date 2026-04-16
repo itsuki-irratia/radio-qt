@@ -5,6 +5,7 @@ import subprocess
 
 from radioqt.cli.app import run
 from radioqt.models import AppState, MediaItem
+from radioqt.runtime_control import drain_runtime_control_commands
 from radioqt.storage.io import load_state, save_state
 
 
@@ -316,6 +317,114 @@ def test_runtime_watch_rejects_invalid_interval(tmp_path, capsys) -> None:
     )
     assert exit_code == 2
     assert "Interval must be greater than zero" in capsys.readouterr().err
+
+
+def test_runtime_fade_in_requires_running_runtime(tmp_path, capsys) -> None:
+    exit_code = run(["--config", str(tmp_path), "runtime", "fade-in"])
+    assert exit_code == 2
+    assert "GUI runtime is not running" in capsys.readouterr().err
+
+
+def test_runtime_fade_commands_enqueue_control_messages(tmp_path, capsys) -> None:
+    sleeper = subprocess.Popen(["sleep", "60"])
+    try:
+        set_status_exit = run(
+            [
+                "--config",
+                str(tmp_path),
+                "runtime",
+                "set-status",
+                "--value",
+                "online",
+                "--pid",
+                str(sleeper.pid),
+            ]
+        )
+        assert set_status_exit == 0
+        capsys.readouterr()
+
+        fade_in_exit = run(
+            ["--json", "--config", str(tmp_path), "runtime", "fade-in"]
+        )
+        assert fade_in_exit == 0
+        fade_in_payload = json.loads(capsys.readouterr().out)
+        assert fade_in_payload["queued"] is True
+        assert fade_in_payload["action"] == "fade_in"
+
+        fade_out_exit = run(
+            ["--json", "--config", str(tmp_path), "runtime", "fade-out"]
+        )
+        assert fade_out_exit == 0
+        fade_out_payload = json.loads(capsys.readouterr().out)
+        assert fade_out_payload["queued"] is True
+        assert fade_out_payload["action"] == "fade_out"
+
+        commands = drain_runtime_control_commands(tmp_path)
+        assert [command.action for command in commands] == ["fade_in", "fade_out"]
+    finally:
+        if sleeper.poll() is None:
+            sleeper.kill()
+            sleeper.wait(timeout=5)
+
+
+def test_runtime_volume_rejects_out_of_range(tmp_path, capsys) -> None:
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "runtime",
+            "volume",
+            "--value",
+            "101",
+        ]
+    )
+    assert exit_code == 2
+    assert "Volume must be between 0 and 100" in capsys.readouterr().err
+
+
+def test_runtime_volume_and_mute_enqueue_set_volume_commands(tmp_path, capsys) -> None:
+    sleeper = subprocess.Popen(["sleep", "60"])
+    try:
+        set_status_exit = run(
+            [
+                "--config",
+                str(tmp_path),
+                "runtime",
+                "set-status",
+                "--value",
+                "online",
+                "--pid",
+                str(sleeper.pid),
+            ]
+        )
+        assert set_status_exit == 0
+        capsys.readouterr()
+
+        volume_exit = run(
+            ["--json", "--config", str(tmp_path), "runtime", "volume", "--value", "65"]
+        )
+        assert volume_exit == 0
+        volume_payload = json.loads(capsys.readouterr().out)
+        assert volume_payload["queued"] is True
+        assert volume_payload["action"] == "set_volume"
+        assert volume_payload["value"] == 65
+
+        mute_exit = run(
+            ["--json", "--config", str(tmp_path), "runtime", "mute"]
+        )
+        assert mute_exit == 0
+        mute_payload = json.loads(capsys.readouterr().out)
+        assert mute_payload["queued"] is True
+        assert mute_payload["action"] == "set_volume"
+        assert mute_payload["value"] == 0
+
+        commands = drain_runtime_control_commands(tmp_path)
+        assert [command.action for command in commands] == ["set_volume", "set_volume"]
+        assert [command.value for command in commands] == [65, 0]
+    finally:
+        if sleeper.poll() is None:
+            sleeper.kill()
+            sleeper.wait(timeout=5)
 
 
 def test_runtime_set_status_offline_keeps_lock_and_pid(tmp_path, capsys) -> None:

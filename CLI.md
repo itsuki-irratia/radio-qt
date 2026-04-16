@@ -438,6 +438,44 @@ Machine-readable watch stream:
 radioqt-cli --json runtime watch
 ```
 
+#### `runtime fade-in`
+
+Triggers immediate live fade-in on the running GUI (same action as clicking the fade-in button).
+
+```bash
+radioqt-cli runtime fade-in
+```
+
+#### `runtime fade-out`
+
+Triggers immediate live fade-out on the running GUI (same action as clicking the fade-out button).
+
+```bash
+radioqt-cli runtime fade-out
+```
+
+#### `runtime volume`
+
+Sets live GUI volume to a value between `0` and `100`.
+
+```bash
+radioqt-cli runtime volume --value 65
+```
+
+Set volume to zero:
+
+```bash
+radioqt-cli runtime volume --value 0
+```
+
+#### `runtime mute`
+
+Alias for setting volume to zero (same as `runtime volume --value 0`).
+
+```bash
+radioqt-cli runtime mute
+```
+
 ## JSON output mode
 
 `--json` is a global flag. It works with all commands and returns compact JSON payloads suitable for scripting.
@@ -476,6 +514,10 @@ Example response:
   graceful stop timed out; retry with `runtime stop --force`.
 - `Interval must be greater than zero`:
   for `runtime watch`, use `--interval` values above `0`.
+- `GUI runtime is not running`:
+  start `radioqt` first (or verify `runtime status`) before sending live runtime commands.
+- `Volume must be between 0 and 100`:
+  for `runtime volume`, use values in the `0..100` range.
 
 ## Exit codes
 

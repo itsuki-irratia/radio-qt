@@ -46,6 +46,13 @@ from ..runtime_status import (
     VALID_RUNTIME_STATUSES,
     write_runtime_status,
 )
+from ..runtime_control import (
+    enqueue_runtime_control_command,
+    runtime_control_file_path,
+    RUNTIME_CONTROL_ACTION_FADE_IN,
+    RUNTIME_CONTROL_ACTION_FADE_OUT,
+    RUNTIME_CONTROL_ACTION_SET_VOLUME,
+)
 from ..storage.io import (
     load_state_with_version,
     save_state,
@@ -807,6 +814,12 @@ def _validate_positive_pid(raw_pid: int | None) -> int | None:
     return raw_pid
 
 
+def _validate_volume_percent(raw_value: int) -> int:
+    if raw_value < 0 or raw_value > 100:
+        raise CliError("Volume must be between 0 and 100")
+    return int(raw_value)
+
+
 def _runtime_status_payload(config_dir: Path) -> dict[str, object]:
     status_path = runtime_status_file_path(config_dir)
     view = resolve_runtime_status(config_dir)
@@ -882,6 +895,80 @@ def _cmd_runtime_watch(args: argparse.Namespace) -> int:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         return 130
+
+
+def _cmd_runtime_control_action(
+    args: argparse.Namespace,
+    *,
+    action: str,
+    action_label: str,
+    value: int | None = None,
+) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    status = resolve_runtime_status(config_dir)
+    if not status.process_running:
+        raise CliError(
+            "GUI runtime is not running. Start radioqt first and retry the command."
+        )
+    command = enqueue_runtime_control_command(config_dir, action=action, value=value)
+    control_path = runtime_control_file_path(config_dir)
+    command_details = (
+        f"id={command.command_id}, pid={status.pid if status.pid is not None else '-'}"
+    )
+    if value is not None:
+        command_details += f", value={value}"
+    _print_success(
+        args,
+        text=(
+            f"Queued runtime command: {action_label} "
+            f"({command_details})"
+        ),
+        payload={
+            "ok": True,
+            "queued": True,
+            "command_id": command.command_id,
+            "action": command.action,
+            "value": command.value,
+            "pid": status.pid,
+            "control_path": str(control_path),
+        },
+    )
+    return 0
+
+
+def _cmd_runtime_fade_in(args: argparse.Namespace) -> int:
+    return _cmd_runtime_control_action(
+        args,
+        action=RUNTIME_CONTROL_ACTION_FADE_IN,
+        action_label="fade-in",
+    )
+
+
+def _cmd_runtime_fade_out(args: argparse.Namespace) -> int:
+    return _cmd_runtime_control_action(
+        args,
+        action=RUNTIME_CONTROL_ACTION_FADE_OUT,
+        action_label="fade-out",
+    )
+
+
+def _cmd_runtime_volume(args: argparse.Namespace) -> int:
+    value = _validate_volume_percent(args.value)
+    return _cmd_runtime_control_action(
+        args,
+        action=RUNTIME_CONTROL_ACTION_SET_VOLUME,
+        action_label="set-volume",
+        value=value,
+    )
+
+
+def _cmd_runtime_mute(args: argparse.Namespace) -> int:
+    return _cmd_runtime_control_action(
+        args,
+        action=RUNTIME_CONTROL_ACTION_SET_VOLUME,
+        action_label="mute",
+        value=0,
+    )
 
 
 def _cmd_runtime_set_status(args: argparse.Namespace) -> int:
@@ -1201,6 +1288,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Stop after emitting this many status changes",
     )
     runtime_watch_parser.set_defaults(handler=_cmd_runtime_watch)
+
+    runtime_fade_in_parser = runtime_subparsers.add_parser(
+        "fade-in",
+        help="Trigger immediate live fade-in on the running GUI",
+    )
+    runtime_fade_in_parser.set_defaults(handler=_cmd_runtime_fade_in)
+
+    runtime_fade_out_parser = runtime_subparsers.add_parser(
+        "fade-out",
+        help="Trigger immediate live fade-out on the running GUI",
+    )
+    runtime_fade_out_parser.set_defaults(handler=_cmd_runtime_fade_out)
+
+    runtime_volume_parser = runtime_subparsers.add_parser(
+        "volume",
+        help="Set live GUI volume (0-100)",
+    )
+    runtime_volume_parser.add_argument(
+        "--value",
+        type=int,
+        required=True,
+        help="Target volume percent (0-100)",
+    )
+    runtime_volume_parser.set_defaults(handler=_cmd_runtime_volume)
+
+    runtime_mute_parser = runtime_subparsers.add_parser(
+        "mute",
+        help="Alias for runtime volume --value 0",
+    )
+    runtime_mute_parser.set_defaults(handler=_cmd_runtime_mute)
 
     return parser
 
