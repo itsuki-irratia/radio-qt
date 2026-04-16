@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QStyle
 from ..library import is_stream_source, local_media_path_from_source
 from ..models import MediaItem, ScheduleEntry
 from ..playback import dequeue_next_playable_media, process_schedule_trigger, resolve_play_request
+from ..runtime_status import mark_runtime_offline, mark_runtime_online
 from ..scheduling import prepare_schedule_entries_for_play
 
 
@@ -265,6 +266,10 @@ class MainWindowPlaybackHandlersMixin:
             self._automation_playing = True
             self._set_automation_status(True)
             self._scheduler.start()
+            try:
+                mark_runtime_online(self._config_dir)
+            except OSError as exc:
+                self._append_log(f"Failed to update runtime lock status: {exc}")
             self._append_log("Automation status changed to Playing")
         if play_preparation.normalized_entries:
             normalized_details = self._normalized_missed_details(
@@ -361,6 +366,10 @@ class MainWindowPlaybackHandlersMixin:
         if self._automation_playing:
             self._automation_playing = False
             self._scheduler.stop()
+            try:
+                mark_runtime_offline(self._config_dir)
+            except OSError as exc:
+                self._append_log(f"Failed to update runtime lock status: {exc}")
             self._append_log("Automation status changed to Stopped")
         self._greenwich_time_signal_player.stop()
         self._player.clear_current_media()

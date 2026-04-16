@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from radioqt.cli.app import run
 from radioqt.models import AppState, MediaItem
@@ -266,3 +267,109 @@ def test_cron_add_persists_entry(tmp_path) -> None:
     cron_entry = loaded.cron_entries[0]
     assert cron_entry.media_id == media.id
     assert cron_entry.enabled is False
+
+
+def test_runtime_status_json_defaults_offline(tmp_path, capsys) -> None:
+    exit_code = run(["--json", "--config", str(tmp_path), "runtime", "status"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["effective_status"] == "offline"
+    assert payload["pid"] is None
+
+
+def test_runtime_set_status_requires_pid_when_online(tmp_path, capsys) -> None:
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "runtime",
+            "set-status",
+            "--value",
+            "online",
+        ]
+    )
+    assert exit_code == 2
+    assert "provide --pid" in capsys.readouterr().err
+
+
+def test_runtime_set_status_offline_keeps_lock_and_pid(tmp_path, capsys) -> None:
+    run(
+        [
+            "--config",
+            str(tmp_path),
+            "runtime",
+            "set-status",
+            "--value",
+            "online",
+            "--pid",
+            "1234",
+        ]
+    )
+    capsys.readouterr()
+    exit_code = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "runtime",
+            "set-status",
+            "--value",
+            "offline",
+        ]
+    )
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "offline"
+    assert payload["pid"] == 1234
+    assert payload["lock_exists"] is True
+
+
+def test_runtime_stop_terminates_pid_from_status_file(tmp_path, capsys) -> None:
+    sleeper = subprocess.Popen(["sleep", "60"])
+    try:
+        set_status_exit = run(
+            [
+                "--config",
+                str(tmp_path),
+                "runtime",
+                "set-status",
+                "--value",
+                "online",
+                "--pid",
+                str(sleeper.pid),
+            ]
+        )
+        assert set_status_exit == 0
+
+        stop_exit = run(
+            [
+                "--config",
+                str(tmp_path),
+                "runtime",
+                "stop",
+                "--timeout",
+                "2",
+            ]
+        )
+        assert stop_exit == 0
+        sleeper.wait(timeout=5)
+        capsys.readouterr()
+
+        status_exit = run(
+            [
+                "--json",
+                "--config",
+                str(tmp_path),
+                "runtime",
+                "status",
+            ]
+        )
+        assert status_exit == 0
+        status_payload = json.loads(capsys.readouterr().out)
+        assert status_payload["effective_status"] == "offline"
+        assert status_payload["lock_exists"] is False
+    finally:
+        if sleeper.poll() is None:
+            sleeper.kill()
+            sleeper.wait(timeout=5)

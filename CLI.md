@@ -24,6 +24,7 @@ By default, the CLI uses:
 
 - SQLite database: `$HOME/.config/radioqt/db.sqlite`
 - YAML config: `$HOME/.config/radioqt/settings.yaml`
+- Runtime status file: `$HOME/.config/radioqt/radioqt.lock`
 
 Global option:
 
@@ -341,6 +342,72 @@ Remove a rule:
 radioqt-cli cron remove "CRON_ID"
 ```
 
+### `runtime`
+
+Runtime commands let you inspect and control the GUI process state from SSH/CLI.
+Lock lifecycle:
+
+- GUI start: creates `radioqt.lock` with `status=offline`.
+- GUI Play: updates lock to `status=online` with current PID.
+- GUI Stop: updates lock to `status=offline` (PID is kept while GUI is open).
+- GUI close: deletes `radioqt.lock`.
+
+#### `runtime status`
+
+Shows current runtime state, PID, and whether the PID is still alive:
+
+```bash
+radioqt-cli runtime status
+```
+
+JSON mode:
+
+```bash
+radioqt-cli --json runtime status
+```
+
+#### `runtime set-status`
+
+Manually set runtime state in `radioqt.lock`.
+
+Set offline:
+
+```bash
+radioqt-cli runtime set-status --value offline
+```
+
+Set online (requires PID):
+
+```bash
+radioqt-cli runtime set-status --value online --pid 12345
+```
+
+#### `runtime stop`
+
+Stops the GUI PID stored in `radioqt.lock` using `SIGTERM` and removes the lock.
+
+```bash
+radioqt-cli runtime stop
+```
+
+Stop with custom timeout:
+
+```bash
+radioqt-cli runtime stop --timeout 10
+```
+
+Force stop (`SIGKILL`) if graceful stop fails:
+
+```bash
+radioqt-cli runtime stop --force
+```
+
+Stop a specific PID (override lock file PID):
+
+```bash
+radioqt-cli runtime stop --pid 12345 --force
+```
+
 ## JSON output mode
 
 `--json` is a global flag. It works with all commands and returns compact JSON payloads suitable for scripting.
@@ -373,6 +440,10 @@ Example response:
   disable or remove the CRON rule, or use `--force`.
 - `No changes were applied`:
   the new value is the same as the current one.
+- `No runtime PID is available`:
+  there is no active/known GUI PID in the runtime status file.
+- `PID ... is still running after ...`:
+  graceful stop timed out; retry with `runtime stop --force`.
 
 ## Exit codes
 

@@ -4,8 +4,11 @@ import argparse
 from dataclasses import dataclass
 from datetime import date, datetime
 import json
+import os
 from pathlib import Path, PurePath
+import signal
 import sys
+import time
 
 from ..cron import CronExpression, CronParseError
 from ..models import AppState, CronEntry, MediaItem, ScheduleEntry
@@ -31,6 +34,17 @@ from ..scheduling.workflows import (
     enforce_hard_sync_always,
     is_schedule_entry_protected_from_removal,
     sync_cron_runtime_window,
+)
+from ..runtime_status import (
+    delete_runtime_lock,
+    is_pid_running,
+    read_runtime_status,
+    resolve_runtime_status,
+    RUNTIME_STATUS_OFFLINE,
+    RUNTIME_STATUS_ONLINE,
+    runtime_status_file_path,
+    VALID_RUNTIME_STATUSES,
+    write_runtime_status,
 )
 from ..storage.io import (
     load_state_with_version,
@@ -785,6 +799,153 @@ def _cmd_cron_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_positive_pid(raw_pid: int | None) -> int | None:
+    if raw_pid is None:
+        return None
+    if raw_pid <= 0:
+        raise CliError("PID must be a positive integer")
+    return raw_pid
+
+
+def _cmd_runtime_status(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    status_path = runtime_status_file_path(config_dir)
+    view = resolve_runtime_status(config_dir)
+    if view.stale:
+        # Auto-heal stale lock files so "offline" is represented by lock absence.
+        delete_runtime_lock(config_dir)
+        view = resolve_runtime_status(config_dir)
+
+    _print_success(
+        args,
+        text=(
+            f"Runtime status: {view.effective_status}"
+            f" (pid={view.pid if view.pid is not None else '-'})"
+        ),
+        payload={
+            "ok": True,
+            "status": view.status,
+            "effective_status": view.effective_status,
+            "pid": view.pid,
+            "process_running": view.process_running,
+            "stale": view.stale,
+            "lock_exists": status_path.is_file(),
+            "status_path": str(status_path),
+        },
+    )
+    return 0
+
+
+def _cmd_runtime_set_status(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    status_path = runtime_status_file_path(config_dir)
+    pid = _validate_positive_pid(args.pid)
+    status = args.value
+    if status == RUNTIME_STATUS_ONLINE and pid is None:
+        raise CliError("When setting status to online, provide --pid")
+    if status == RUNTIME_STATUS_OFFLINE:
+        if pid is None:
+            pid = read_runtime_status(config_dir).pid
+
+    record = write_runtime_status(config_dir, status=status, pid=pid)
+    _print_success(
+        args,
+        text=(
+            f"Runtime status updated: {record.status}"
+            f" (pid={record.pid if record.pid is not None else '-'})"
+        ),
+        payload={
+            "ok": True,
+            "status": record.status,
+            "pid": record.pid,
+            "lock_exists": status_path.is_file(),
+            "status_path": str(status_path),
+        },
+    )
+    return 0
+
+
+def _wait_for_process_shutdown(pid: int, timeout_seconds: float) -> bool:
+    if timeout_seconds <= 0:
+        return not is_pid_running(pid)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() <= deadline:
+        if not is_pid_running(pid):
+            return True
+        time.sleep(0.1)
+    return not is_pid_running(pid)
+
+
+def _cmd_runtime_stop(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    explicit_pid = _validate_positive_pid(args.pid)
+    status_view = resolve_runtime_status(config_dir)
+    target_pid = explicit_pid if explicit_pid is not None else status_view.pid
+    timeout_seconds = float(args.timeout)
+    if timeout_seconds < 0:
+        raise CliError("Timeout must be zero or greater")
+    if target_pid is None:
+        raise CliError("No runtime PID is available. Start the GUI first or pass --pid.")
+    if target_pid == os.getpid():
+        raise CliError("Refusing to stop the current CLI process")
+
+    already_stopped = not is_pid_running(target_pid)
+    sent_signal = "none"
+    if not already_stopped:
+        try:
+            os.kill(target_pid, signal.SIGTERM)
+            sent_signal = "SIGTERM"
+        except ProcessLookupError:
+            already_stopped = True
+        except PermissionError as exc:
+            raise CliError(f"Permission denied when stopping PID {target_pid}") from exc
+        except OSError as exc:
+            raise CliError(f"Failed to send SIGTERM to PID {target_pid}: {exc}") from exc
+
+    stopped = already_stopped or _wait_for_process_shutdown(target_pid, timeout_seconds)
+    if not stopped:
+        # Give Qt/Python a short post-TERM grace window to complete shutdown
+        # and avoid stale "online" lock states due to close races.
+        stopped = _wait_for_process_shutdown(target_pid, 1.5)
+    if not stopped and args.force:
+        try:
+            os.kill(target_pid, signal.SIGKILL)
+            sent_signal = "SIGKILL"
+        except ProcessLookupError:
+            stopped = True
+        except PermissionError as exc:
+            raise CliError(f"Permission denied when force stopping PID {target_pid}") from exc
+        except OSError as exc:
+            raise CliError(f"Failed to send SIGKILL to PID {target_pid}: {exc}") from exc
+        if not stopped:
+            force_timeout = max(1.0, min(timeout_seconds, 3.0))
+            stopped = _wait_for_process_shutdown(target_pid, force_timeout)
+
+    if not stopped:
+        raise CliError(
+            (
+                f"PID {target_pid} is still running after {timeout_seconds:.1f}s. "
+                "Use --force to send SIGKILL or increase --timeout."
+            )
+        )
+
+    delete_runtime_lock(config_dir)
+    _print_success(
+        args,
+        text=f"Runtime stopped (pid={target_pid}, signal={sent_signal}).",
+        payload={
+            "ok": True,
+            "stopped": True,
+            "pid": target_pid,
+            "signal": sent_signal,
+            "status": RUNTIME_STATUS_OFFLINE,
+            "lock_exists": runtime_status_file_path(config_dir).is_file(),
+            "status_path": str(runtime_status_file_path(config_dir)),
+        },
+    )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="radioqt-cli",
@@ -921,6 +1082,50 @@ def _build_parser() -> argparse.ArgumentParser:
     cron_remove_parser = cron_subparsers.add_parser("remove", help="Remove a CRON entry")
     cron_remove_parser.add_argument("cron_id", help="CRON id")
     cron_remove_parser.set_defaults(handler=_cmd_cron_remove)
+
+    runtime_parser = top_level_subparsers.add_parser("runtime", help="Runtime process commands")
+    runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)
+
+    runtime_status_parser = runtime_subparsers.add_parser(
+        "status",
+        help="Show GUI runtime status and PID",
+    )
+    runtime_status_parser.set_defaults(handler=_cmd_runtime_status)
+
+    runtime_set_status_parser = runtime_subparsers.add_parser(
+        "set-status",
+        help="Write runtime status file",
+    )
+    runtime_set_status_parser.add_argument(
+        "--value",
+        required=True,
+        choices=tuple(sorted(VALID_RUNTIME_STATUSES)),
+        help="Runtime status value",
+    )
+    runtime_set_status_parser.add_argument(
+        "--pid",
+        type=int,
+        help="Process ID (required when --value=online)",
+    )
+    runtime_set_status_parser.set_defaults(handler=_cmd_runtime_set_status)
+
+    runtime_stop_parser = runtime_subparsers.add_parser(
+        "stop",
+        help="Stop the running GUI process from the lock file",
+    )
+    runtime_stop_parser.add_argument("--pid", type=int, help="Optional PID override")
+    runtime_stop_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        help="Seconds to wait after SIGTERM before failing (default: 10)",
+    )
+    runtime_stop_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Send SIGKILL if SIGTERM does not stop the process",
+    )
+    runtime_stop_parser.set_defaults(handler=_cmd_runtime_stop)
 
     return parser
 

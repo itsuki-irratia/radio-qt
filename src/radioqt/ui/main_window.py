@@ -34,6 +34,7 @@ from ..models import (
     ScheduleEntry,
 )
 from ..player import MediaPlayerController
+from ..runtime_status import delete_runtime_lock, mark_runtime_offline
 from ..scheduling import (
     DEFAULT_CRON_RUNTIME_LOOKBACK,
     DEFAULT_CRON_RUNTIME_MAX_OCCURRENCES,
@@ -160,6 +161,11 @@ class MainWindow(
     @Slot()
     def _finish_startup_load(self) -> None:
         self._load_initial_state()
+        try:
+            # At startup we create the lock in offline mode.
+            mark_runtime_offline(self._config_dir)
+        except OSError as exc:
+            self._append_log(f"Failed to write runtime lock file: {exc}")
         self._cron_refresh_timer.start()
         self._schedule_focus_timer.start()
         self._external_state_sync_timer.start()
@@ -323,6 +329,10 @@ class MainWindow(
         self._greenwich_time_signal_player.stop()
         self._volume_fade_timer.stop()
         self._duration_probe_executor.shutdown(wait=False, cancel_futures=True)
+        try:
+            delete_runtime_lock(self._config_dir)
+        except OSError:
+            pass
         self._save_settings()
         self._save_state()
         super().closeEvent(event)
