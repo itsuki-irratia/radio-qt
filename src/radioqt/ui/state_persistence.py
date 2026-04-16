@@ -11,14 +11,21 @@ from ..app_config import AppConfig, load_app_config, save_app_config
 from ..duration_probe import sanitize_duration_probe_cache
 from ..models import AppState
 from ..scheduling import initial_schedule_filter_date, prepare_schedule_entries_for_startup
-from ..storage import load_state, save_state
+from ..storage import (
+    load_state_with_version,
+    save_state,
+    state_version,
+    StateVersionConflictError,
+)
 
 
 class MainWindowStatePersistenceMixin:
     def _load_initial_state(self) -> None:
         app_started_at = datetime.now().astimezone()
         self._migrate_legacy_state_location_if_needed()
-        state = load_state(self._state_path)
+        loaded_state = load_state_with_version(self._state_path)
+        self._state_version = loaded_state.version
+        state = loaded_state.state
         app_config = self._load_or_initialize_app_config(state)
         self._media_items = {item.id: item for item in state.media_items}
         self._media_duration_cache.clear()
@@ -126,7 +133,69 @@ class MainWindowStatePersistenceMixin:
             fade_out_duration_seconds=self._fade_out_duration_seconds,
             duration_probe_cache=dict(self._duration_probe_cache),
         )
-        save_state(self._state_path, state)
+        try:
+            self._state_version = save_state(
+                self._state_path,
+                state,
+                expected_version=self._state_version,
+            )
+        except StateVersionConflictError as conflict_error:
+            self._append_log(
+                (
+                    "Detected external state changes; reloading latest data from disk "
+                    f"(local expected version {conflict_error.expected_version}, "
+                    f"current version {conflict_error.current_version})"
+                )
+            )
+            self._reload_runtime_state_after_conflict()
+
+    def _reload_runtime_state_after_conflict(self) -> None:
+        loaded_state = load_state_with_version(self._state_path)
+        self._state_version = loaded_state.version
+        state = loaded_state.state
+        self._media_items = {item.id: item for item in state.media_items}
+        self._media_duration_cache.clear()
+        self._duration_probe_cache = sanitize_duration_probe_cache(
+            state.duration_probe_cache,
+            max_entries=self._DURATION_PROBE_CACHE_MAX_ENTRIES,
+        )
+        self._media_duration_pending.clear()
+        self._schedule_entries = state.schedule_entries
+        self._cron_entries = state.cron_entries
+        self._play_queue = deque(state.queue)
+        self._schedule_auto_focus_enabled = state.schedule_auto_focus
+        self._logs_visible = state.logs_visible
+        self._schedule_focus_checkbox.blockSignals(True)
+        self._schedule_focus_checkbox.setChecked(self._schedule_auto_focus_enabled)
+        self._schedule_focus_checkbox.blockSignals(False)
+        self._toggle_logs_action.blockSignals(True)
+        self._toggle_logs_action.setChecked(self._logs_visible)
+        self._toggle_logs_action.blockSignals(False)
+        self._set_logs_visible(self._logs_visible)
+        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+        self._recalculate_schedule_durations()
+        self._refresh_urls_list()
+        self._refresh_cron_table()
+        self._refresh_schedule_table()
+        self._scheduler.set_entries(self._schedule_entries)
+
+    def _sync_external_state_if_needed(self) -> None:
+        if self._shutting_down:
+            return
+        try:
+            current_external_version = state_version(self._state_path)
+        except Exception:
+            return
+        if current_external_version <= self._state_version:
+            return
+        self._append_log(
+            (
+                "Detected external state update from another process "
+                f"(local version {self._state_version}, external version {current_external_version}); "
+                "reloading runtime state"
+            )
+        )
+        self._reload_runtime_state_after_conflict()
 
     def _save_settings(self) -> None:
         shared_fade_duration_seconds = max(

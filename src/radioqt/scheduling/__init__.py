@@ -31,13 +31,25 @@ from .presentation import (
     schedule_entry_palette_tokens,
     visible_schedule_entries,
 )
-from .runtime import RadioScheduler
 from .state import (
     PlaySchedulePreparation,
     StartupSchedulePreparation,
     prepare_schedule_entries_for_play,
     prepare_schedule_entries_for_startup,
 )
+from .workflows import (
+    DEFAULT_CRON_RUNTIME_LOOKBACK,
+    DEFAULT_CRON_RUNTIME_MAX_OCCURRENCES,
+    DEFAULT_CRON_RUNTIME_MAX_RECENT_OCCURRENCES,
+    enforce_hard_sync_always,
+    is_schedule_entry_protected_from_removal,
+    sync_cron_runtime_window,
+)
+
+try:
+    from .runtime import RadioScheduler
+except ModuleNotFoundError:
+    RadioScheduler = None  # type: ignore[assignment]
 
 __all__ = [
     "PlaySchedulePreparation",
@@ -47,7 +59,12 @@ __all__ = [
     "create_cron_entry",
     "create_schedule_entry",
     "current_schedule_entry_for_playback",
+    "DEFAULT_CRON_RUNTIME_LOOKBACK",
+    "DEFAULT_CRON_RUNTIME_MAX_OCCURRENCES",
+    "DEFAULT_CRON_RUNTIME_MAX_RECENT_OCCURRENCES",
+    "enforce_hard_sync_always",
     "initial_schedule_filter_date",
+    "is_schedule_entry_protected_from_removal",
     "normalize_overdue_one_shots",
     "normalized_start",
     "next_cron_occurrence",
@@ -65,6 +82,7 @@ __all__ = [
     "schedule_entry_end_at",
     "schedule_entry_window_details",
     "sort_schedule_entries",
+    "sync_cron_runtime_window",
     "update_cron_expression",
     "update_cron_enabled",
     "update_cron_fade_in",

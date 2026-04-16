@@ -35,6 +35,9 @@ from ..models import (
 )
 from ..player import MediaPlayerController
 from ..scheduling import (
+    DEFAULT_CRON_RUNTIME_LOOKBACK,
+    DEFAULT_CRON_RUNTIME_MAX_OCCURRENCES,
+    DEFAULT_CRON_RUNTIME_MAX_RECENT_OCCURRENCES,
     RadioScheduler,
     normalize_overdue_one_shots,
 )
@@ -67,9 +70,9 @@ class MainWindow(
     MainWindowPlaybackHandlersMixin,
     QMainWindow,
 ):
-    _CRON_RUNTIME_MAX_OCCURRENCES = 100
-    _CRON_RUNTIME_MAX_RECENT_OCCURRENCES = 20
-    _CRON_RUNTIME_LOOKBACK = timedelta(hours=1)
+    _CRON_RUNTIME_MAX_OCCURRENCES = DEFAULT_CRON_RUNTIME_MAX_OCCURRENCES
+    _CRON_RUNTIME_MAX_RECENT_OCCURRENCES = DEFAULT_CRON_RUNTIME_MAX_RECENT_OCCURRENCES
+    _CRON_RUNTIME_LOOKBACK = DEFAULT_CRON_RUNTIME_LOOKBACK
     _DURATION_PROBE_CACHE_MAX_ENTRIES = 2000
 
     def __init__(self, config_dir: Path | None = None) -> None:
@@ -85,6 +88,7 @@ class MainWindow(
         self._config_dir = (config_dir or DEFAULT_CONFIG_DIR).expanduser()
         self._state_path = self._config_dir / "db.sqlite"
         self._settings_path = self._config_dir / "settings.yaml"
+        self._state_version = 0
         self._legacy_state_path = Path.cwd() / "state" / "radio_state.db"
         self._legacy_state_json_path = Path.cwd() / "state" / "radio_state.json"
         self._media_items: dict[str, MediaItem] = {}
@@ -136,6 +140,8 @@ class MainWindow(
         self._cron_refresh_timer.setInterval(30000)
         self._schedule_focus_timer = QTimer(self)
         self._schedule_focus_timer.setInterval(1000)
+        self._external_state_sync_timer = QTimer(self)
+        self._external_state_sync_timer.setInterval(2000)
         self._greenwich_time_signal_timer = QTimer(self)
         self._greenwich_time_signal_timer.setSingleShot(True)
         self._volume_fade_timer = QTimer(self)
@@ -156,6 +162,7 @@ class MainWindow(
         self._load_initial_state()
         self._cron_refresh_timer.start()
         self._schedule_focus_timer.start()
+        self._external_state_sync_timer.start()
         self._schedule_next_greenwich_time_signal()
 
     def _schedule_next_greenwich_time_signal(self) -> None:
@@ -312,6 +319,7 @@ class MainWindow(
         self._shutting_down = True
         self._scheduler.stop()
         self._greenwich_time_signal_timer.stop()
+        self._external_state_sync_timer.stop()
         self._greenwich_time_signal_player.stop()
         self._volume_fade_timer.stop()
         self._duration_probe_executor.shutdown(wait=False, cancel_futures=True)

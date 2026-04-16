@@ -20,13 +20,15 @@ from ..models import CronEntry, MediaItem, SCHEDULE_STATUS_PENDING, ScheduleEntr
 from ..scheduling import (
     active_schedule_entry_at,
     current_schedule_entry_for_playback,
+    enforce_hard_sync_always,
+    is_schedule_entry_protected_from_removal,
     next_cron_occurrence,
     normalized_start,
-    refresh_cron_schedule_entries,
     runtime_cron_dates,
     schedule_entry_end_at,
     schedule_entry_palette_tokens,
     schedule_entry_window_details,
+    sync_cron_runtime_window,
     visible_schedule_entries,
 )
 from ..ui_components import ScheduleDialog, refresh_schedule_table
@@ -108,30 +110,23 @@ class MainWindowScheduleTimelineMixin:
         return None
 
     def _enforce_hard_sync_always(self) -> bool:
-        changed = False
-        for cron_entry in self._cron_entries:
-            if cron_entry.hard_sync:
-                continue
-            cron_entry.hard_sync = True
-            changed = True
-        for schedule_entry in self._schedule_entries:
-            if schedule_entry.hard_sync and schedule_entry.cron_hard_sync_override is None:
-                continue
-            schedule_entry.hard_sync = True
-            schedule_entry.cron_hard_sync_override = None
-            changed = True
-        return changed
+        return enforce_hard_sync_always(
+            self._cron_entries,
+            self._schedule_entries,
+        )
 
     def _is_schedule_entry_protected_from_removal(self, entry: ScheduleEntry) -> bool:
-        cron_entry = self._cron_entry_by_id(entry.cron_id)
-        return cron_entry is not None and cron_entry.enabled
+        return is_schedule_entry_protected_from_removal(
+            entry,
+            {cron_entry.id: cron_entry for cron_entry in self._cron_entries},
+        )
 
     @staticmethod
     def _runtime_cron_dates() -> set[date]:
         return runtime_cron_dates(datetime.now().astimezone())
 
     def _refresh_cron_schedule_entries(self, target_dates: set[date] | None = None) -> None:
-        self._schedule_entries = refresh_cron_schedule_entries(
+        self._schedule_entries = sync_cron_runtime_window(
             self._schedule_entries,
             self._cron_entries,
             target_dates=target_dates,

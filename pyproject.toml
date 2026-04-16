@@ -13,8 +13,14 @@ dependencies = [
     "PySide6>=6.6",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+]
+
 [project.scripts]
 radioqt = "radioqt.main:run"
+radioqt-cli = "radioqt.cli:run"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -25,3 +31,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 radioqt = ["radioqt.svg"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -ra"

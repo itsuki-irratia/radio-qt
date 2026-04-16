@@ -35,6 +35,7 @@ class MainWindowInteractionRuntimeMixin:
         self._scheduler.log.connect(self._append_log)
         self._cron_refresh_timer.timeout.connect(self._refresh_cron_runtime_window)
         self._schedule_focus_timer.timeout.connect(self._refresh_schedule_auto_focus)
+        self._external_state_sync_timer.timeout.connect(self._sync_external_state_if_needed)
         self._greenwich_time_signal_timer.timeout.connect(self._on_greenwich_time_signal_timer)
         self._configuration_action.triggered.connect(self._open_configuration_dialog)
         self._toggle_logs_action.toggled.connect(self._on_logs_visibility_toggled)

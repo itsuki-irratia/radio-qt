@@ -1,5 +1,7 @@
 # RadioQt
 
+[![CI](https://github.com/itsuki-irratia/radio-qt/actions/workflows/ci.yml/badge.svg)](https://github.com/itsuki-irratia/radio-qt/actions/workflows/ci.yml)
+
 RadioQt is a Python + Qt multimedia player for radio automation workflows:
 - VLC-style local/stream playback
 - Datetime-oriented scheduling
@@ -20,11 +22,27 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+For development (with test tooling):
+
+```bash
+pip install -e ".[dev]"
+```
+
 ## Run
 
 ```bash
 radioqt
 ```
+
+CLI for schedule and CRON management:
+
+```bash
+radioqt-cli --help
+```
+
+Full CLI docs (all commands + explicit examples):
+
+[CLI.md](CLI.md)
 
 Default runtime paths:
 
@@ -35,6 +53,12 @@ You can override the config directory:
 
 ```bash
 radioqt --config "/path/to/config-dir"
+```
+
+And same for CLI:
+
+```bash
+radioqt-cli --config "/path/to/config-dir" schedule list
 ```
 
 In that case, paths become:
@@ -54,6 +78,12 @@ Legacy `state/radio_state.db` and `state/radio_state.json` are auto-migrated whe
 
 - Scheduled items always interrupt current playback at trigger time.
 - If a media source is missing, the app logs the skip and continues.
+
+## Tests
+
+```bash
+python -m pytest
+```
 
 ## Linux troubleshooting
 
