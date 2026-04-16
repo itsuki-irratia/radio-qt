@@ -193,6 +193,13 @@ def parse_settings_yaml(raw_text: str) -> dict[str, Any]:
             raw_value = line.split(":", 1)[1].strip()
             data["greenwich_time_signal_path"] = parse_scalar(raw_value)
             continue
+        if line.startswith("default_volume_percent:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["default_volume_percent"] = int(raw_value)
+            except ValueError:
+                pass
+            continue
         if line.startswith("greenwich_time_signal:"):
             signal_data: dict[str, Any] = {}
             while index < len(lines):
@@ -212,6 +219,27 @@ def parse_settings_yaml(raw_text: str) -> dict[str, Any]:
                     signal_data["path"] = parse_scalar(raw_value)
             if signal_data:
                 data["greenwich_time_signal"] = signal_data
+            continue
+        if line.startswith("audio:"):
+            audio_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                index += 1
+                if ":" not in detail:
+                    continue
+                key, value = detail.split(":", 1)
+                normalized_key = key.strip()
+                raw_value = value.strip()
+                if normalized_key == "default_volume_percent":
+                    try:
+                        audio_data["default_volume_percent"] = int(raw_value)
+                    except ValueError:
+                        continue
+            if audio_data:
+                data["audio"] = audio_data
             continue
         if line.startswith("custom_paths:"):
             custom_paths_data: dict[str, Any] = {}

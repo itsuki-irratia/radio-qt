@@ -7,6 +7,14 @@ from ..models import DEFAULT_SUPPORTED_EXTENSIONS, LibraryTab
 from ._shared import normalize_extensions, safe_bool, safe_panel_percent, safe_positive_int
 
 
+def _safe_volume_percent(value: Any, default: int = 100) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(0, min(100, parsed))
+
+
 @dataclass(slots=True)
 class AppConfig:
     fade_in_duration_seconds: int = 5
@@ -22,6 +30,7 @@ class AppConfig:
     supported_extensions: list[str] = field(default_factory=lambda: list(DEFAULT_SUPPORTED_EXTENSIONS))
     greenwich_time_signal_enabled: bool = False
     greenwich_time_signal_path: str = ""
+    default_volume_percent: int = 100
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
@@ -110,6 +119,10 @@ class AppConfig:
         greenwich_time_signal_path = str(
             data.get("greenwich_time_signal_path", "") or ""
         ).strip()
+        default_volume_percent = _safe_volume_percent(
+            data.get("default_volume_percent"),
+            100,
+        )
         signal_payload = data.get("greenwich_time_signal")
         if isinstance(signal_payload, dict):
             greenwich_time_signal_enabled = safe_bool(
@@ -119,6 +132,12 @@ class AppConfig:
             greenwich_time_signal_path = str(
                 signal_payload.get("path", greenwich_time_signal_path) or ""
             ).strip()
+        audio_payload = data.get("audio")
+        if isinstance(audio_payload, dict):
+            default_volume_percent = _safe_volume_percent(
+                audio_payload.get("default_volume_percent"),
+                default_volume_percent,
+            )
 
         custom_paths_payload = data.get("custom_paths")
         tabs_raw = (
@@ -151,6 +170,7 @@ class AppConfig:
             supported_extensions=normalize_extensions(supported_extensions_raw),
             greenwich_time_signal_enabled=greenwich_time_signal_enabled,
             greenwich_time_signal_path=greenwich_time_signal_path,
+            default_volume_percent=default_volume_percent,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -185,6 +205,12 @@ class AppConfig:
             "greenwich_time_signal": {
                 "enabled": bool(self.greenwich_time_signal_enabled),
                 "path": str(self.greenwich_time_signal_path).strip(),
+            },
+            "audio": {
+                "default_volume_percent": _safe_volume_percent(
+                    self.default_volume_percent,
+                    100,
+                ),
             },
             "custom_paths": {
                 "tabs": [tab.to_dict() for tab in self.library_tabs],

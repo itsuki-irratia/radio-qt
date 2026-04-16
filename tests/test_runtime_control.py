@@ -7,6 +7,8 @@ from radioqt.runtime_control import (
     RUNTIME_CONTROL_ACTION_FADE_IN,
     RUNTIME_CONTROL_ACTION_FADE_OUT,
     RUNTIME_CONTROL_ACTION_SET_VOLUME,
+    RUNTIME_CONTROL_ACTION_START_AUTOMATION,
+    RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
 )
 
 
@@ -43,3 +45,20 @@ def test_runtime_control_set_volume_roundtrip(tmp_path) -> None:
     assert drained[0].command_id == queued.command_id
     assert drained[0].action == RUNTIME_CONTROL_ACTION_SET_VOLUME
     assert drained[0].value == 37
+
+
+def test_runtime_control_online_offline_roundtrip(tmp_path) -> None:
+    started = enqueue_runtime_control_command(
+        tmp_path,
+        action=RUNTIME_CONTROL_ACTION_START_AUTOMATION,
+    )
+    stopped = enqueue_runtime_control_command(
+        tmp_path,
+        action=RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
+    )
+    drained = drain_runtime_control_commands(tmp_path)
+    assert [command.command_id for command in drained] == [started.command_id, stopped.command_id]
+    assert [command.action for command in drained] == [
+        RUNTIME_CONTROL_ACTION_START_AUTOMATION,
+        RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
+    ]

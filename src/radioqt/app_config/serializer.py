@@ -21,6 +21,7 @@ def dump_settings_yaml(config: AppConfig) -> str:
         fade_payload.get("streams", {}) if isinstance(fade_payload, dict) else {}
     )
     greenwich_payload = payload.get("greenwich_time_signal", {})
+    audio_payload = payload.get("audio", {})
     custom_paths_payload = payload.get("custom_paths", {})
     extensions_payload = payload.get("extensions", {})
 
@@ -62,6 +63,11 @@ def dump_settings_yaml(config: AppConfig) -> str:
     lines.append(
         "  path: "
         f"{string_as_yaml(str(greenwich_payload.get('path', '')))}"
+    )
+
+    lines.append("audio:")
+    lines.append(
+        f"  default_volume_percent: {int(audio_payload.get('default_volume_percent', 100))}"
     )
 
     lines.append("custom_paths:")

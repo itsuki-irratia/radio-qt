@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from dataclasses import dataclass
 from datetime import date, datetime
 import json
@@ -10,8 +11,17 @@ import signal
 import sys
 import time
 
+from ..app_config import load_app_config, save_app_config
 from ..cron import CronExpression, CronParseError
-from ..models import AppState, CronEntry, MediaItem, ScheduleEntry
+from ..library import (
+    add_stream_media_item,
+    is_stream_source,
+    local_media_path_from_source,
+    remove_media_from_library,
+    update_stream_greenwich_time_signal,
+    update_stream_media_item,
+)
+from ..models import AppState, CronEntry, LibraryTab, MediaItem, ScheduleEntry
 from ..scheduling.cron_runtime import next_cron_occurrence
 from ..scheduling.logic import normalized_start, sort_schedule_entries
 from ..scheduling.mutations import (
@@ -52,6 +62,8 @@ from ..runtime_control import (
     RUNTIME_CONTROL_ACTION_FADE_IN,
     RUNTIME_CONTROL_ACTION_FADE_OUT,
     RUNTIME_CONTROL_ACTION_SET_VOLUME,
+    RUNTIME_CONTROL_ACTION_START_AUTOMATION,
+    RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
 )
 from ..storage.io import (
     load_state_with_version,
@@ -60,6 +72,21 @@ from ..storage.io import (
 )
 
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "radioqt"
+SUPPORTED_SETTINGS_KEYS = (
+    "fade_seconds",
+    "filesystem_default_fade_in",
+    "filesystem_default_fade_out",
+    "streams_default_fade_in",
+    "streams_default_fade_out",
+    "default_volume_percent",
+    "font_size",
+    "media_library_width_percent",
+    "schedule_width_percent",
+    "greenwich_time_signal_enabled",
+    "greenwich_time_signal_path",
+    "supported_extensions",
+    "library_tabs",
+)
 
 
 class CliError(ValueError):
@@ -88,6 +115,17 @@ def _load_state_context(raw_config_dir: str) -> StateContext:
         state=loaded.state,
         state_version=loaded.version,
     )
+
+
+def _settings_path(config_dir: Path) -> Path:
+    return config_dir / "settings.yaml"
+
+
+def _load_app_config_context(raw_config_dir: str) -> tuple[Path, Path, object]:
+    config_dir = _config_dir_from_args(raw_config_dir)
+    settings_path = _settings_path(config_dir)
+    app_config = load_app_config(settings_path)
+    return config_dir, settings_path, app_config
 
 
 def _ensure_media_exists(state: AppState, media_id: str) -> MediaItem:
@@ -160,6 +198,239 @@ def _print_warning(args: argparse.Namespace, text: str) -> None:
     if _json_enabled(args):
         return
     print(text)
+
+
+def _settings_to_dict(app_config: object) -> dict[str, object]:
+    media_width = max(10, min(90, int(app_config.media_library_width_percent)))
+    schedule_width = 100 - media_width
+    supported_extensions: list[str] = []
+    for raw_extension in list(app_config.supported_extensions):
+        token = str(raw_extension).strip().lower().lstrip(".")
+        if not token:
+            continue
+        if not all(char.isalnum() for char in token):
+            continue
+        if token in supported_extensions:
+            continue
+        supported_extensions.append(token)
+    library_tabs = [
+        {
+            "title": str(tab.title).strip(),
+            "path": str(tab.path).strip(),
+        }
+        for tab in list(app_config.library_tabs)
+    ]
+    return {
+        "fade_seconds": max(
+            1,
+            int(app_config.fade_in_duration_seconds),
+            int(app_config.fade_out_duration_seconds),
+        ),
+        "filesystem_default_fade_in": bool(app_config.filesystem_default_fade_in),
+        "filesystem_default_fade_out": bool(app_config.filesystem_default_fade_out),
+        "streams_default_fade_in": bool(app_config.streams_default_fade_in),
+        "streams_default_fade_out": bool(app_config.streams_default_fade_out),
+        "default_volume_percent": _validate_volume_percent(int(app_config.default_volume_percent)),
+        "font_size": int(app_config.font_size) if app_config.font_size is not None else None,
+        "media_library_width_percent": media_width,
+        "schedule_width_percent": schedule_width,
+        "greenwich_time_signal_enabled": bool(app_config.greenwich_time_signal_enabled),
+        "greenwich_time_signal_path": str(app_config.greenwich_time_signal_path).strip(),
+        "supported_extensions": supported_extensions,
+        "library_tabs": library_tabs,
+    }
+
+
+def _normalize_settings_key(raw_key: str) -> str:
+    normalized = raw_key.strip().lower().replace("-", "_").replace(".", "_")
+    aliases = {
+        "fade": "fade_seconds",
+        "fade_seconds": "fade_seconds",
+        "fade_in_seconds": "fade_seconds",
+        "fade_out_seconds": "fade_seconds",
+        "fade_in_duration_seconds": "fade_seconds",
+        "fade_out_duration_seconds": "fade_seconds",
+        "filesystem_default_fade_in": "filesystem_default_fade_in",
+        "filesystem_default_fade_out": "filesystem_default_fade_out",
+        "streams_default_fade_in": "streams_default_fade_in",
+        "streams_default_fade_out": "streams_default_fade_out",
+        "default_volume_percent": "default_volume_percent",
+        "audio_default_volume_percent": "default_volume_percent",
+        "volume": "default_volume_percent",
+        "volume_percent": "default_volume_percent",
+        "font_size": "font_size",
+        "media_library_width_percent": "media_library_width_percent",
+        "schedule_width_percent": "schedule_width_percent",
+        "greenwich_time_signal_enabled": "greenwich_time_signal_enabled",
+        "greenwich_time_signal_path": "greenwich_time_signal_path",
+        "supported_extensions": "supported_extensions",
+        "extensions_supported": "supported_extensions",
+        "library_tabs": "library_tabs",
+        "custom_paths_tabs": "library_tabs",
+    }
+    key = aliases.get(normalized, normalized)
+    if key not in SUPPORTED_SETTINGS_KEYS:
+        allowed = ", ".join(SUPPORTED_SETTINGS_KEYS)
+        raise CliError(f"Unknown settings key '{raw_key}'. Allowed keys: {allowed}")
+    return key
+
+
+def _parse_settings_bool(raw_value: str, key: str) -> bool:
+    normalized = raw_value.strip().lower()
+    if normalized in {"true", "1", "yes", "y", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "n", "off"}:
+        return False
+    raise CliError(f"Invalid boolean for {key}. Use true/false.")
+
+
+def _parse_settings_positive_int(raw_value: str, key: str) -> int:
+    try:
+        parsed = int(raw_value)
+    except ValueError as exc:
+        raise CliError(f"Invalid integer for {key}.") from exc
+    if parsed <= 0:
+        raise CliError(f"{key} must be greater than zero.")
+    return parsed
+
+
+def _parse_settings_volume_percent(raw_value: str, key: str) -> int:
+    try:
+        parsed = int(raw_value)
+    except ValueError as exc:
+        raise CliError(f"Invalid integer for {key}.") from exc
+    return _validate_volume_percent(parsed)
+
+
+def _parse_settings_panel_percent(raw_value: str, key: str) -> int:
+    try:
+        parsed = int(raw_value)
+    except ValueError as exc:
+        raise CliError(f"Invalid integer for {key}.") from exc
+    if parsed < 10 or parsed > 90:
+        raise CliError(f"{key} must be between 10 and 90.")
+    return parsed
+
+
+def _parse_settings_supported_extensions(raw_value: str, key: str) -> list[str]:
+    raw = raw_value.strip()
+    if not raw:
+        raise CliError(f"{key} cannot be empty.")
+    values: list[object]
+    if raw.startswith("["):
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise CliError(f"Invalid JSON list for {key}.") from exc
+        if not isinstance(decoded, list):
+            raise CliError(f"{key} JSON value must be an array.")
+        values = decoded
+    else:
+        values = [token.strip() for token in raw.split(",")]
+
+    normalized: list[str] = []
+    for item in values:
+        token = str(item).strip().lower().lstrip(".")
+        if not token:
+            continue
+        if not all(char.isalnum() for char in token):
+            raise CliError(
+                f"Invalid extension '{item}' for {key}. Use alphanumeric tokens like mp3, ogg."
+            )
+        if token in normalized:
+            continue
+        normalized.append(token)
+    if not normalized:
+        raise CliError(f"{key} cannot be empty.")
+    return normalized
+
+
+def _parse_settings_library_tabs(raw_value: str, key: str) -> list[LibraryTab]:
+    raw = raw_value.strip()
+    if not raw:
+        raise CliError(f"{key} cannot be empty.")
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            f"Invalid JSON for {key}. Expected an array of objects with title/path."
+        ) from exc
+    if not isinstance(decoded, list):
+        raise CliError(f"{key} JSON value must be an array.")
+    normalized_tabs: list[LibraryTab] = []
+    for item in decoded:
+        if not isinstance(item, dict):
+            raise CliError(f"{key} entries must be objects with title/path.")
+        tab = LibraryTab.from_dict(item)
+        if not tab.title or not tab.path:
+            raise CliError(
+                f"{key} entries require non-empty title and path. Invalid entry: {item}"
+            )
+        normalized_tabs.append(tab)
+    return normalized_tabs
+
+
+def _apply_setting_value(app_config: object, *, key: str, raw_value: str) -> None:
+    if key == "fade_seconds":
+        fade_seconds = _parse_settings_positive_int(raw_value, key)
+        app_config.fade_in_duration_seconds = fade_seconds
+        app_config.fade_out_duration_seconds = fade_seconds
+        return
+    if key == "filesystem_default_fade_in":
+        app_config.filesystem_default_fade_in = _parse_settings_bool(raw_value, key)
+        return
+    if key == "filesystem_default_fade_out":
+        app_config.filesystem_default_fade_out = _parse_settings_bool(raw_value, key)
+        return
+    if key == "streams_default_fade_in":
+        app_config.streams_default_fade_in = _parse_settings_bool(raw_value, key)
+        return
+    if key == "streams_default_fade_out":
+        app_config.streams_default_fade_out = _parse_settings_bool(raw_value, key)
+        return
+    if key == "default_volume_percent":
+        app_config.default_volume_percent = _parse_settings_volume_percent(raw_value, key)
+        return
+    if key == "font_size":
+        normalized = raw_value.strip().lower()
+        if normalized in {"none", "null", "auto"}:
+            app_config.font_size = None
+            return
+        app_config.font_size = _parse_settings_positive_int(raw_value, key)
+        return
+    if key == "media_library_width_percent":
+        media_width = _parse_settings_panel_percent(raw_value, key)
+        app_config.media_library_width_percent = media_width
+        app_config.schedule_width_percent = 100 - media_width
+        return
+    if key == "schedule_width_percent":
+        schedule_width = _parse_settings_panel_percent(raw_value, key)
+        app_config.schedule_width_percent = schedule_width
+        app_config.media_library_width_percent = 100 - schedule_width
+        return
+    if key == "greenwich_time_signal_enabled":
+        app_config.greenwich_time_signal_enabled = _parse_settings_bool(raw_value, key)
+        return
+    if key == "greenwich_time_signal_path":
+        app_config.greenwich_time_signal_path = raw_value.strip()
+        return
+    if key == "supported_extensions":
+        app_config.supported_extensions = _parse_settings_supported_extensions(raw_value, key)
+        return
+    if key == "library_tabs":
+        app_config.library_tabs = _parse_settings_library_tabs(raw_value, key)
+        return
+    raise CliError(f"Unsupported settings key: {key}")
+
+
+def _setting_value_to_text(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    if value is None:
+        return "null"
+    return str(value)
 
 
 def _media_item_to_dict(media_item: MediaItem) -> dict[str, object]:
@@ -296,6 +567,26 @@ def _normalize_media_source(raw_source: str) -> str:
     return str(source_path)
 
 
+def _is_remote_stream_source(source: str) -> bool:
+    return is_stream_source(source) and local_media_path_from_source(source) is None
+
+
+def _normalize_stream_source(raw_source: str) -> str:
+    source = raw_source.strip()
+    if not source:
+        raise CliError("Stream source cannot be empty")
+    if not _is_remote_stream_source(source):
+        raise CliError("Stream source must be a URL (http/https/rtsp/etc).")
+    return source
+
+
+def _stream_media_items(state: AppState) -> list[MediaItem]:
+    return sorted(
+        [item for item in state.media_items if _is_remote_stream_source(item.source)],
+        key=lambda item: (item.created_at, item.title.lower(), item.id),
+    )
+
+
 def _cmd_media_add(args: argparse.Namespace) -> int:
     context = _load_state_context(args.config)
     source = _normalize_media_source(args.source)
@@ -341,6 +632,220 @@ def _cmd_media_add(args: argparse.Namespace) -> int:
             "ok": True,
             "created": True,
             "media": _media_item_to_dict(media_item),
+        },
+    )
+    return 0
+
+
+def _cmd_streams_list(args: argparse.Namespace) -> int:
+    context = _load_state_context(args.config)
+    streams = _stream_media_items(context.state)
+    if not streams:
+        _print_success(
+            args,
+            text="No streams found.",
+            payload={
+                "ok": True,
+                "count": 0,
+                "streams": [],
+            },
+        )
+        return 0
+    if _json_enabled(args):
+        _print_success(
+            args,
+            text="",
+            payload={
+                "ok": True,
+                "count": len(streams),
+                "streams": [_media_item_to_dict(item) for item in streams],
+            },
+        )
+        return 0
+    print("STREAM_ID\tTITLE\tURL\tGREENWICH_TIME_SIGNAL")
+    for item in streams:
+        print(
+            f"{item.id}\t{item.title}\t{item.source}\t"
+            f"{'true' if item.greenwich_time_signal_enabled else 'false'}"
+        )
+    return 0
+
+
+def _cmd_streams_add(args: argparse.Namespace) -> int:
+    context = _load_state_context(args.config)
+    source = _normalize_stream_source(args.source)
+    existing_stream = next(
+        (item for item in context.state.media_items if item.source == source and _is_remote_stream_source(item.source)),
+        None,
+    )
+    if existing_stream is not None:
+        _print_success(
+            args,
+            text=f"Stream already exists: {existing_stream.id}",
+            payload={
+                "ok": True,
+                "created": False,
+                "stream": _media_item_to_dict(existing_stream),
+            },
+        )
+        return 0
+    title = args.title.strip() if args.title else source
+    media_by_id = {item.id: item for item in context.state.media_items}
+    created_stream = add_stream_media_item(
+        media_by_id,
+        {},
+        title,
+        source,
+    )
+    created_stream.greenwich_time_signal_enabled = _bool_from_token(args.greenwich_time_signal)
+    context.state.media_items = list(media_by_id.values())
+    try:
+        context.state_version = save_state(
+            context.state_path,
+            context.state,
+            expected_version=context.state_version,
+        )
+    except StateVersionConflictError as exc:
+        raise CliError(
+            (
+                "State changed in another process while this command was running "
+                f"(expected version {exc.expected_version}, current {exc.current_version}). "
+                "Please run the command again."
+            )
+        ) from exc
+    _print_success(
+        args,
+        text=f"Created stream: {created_stream.id}",
+        payload={
+            "ok": True,
+            "created": True,
+            "stream": _media_item_to_dict(created_stream),
+        },
+    )
+    return 0
+
+
+def _cmd_streams_edit(args: argparse.Namespace) -> int:
+    context = _load_state_context(args.config)
+    media_by_id = {item.id: item for item in context.state.media_items}
+    stream = media_by_id.get(args.stream_id)
+    if stream is None or not _is_remote_stream_source(stream.source):
+        raise CliError(f"Stream '{args.stream_id}' not found")
+
+    has_changes = False
+    if args.source is not None:
+        normalized_source = _normalize_stream_source(args.source)
+        duplicate = next(
+            (
+                item
+                for item in context.state.media_items
+                if item.id != stream.id and item.source == normalized_source and _is_remote_stream_source(item.source)
+            ),
+            None,
+        )
+        if duplicate is not None:
+            raise CliError(f"Another stream already uses this URL: {duplicate.id}")
+        next_title = args.title if args.title is not None else stream.title
+        updated = update_stream_media_item(
+            media_by_id,
+            {},
+            stream.id,
+            next_title,
+            normalized_source,
+        )
+        if updated is not None:
+            stream = updated
+            has_changes = True
+    elif args.title is not None:
+        updated = update_stream_media_item(
+            media_by_id,
+            {},
+            stream.id,
+            args.title,
+            stream.source,
+        )
+        if updated is not None:
+            stream = updated
+            has_changes = True
+
+    if args.greenwich_time_signal is not None:
+        next_enabled = _bool_from_token(args.greenwich_time_signal)
+        if bool(stream.greenwich_time_signal_enabled) != next_enabled:
+            updated_signal_stream = update_stream_greenwich_time_signal(
+                media_by_id,
+                stream.id,
+                enabled=next_enabled,
+            )
+            if updated_signal_stream is not None:
+                stream = updated_signal_stream
+                has_changes = True
+
+    if not has_changes:
+        raise CliError("No changes were applied")
+
+    context.state.media_items = list(media_by_id.values())
+    try:
+        context.state_version = save_state(
+            context.state_path,
+            context.state,
+            expected_version=context.state_version,
+        )
+    except StateVersionConflictError as exc:
+        raise CliError(
+            (
+                "State changed in another process while this command was running "
+                f"(expected version {exc.expected_version}, current {exc.current_version}). "
+                "Please run the command again."
+            )
+        ) from exc
+    _print_success(
+        args,
+        text=f"Updated stream: {stream.id}",
+        payload={
+            "ok": True,
+            "updated": True,
+            "stream": _media_item_to_dict(stream),
+        },
+    )
+    return 0
+
+
+def _cmd_streams_remove(args: argparse.Namespace) -> int:
+    context = _load_state_context(args.config)
+    media_by_id = {item.id: item for item in context.state.media_items}
+    stream = media_by_id.get(args.stream_id)
+    if stream is None or not _is_remote_stream_source(stream.source):
+        raise CliError(f"Stream '{args.stream_id}' not found")
+
+    removal = remove_media_from_library(
+        media_by_id,
+        {},
+        context.state.cron_entries,
+        context.state.schedule_entries,
+        deque(context.state.queue),
+        args.stream_id,
+    )
+    if removal.removed_media is None:
+        raise CliError(f"Stream '{args.stream_id}' was not removed")
+
+    context.state.media_items = list(media_by_id.values())
+    context.state.cron_entries = removal.cron_entries
+    context.state.schedule_entries = removal.schedule_entries
+    context.state.queue = list(removal.play_queue)
+    _save_runtime_state(context, datetime.now().astimezone())
+    _print_success(
+        args,
+        text=(
+            f"Removed stream: {args.stream_id} "
+            f"(removed_cron={removal.removed_cron_count}, removed_schedule={removal.removed_schedule_count})"
+        ),
+        payload={
+            "ok": True,
+            "removed": True,
+            "stream_id": args.stream_id,
+            "removed_cron_count": removal.removed_cron_count,
+            "removed_schedule_count": removal.removed_schedule_count,
+            "removed_queue_count": removal.removed_queue_count,
         },
     )
     return 0
@@ -806,6 +1311,73 @@ def _cmd_cron_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_settings_get(args: argparse.Namespace) -> int:
+    config_dir, settings_path, app_config = _load_app_config_context(args.config)
+    del config_dir
+    settings_data = _settings_to_dict(app_config)
+    if args.key:
+        key = _normalize_settings_key(args.key)
+        value = settings_data[key]
+        _print_success(
+            args,
+            text=f"{key}={_setting_value_to_text(value)}",
+            payload={
+                "ok": True,
+                "key": key,
+                "value": value,
+                "settings_path": str(settings_path),
+            },
+        )
+        return 0
+
+    if _json_enabled(args):
+        _print_success(
+            args,
+            text="",
+            payload={
+                "ok": True,
+                "settings": settings_data,
+                "settings_path": str(settings_path),
+            },
+        )
+        return 0
+
+    print("KEY\tVALUE")
+    for key in SUPPORTED_SETTINGS_KEYS:
+        print(f"{key}\t{_setting_value_to_text(settings_data[key])}")
+    return 0
+
+
+def _cmd_settings_set(args: argparse.Namespace) -> int:
+    config_dir, settings_path, app_config = _load_app_config_context(args.config)
+    del config_dir
+    key = _normalize_settings_key(args.key)
+    before_data = _settings_to_dict(app_config)
+    before_value = before_data[key]
+    _apply_setting_value(app_config, key=key, raw_value=args.value)
+    after_data = _settings_to_dict(app_config)
+    after_value = after_data[key]
+    changed = before_value != after_value
+    if changed:
+        save_app_config(settings_path, app_config)
+
+    _print_success(
+        args,
+        text=(
+            f"{'Updated' if changed else 'No change for'} setting {key}: "
+            f"{_setting_value_to_text(after_value)}"
+        ),
+        payload={
+            "ok": True,
+            "changed": changed,
+            "key": key,
+            "value": after_value,
+            "settings_path": str(settings_path),
+        },
+    )
+    return 0
+
+
 def _validate_positive_pid(raw_pid: int | None) -> int | None:
     if raw_pid is None:
         return None
@@ -949,6 +1521,22 @@ def _cmd_runtime_fade_out(args: argparse.Namespace) -> int:
         args,
         action=RUNTIME_CONTROL_ACTION_FADE_OUT,
         action_label="fade-out",
+    )
+
+
+def _cmd_runtime_online(args: argparse.Namespace) -> int:
+    return _cmd_runtime_control_action(
+        args,
+        action=RUNTIME_CONTROL_ACTION_START_AUTOMATION,
+        action_label="online",
+    )
+
+
+def _cmd_runtime_offline(args: argparse.Namespace) -> int:
+    return _cmd_runtime_control_action(
+        args,
+        action=RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
+        action_label="offline",
     )
 
 
@@ -1100,6 +1688,28 @@ def _build_parser() -> argparse.ArgumentParser:
 
     top_level_subparsers = parser.add_subparsers(dest="resource", required=True)
 
+    settings_parser = top_level_subparsers.add_parser("settings", help="Application settings commands")
+    settings_subparsers = settings_parser.add_subparsers(dest="settings_command", required=True)
+
+    settings_get_parser = settings_subparsers.add_parser(
+        "get",
+        help="Show one setting value or all settings",
+    )
+    settings_get_parser.add_argument(
+        "key",
+        nargs="?",
+        help="Optional setting key",
+    )
+    settings_get_parser.set_defaults(handler=_cmd_settings_get)
+
+    settings_set_parser = settings_subparsers.add_parser(
+        "set",
+        help="Set one setting value",
+    )
+    settings_set_parser.add_argument("key", help="Setting key")
+    settings_set_parser.add_argument("value", help="Setting value")
+    settings_set_parser.set_defaults(handler=_cmd_settings_set)
+
     media_parser = top_level_subparsers.add_parser("media", help="Media library commands")
     media_subparsers = media_parser.add_subparsers(dest="media_command", required=True)
     media_list_parser = media_subparsers.add_parser("list", help="List media items")
@@ -1108,6 +1718,34 @@ def _build_parser() -> argparse.ArgumentParser:
     media_add_parser.add_argument("--source", required=True, help="Local file path or stream URL")
     media_add_parser.add_argument("--title", help="Optional display title")
     media_add_parser.set_defaults(handler=_cmd_media_add)
+
+    streams_parser = top_level_subparsers.add_parser("streams", help="Streaming media commands")
+    streams_subparsers = streams_parser.add_subparsers(dest="streams_command", required=True)
+    streams_list_parser = streams_subparsers.add_parser("list", help="List stream entries")
+    streams_list_parser.set_defaults(handler=_cmd_streams_list)
+    streams_add_parser = streams_subparsers.add_parser("add", help="Add a stream URL")
+    streams_add_parser.add_argument("--source", required=True, help="Stream URL (http/https/rtsp/etc)")
+    streams_add_parser.add_argument("--title", help="Optional display title")
+    streams_add_parser.add_argument(
+        "--greenwich-time-signal",
+        choices=("true", "false"),
+        default="false",
+        help="Enable/disable Greenwich time signal for this stream (default: false)",
+    )
+    streams_add_parser.set_defaults(handler=_cmd_streams_add)
+    streams_edit_parser = streams_subparsers.add_parser("edit", help="Edit a stream")
+    streams_edit_parser.add_argument("stream_id", help="Stream media id")
+    streams_edit_parser.add_argument("--source", help="New stream URL")
+    streams_edit_parser.add_argument("--title", help="New display title")
+    streams_edit_parser.add_argument(
+        "--greenwich-time-signal",
+        choices=("true", "false"),
+        help="Set Greenwich time signal for this stream",
+    )
+    streams_edit_parser.set_defaults(handler=_cmd_streams_edit)
+    streams_remove_parser = streams_subparsers.add_parser("remove", help="Remove a stream")
+    streams_remove_parser.add_argument("stream_id", help="Stream media id")
+    streams_remove_parser.set_defaults(handler=_cmd_streams_remove)
 
     schedule_parser = top_level_subparsers.add_parser("schedule", help="Schedule commands")
     schedule_subparsers = schedule_parser.add_subparsers(dest="schedule_command", required=True)
@@ -1300,6 +1938,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Trigger immediate live fade-out on the running GUI",
     )
     runtime_fade_out_parser.set_defaults(handler=_cmd_runtime_fade_out)
+
+    runtime_online_parser = runtime_subparsers.add_parser(
+        "online",
+        help="Set automation online (same as GUI Play button)",
+    )
+    runtime_online_parser.set_defaults(handler=_cmd_runtime_online)
+
+    runtime_offline_parser = runtime_subparsers.add_parser(
+        "offline",
+        help="Set automation offline (same as GUI Stop button)",
+    )
+    runtime_offline_parser.set_defaults(handler=_cmd_runtime_offline)
 
     runtime_volume_parser = runtime_subparsers.add_parser(
         "volume",

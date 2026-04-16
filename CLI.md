@@ -132,6 +132,59 @@ radioqt-cli cron list
 
 ## Command reference
 
+### `settings`
+
+Read and update `settings.yaml` safely from CLI.
+
+#### `settings get`
+
+Print all supported settings:
+
+```bash
+radioqt-cli settings get
+```
+
+Print one setting:
+
+```bash
+radioqt-cli settings get fade_seconds
+radioqt-cli settings get default_volume_percent
+```
+
+JSON mode:
+
+```bash
+radioqt-cli --json settings get
+```
+
+#### `settings set`
+
+Update one setting value:
+
+```bash
+radioqt-cli settings set fade_seconds 8
+radioqt-cli settings set default_volume_percent 72
+radioqt-cli settings set filesystem_default_fade_in true
+radioqt-cli settings set supported_extensions "mp3,ogg,webm"
+radioqt-cli settings set library_tabs '[{"title":"Studio","path":"/srv/radio/studio"}]'
+```
+
+Supported setting keys:
+
+- `fade_seconds`
+- `filesystem_default_fade_in`
+- `filesystem_default_fade_out`
+- `streams_default_fade_in`
+- `streams_default_fade_out`
+- `default_volume_percent`
+- `font_size` (use `none`/`null`/`auto` to reset)
+- `media_library_width_percent`
+- `schedule_width_percent`
+- `greenwich_time_signal_enabled`
+- `greenwich_time_signal_path`
+- `supported_extensions` (CSV or JSON list)
+- `library_tabs` (JSON array of objects with `title` and `path`)
+
 ### `media`
 
 #### `media list`
@@ -151,6 +204,53 @@ radioqt-cli media add --source "/home/user/video.mp4" --title "video.mp4"
 ```
 
 If `--title` is omitted, the CLI uses the source filename (or the source value).
+
+### `streams`
+
+#### `streams list`
+
+Lists URL-based stream entries (not local files).
+
+```bash
+radioqt-cli streams list
+```
+
+#### `streams add`
+
+Adds a stream URL entry.
+
+```bash
+radioqt-cli streams add \
+  --source "https://example.com/live.m3u8" \
+  --title "My Stream"
+```
+
+Enable Greenwich Time Signal for this stream:
+
+```bash
+radioqt-cli streams add \
+  --source "https://example.com/live.m3u8" \
+  --greenwich-time-signal true
+```
+
+#### `streams edit`
+
+Edit title/URL/signal flag:
+
+```bash
+radioqt-cli streams edit "STREAM_ID" \
+  --title "My Stream HQ" \
+  --source "https://example.com/live-hq.m3u8" \
+  --greenwich-time-signal false
+```
+
+#### `streams remove`
+
+Remove one stream entry:
+
+```bash
+radioqt-cli streams remove "STREAM_ID"
+```
 
 ### `schedule`
 
@@ -438,6 +538,22 @@ Machine-readable watch stream:
 radioqt-cli --json runtime watch
 ```
 
+#### `runtime online`
+
+Triggers the same action as pressing GUI `Play` (automation online).
+
+```bash
+radioqt-cli runtime online
+```
+
+#### `runtime offline`
+
+Triggers the same action as pressing GUI `Stop` (automation offline).
+
+```bash
+radioqt-cli runtime offline
+```
+
 #### `runtime fade-in`
 
 Triggers immediate live fade-in on the running GUI (same action as clicking the fade-in button).
@@ -500,6 +616,8 @@ Example response:
   check ISO format (`YYYY-MM-DDTHH:MM:SS+TZ`).
 - `Invalid date`:
   check `YYYY-MM-DD` format.
+- `Stream source must be a URL`:
+  for `streams add/edit --source`, use a stream URL (`http/https/rtsp/...`).
 - `No schedule entries matched the bulk filter`:
   adjust `--date`, `--entry-id`, or `--media-id` values.
 - `State changed in another process while this command was running`:
@@ -518,6 +636,8 @@ Example response:
   start `radioqt` first (or verify `runtime status`) before sending live runtime commands.
 - `Volume must be between 0 and 100`:
   for `runtime volume`, use values in the `0..100` range.
+- `Unknown settings key`:
+  run `radioqt-cli settings get` and use one of the supported setting keys.
 
 ## Exit codes
 
@@ -528,3 +648,4 @@ Example response:
 
 GUI (`radioqt`) and CLI (`radioqt-cli`) use the same SQLite database for the `--config` path you choose.
 If both are open at the same time using the same path, changes are persisted to the same data source.
+Both entry points also reuse shared domain modules (`library`, `scheduling`, `app_config`, `runtime_status`, `runtime_control`) so behavior stays aligned between GUI actions and CLI commands.

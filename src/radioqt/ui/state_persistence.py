@@ -15,6 +15,8 @@ from ..runtime_control import (
     RUNTIME_CONTROL_ACTION_FADE_IN,
     RUNTIME_CONTROL_ACTION_FADE_OUT,
     RUNTIME_CONTROL_ACTION_SET_VOLUME,
+    RUNTIME_CONTROL_ACTION_START_AUTOMATION,
+    RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
 )
 from ..scheduling import initial_schedule_filter_date, prepare_schedule_entries_for_startup
 from ..storage import (
@@ -61,6 +63,7 @@ class MainWindowStatePersistenceMixin:
         self._streams_default_fade_out = bool(app_config.streams_default_fade_out)
         self._greenwich_time_signal_enabled = bool(app_config.greenwich_time_signal_enabled)
         self._greenwich_time_signal_path = str(app_config.greenwich_time_signal_path).strip()
+        self._volume_slider.setValue(max(0, min(100, int(app_config.default_volume_percent))))
         if app_config.font_size is not None:
             self._font_size_points = max(1, app_config.font_size)
         self._apply_global_font_size(self._font_size_points)
@@ -223,6 +226,14 @@ class MainWindowStatePersistenceMixin:
                 self._append_log(
                     f"Runtime CLI command executed: set-volume {command.value}% ({command.command_id})"
                 )
+                continue
+            if command.action == RUNTIME_CONTROL_ACTION_START_AUTOMATION:
+                self._on_play_clicked()
+                self._append_log(f"Runtime CLI command executed: online ({command.command_id})")
+                continue
+            if command.action == RUNTIME_CONTROL_ACTION_STOP_AUTOMATION:
+                self._on_stop_clicked()
+                self._append_log(f"Runtime CLI command executed: offline ({command.command_id})")
 
     def _apply_runtime_volume_value(self, value: int) -> None:
         normalized_value = max(0, min(100, int(value)))
@@ -257,6 +268,7 @@ class MainWindowStatePersistenceMixin:
             supported_extensions=list(self._supported_extensions),
             greenwich_time_signal_enabled=self._greenwich_time_signal_enabled,
             greenwich_time_signal_path=self._greenwich_time_signal_path,
+            default_volume_percent=self._volume_slider.value(),
         )
         save_app_config(self._settings_path, app_config)
 
@@ -282,6 +294,7 @@ class MainWindowStatePersistenceMixin:
             supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
             greenwich_time_signal_enabled=False,
             greenwich_time_signal_path="",
+            default_volume_percent=100,
         )
         self._settings_path.parent.mkdir(parents=True, exist_ok=True)
         save_app_config(self._settings_path, seeded_config)
