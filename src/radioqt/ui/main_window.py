@@ -115,6 +115,8 @@ class MainWindow(
         self._streams_default_fade_out = False
         self._greenwich_time_signal_enabled = False
         self._greenwich_time_signal_path = ""
+        self._icecast_status = False
+        self._icecast_command = ""
         self._fullscreen_active = False
         self._schedule_filter_date = datetime.now().astimezone().date()
         self._current_playback_position_ms = 0

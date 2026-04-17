@@ -22,6 +22,7 @@ def dump_settings_yaml(config: AppConfig) -> str:
     )
     greenwich_payload = payload.get("greenwich_time_signal", {})
     audio_payload = payload.get("audio", {})
+    icecast_payload = payload.get("icecast", {})
     custom_paths_payload = payload.get("custom_paths", {})
     extensions_payload = payload.get("extensions", {})
 
@@ -68,6 +69,16 @@ def dump_settings_yaml(config: AppConfig) -> str:
     lines.append("audio:")
     lines.append(
         f"  default_volume_percent: {int(audio_payload.get('default_volume_percent', 100))}"
+    )
+
+    lines.append("icecast:")
+    lines.append(
+        "  status: "
+        f"{'true' if icecast_payload.get('status', False) else 'false'}"
+    )
+    lines.append(
+        "  command: "
+        f"{string_as_yaml(str(icecast_payload.get('command', '')))}"
     )
 
     lines.append("custom_paths:")

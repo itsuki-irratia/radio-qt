@@ -289,6 +289,8 @@ class ConfigurationDialog(QDialog):
         font_size_points: int,
         greenwich_time_signal_enabled: bool,
         greenwich_time_signal_path: str,
+        icecast_status: bool,
+        icecast_command: str,
         library_tabs: list[LibraryTab],
         supported_extensions: list[str],
     ) -> None:
@@ -378,6 +380,17 @@ class ConfigurationDialog(QDialog):
         self._greenwich_time_signal_path_layout.addWidget(
             self._greenwich_time_signal_browse_button
         )
+        self._icecast_status_selector = QComboBox(self)
+        self._icecast_status_selector.addItems(["True", "False"])
+        self._icecast_status_selector.setCurrentText(
+            "True" if icecast_status else "False"
+        )
+        _configure_boolean_selector(self._icecast_status_selector)
+        self._icecast_command_edit = QLineEdit(self)
+        self._icecast_command_edit.setPlaceholderText(
+            "ffmpeg -f pulse -i <monitor> ... icecast://source:pass@host:8000/mount.mp3"
+        )
+        self._icecast_command_edit.setText(icecast_command.strip())
         self._configured_library_tabs: list[LibraryTab] = list(library_tabs)
         self._configured_supported_extensions: list[str] = list(supported_extensions)
 
@@ -386,6 +399,7 @@ class ConfigurationDialog(QDialog):
         self._settings_sections_list.addItem("Extensions")
         self._settings_sections_list.addItem("Fade")
         self._settings_sections_list.addItem("Greenwich Time Signal")
+        self._settings_sections_list.addItem("Icecast")
         self._settings_sections_list.addItem("View")
         self._settings_sections_list.setFixedWidth(190)
         self._settings_sections_list.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
@@ -437,6 +451,18 @@ class ConfigurationDialog(QDialog):
         self._greenwich_table.setCellWidget(1, 1, self._greenwich_time_signal_path_widget)
         self._greenwich_table.resizeColumnsToContents()
         greenwich_layout.addWidget(self._greenwich_table, 1)
+
+        icecast_page = QWidget(self)
+        icecast_layout = QVBoxLayout(icecast_page)
+        icecast_layout.setContentsMargins(0, 0, 0, 0)
+        self._icecast_table = QTableWidget(self)
+        _configure_settings_table(self._icecast_table, row_count=2)
+        self._icecast_table.setItem(0, 0, _make_readonly_label_item("Status"))
+        self._icecast_table.setCellWidget(0, 1, self._icecast_status_selector)
+        self._icecast_table.setItem(1, 0, _make_readonly_label_item("FFmpeg Command"))
+        self._icecast_table.setCellWidget(1, 1, self._icecast_command_edit)
+        self._icecast_table.resizeColumnsToContents()
+        icecast_layout.addWidget(self._icecast_table, 1)
 
         custom_paths_page = QWidget(self)
         custom_paths_layout = QVBoxLayout(custom_paths_page)
@@ -503,6 +529,7 @@ class ConfigurationDialog(QDialog):
         self._settings_pages.addWidget(extensions_page)
         self._settings_pages.addWidget(fade_page)
         self._settings_pages.addWidget(greenwich_page)
+        self._settings_pages.addWidget(icecast_page)
         self._settings_pages.addWidget(general_page)
         self._settings_sections_list.currentRowChanged.connect(self._on_settings_section_changed)
         self._settings_sections_list.setCurrentRow(0)
@@ -551,6 +578,12 @@ class ConfigurationDialog(QDialog):
 
     def greenwich_time_signal_path(self) -> str:
         return self._greenwich_time_signal_path_edit.text().strip()
+
+    def icecast_status(self) -> bool:
+        return self._icecast_status_selector.currentText() == "True"
+
+    def icecast_command(self) -> str:
+        return self._icecast_command_edit.text().strip()
 
     def library_tabs(self) -> list[LibraryTab]:
         collected_settings = self._collect_settings_values(show_warning=False)

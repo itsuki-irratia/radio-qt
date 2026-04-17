@@ -71,6 +71,8 @@ class MainWindowSettingsLoggingMixin:
             font_size_points=self._font_size_points,
             greenwich_time_signal_enabled=self._greenwich_time_signal_enabled,
             greenwich_time_signal_path=self._greenwich_time_signal_path,
+            icecast_status=self._icecast_status,
+            icecast_command=self._icecast_command,
             library_tabs=self._library_tab_configs,
             supported_extensions=self._supported_extensions,
         )
@@ -87,6 +89,8 @@ class MainWindowSettingsLoggingMixin:
         next_font_size_points = max(1, dialog.font_size_points())
         next_greenwich_time_signal_enabled = bool(dialog.greenwich_time_signal_enabled())
         next_greenwich_time_signal_path = dialog.greenwich_time_signal_path()
+        next_icecast_status = bool(dialog.icecast_status())
+        next_icecast_command = dialog.icecast_command()
         next_library_tabs = dialog.library_tabs()
         next_supported_extensions = self._normalize_supported_extensions(dialog.supported_extensions())
         fade_changed = not (
@@ -106,6 +110,10 @@ class MainWindowSettingsLoggingMixin:
             next_greenwich_time_signal_enabled != self._greenwich_time_signal_enabled
             or next_greenwich_time_signal_path != self._greenwich_time_signal_path
         )
+        icecast_changed = (
+            next_icecast_status != self._icecast_status
+            or next_icecast_command != self._icecast_command
+        )
         library_tabs_changed = next_library_tabs != self._library_tab_configs
         supported_extensions_changed = next_supported_extensions != self._supported_extensions
 
@@ -114,6 +122,7 @@ class MainWindowSettingsLoggingMixin:
             and not font_size_changed
             and not panel_width_changed
             and not greenwich_time_signal_changed
+            and not icecast_changed
             and not library_tabs_changed
             and not supported_extensions_changed
         ):
@@ -133,6 +142,9 @@ class MainWindowSettingsLoggingMixin:
         if greenwich_time_signal_changed:
             self._greenwich_time_signal_enabled = next_greenwich_time_signal_enabled
             self._greenwich_time_signal_path = next_greenwich_time_signal_path
+        if icecast_changed:
+            self._icecast_status = next_icecast_status
+            self._icecast_command = next_icecast_command
         if supported_extensions_changed:
             self._supported_extensions = next_supported_extensions
             self._apply_supported_extensions_to_filesystem_models()
@@ -148,9 +160,13 @@ class MainWindowSettingsLoggingMixin:
             f"streams_fade_in={'True' if self._streams_default_fade_in else 'False'}, "
             f"streams_fade_out={'True' if self._streams_default_fade_out else 'False'}, "
             f"greenwich_time_signal={'True' if self._greenwich_time_signal_enabled else 'False'}, "
+            f"icecast_status={'True' if self._icecast_status else 'False'}, "
+            f"icecast_command={'set' if self._icecast_command else 'empty'}, "
             f"media_library_width={self._media_library_width_percent}%, "
             f"schedule_width={self._schedule_width_percent}%, "
             f"font={self._font_size_points}pt, "
             f"custom library tabs={len(self._library_tab_configs)}, "
             f"extensions={','.join(self._supported_extensions)}"
         )
+        if icecast_changed:
+            self._synchronize_icecast_runtime(reason="settings-update")

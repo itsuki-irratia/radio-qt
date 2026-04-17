@@ -1,0 +1,1 @@
+ffmpeg -f pulse -thread_queue_size 4096 -i "alsa_output.usb-Generic_KM_B2_USB_Audio_20210726905926-00.analog-stereo.monitor" -ac 2 -ar 44100 -c:a libmp3lame -b:a 128k -content_type audio/mpeg -f mp3 "icecast://source:hackme@localhost:8000/radio.mp3"

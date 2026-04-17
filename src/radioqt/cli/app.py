@@ -7,9 +7,12 @@ from datetime import date, datetime
 import json
 import os
 from pathlib import Path, PurePath
+import re
 import signal
+import subprocess
 import sys
 import time
+import traceback
 
 from ..app_config import load_app_config, save_app_config
 from ..cron import CronExpression, CronParseError
@@ -65,7 +68,20 @@ from ..runtime_control import (
     RUNTIME_CONTROL_ACTION_START_AUTOMATION,
     RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
 )
-from ..runtime_logs import read_runtime_log_lines, runtime_log_file_path
+from ..runtime_logs import (
+    append_runtime_log_line,
+    format_runtime_log_line,
+    read_runtime_log_lines,
+    runtime_log_file_path,
+)
+from ..stream_relay import (
+    delete_stream_relay_pid,
+    read_stream_relay_pid,
+    stream_relay_pid_file_path,
+    stream_relay_stderr_file_path,
+    stream_relay_stdout_file_path,
+    write_stream_relay_pid,
+)
 from ..storage.io import (
     load_state_with_version,
     save_state,
@@ -85,6 +101,8 @@ SUPPORTED_SETTINGS_KEYS = (
     "schedule_width_percent",
     "greenwich_time_signal_enabled",
     "greenwich_time_signal_path",
+    "icecast_status",
+    "icecast_command",
     "supported_extensions",
     "library_tabs",
 )
@@ -100,6 +118,9 @@ class StateContext:
     state_path: Path
     state: AppState
     state_version: int
+
+
+_ICECAST_CREDENTIALS_PATTERN = re.compile(r"(icecast://[^:/@\s]+:)([^@/\s]+)(@)")
 
 
 def _config_dir_from_args(raw_config_dir: str) -> Path:
@@ -201,6 +222,43 @@ def _print_warning(args: argparse.Namespace, text: str) -> None:
     print(text)
 
 
+def _append_cli_runtime_log(config_dir: Path, message: str) -> None:
+    line = format_runtime_log_line(message, timestamp=datetime.now().astimezone())
+    try:
+        append_runtime_log_line(config_dir, line)
+    except OSError:
+        # Runtime log persistence is best-effort and should not break CLI flows.
+        pass
+
+
+def _mask_icecast_credentials(command: str) -> str:
+    return _ICECAST_CREDENTIALS_PATTERN.sub(r"\1***\3", command)
+
+
+def _sanitize_for_runtime_log(message: object) -> str:
+    return _mask_icecast_credentials(str(message))
+
+
+def _runtime_command_label_from_args(args: argparse.Namespace) -> str:
+    resource = str(getattr(args, "resource", "") or "").strip()
+    subcommand: str = ""
+    for attr in (
+        "settings_command",
+        "media_command",
+        "streams_command",
+        "schedule_command",
+        "cron_command",
+        "logs_command",
+        "icecast_command",
+        "runtime_command",
+    ):
+        candidate = getattr(args, attr, None)
+        if candidate:
+            subcommand = str(candidate).strip()
+            break
+    return f"{resource} {subcommand}".strip() or "unknown"
+
+
 def _settings_to_dict(app_config: object) -> dict[str, object]:
     media_width = max(10, min(90, int(app_config.media_library_width_percent)))
     schedule_width = 100 - media_width
@@ -237,6 +295,8 @@ def _settings_to_dict(app_config: object) -> dict[str, object]:
         "schedule_width_percent": schedule_width,
         "greenwich_time_signal_enabled": bool(app_config.greenwich_time_signal_enabled),
         "greenwich_time_signal_path": str(app_config.greenwich_time_signal_path).strip(),
+        "icecast_status": bool(app_config.icecast_status),
+        "icecast_command": str(app_config.icecast_command).strip(),
         "supported_extensions": supported_extensions,
         "library_tabs": library_tabs,
     }
@@ -264,6 +324,13 @@ def _normalize_settings_key(raw_key: str) -> str:
         "schedule_width_percent": "schedule_width_percent",
         "greenwich_time_signal_enabled": "greenwich_time_signal_enabled",
         "greenwich_time_signal_path": "greenwich_time_signal_path",
+        "icecast_status": "icecast_status",
+        "stream_relay_status": "icecast_status",
+        "icecast_stream_status": "icecast_status",
+        "icecast_command": "icecast_command",
+        "stream_relay_command": "icecast_command",
+        "icecast_stream_command": "icecast_command",
+        "ffmpeg_command": "icecast_command",
         "supported_extensions": "supported_extensions",
         "extensions_supported": "supported_extensions",
         "library_tabs": "library_tabs",
@@ -311,6 +378,16 @@ def _parse_settings_panel_percent(raw_value: str, key: str) -> int:
     if parsed < 10 or parsed > 90:
         raise CliError(f"{key} must be between 10 and 90.")
     return parsed
+
+
+def _normalize_icecast_command(raw_value: str) -> str:
+    normalized = raw_value.strip()
+    while len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {'"', "'"}:
+        unwrapped = normalized[1:-1].strip()
+        if not unwrapped:
+            break
+        normalized = unwrapped
+    return normalized
 
 
 def _parse_settings_supported_extensions(raw_value: str, key: str) -> list[str]:
@@ -414,6 +491,12 @@ def _apply_setting_value(app_config: object, *, key: str, raw_value: str) -> Non
         return
     if key == "greenwich_time_signal_path":
         app_config.greenwich_time_signal_path = raw_value.strip()
+        return
+    if key == "icecast_status":
+        app_config.icecast_status = _parse_settings_bool(raw_value, key)
+        return
+    if key == "icecast_command":
+        app_config.icecast_command = _normalize_icecast_command(raw_value)
         return
     if key == "supported_extensions":
         app_config.supported_extensions = _parse_settings_supported_extensions(raw_value, key)
@@ -1449,6 +1532,335 @@ def _cmd_logs_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _tail_text_file(path: Path, *, max_lines: int = 20) -> list[str]:
+    try:
+        raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    if max_lines <= 0:
+        return []
+    return [line.strip() for line in raw_lines[-max_lines:] if line.strip()]
+
+
+def _wait_for_process_exit_code(
+    process: subprocess.Popen[object],
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.1,
+) -> int | None:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        exit_code = process.poll()
+        if exit_code is not None:
+            return int(exit_code)
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(max(0.01, poll_interval_seconds))
+
+
+def _best_effort_process_cmdline(pid: int) -> str:
+    proc_cmdline_path = Path(f"/proc/{pid}/cmdline")
+    try:
+        if proc_cmdline_path.is_file():
+            raw_cmdline = proc_cmdline_path.read_bytes()
+            parts = [part.decode("utf-8", errors="replace") for part in raw_cmdline.split(b"\0") if part]
+            cmdline = " ".join(parts).strip()
+            if cmdline:
+                return cmdline
+    except OSError:
+        pass
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "args="],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1.0,
+        )
+        cmdline = (result.stdout or "").strip()
+        if cmdline:
+            return cmdline
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def _stream_command_from_args_or_settings(args: argparse.Namespace) -> str:
+    raw_command = _normalize_icecast_command(str(getattr(args, "command", "") or ""))
+    if raw_command:
+        return raw_command
+    _, _, app_config = _load_app_config_context(args.config)
+    return _normalize_icecast_command(str(app_config.icecast_command))
+
+
+def _stream_status_payload(config_dir: Path, configured_command: str | None = None) -> dict[str, object]:
+    pid_file_path = stream_relay_pid_file_path(config_dir)
+    pid = read_stream_relay_pid(config_dir)
+    running = is_pid_running(pid)
+    stale = pid is not None and not running
+    if stale:
+        delete_stream_relay_pid(config_dir)
+        pid = None
+    _, _, app_config = _load_app_config_context(str(config_dir))
+    if configured_command is None:
+        configured_command = str(app_config.icecast_command).strip()
+    return {
+        "ok": True,
+        "pid": pid,
+        "running": bool(pid is not None and is_pid_running(pid)),
+        "stale": stale,
+        "status": bool(app_config.icecast_status),
+        "pid_file_exists": pid_file_path.is_file(),
+        "pid_path": str(pid_file_path),
+        "stdout_path": str(stream_relay_stdout_file_path(config_dir)),
+        "stderr_path": str(stream_relay_stderr_file_path(config_dir)),
+        "configured_command": configured_command,
+    }
+
+
+def _cmd_stream_status(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    payload = _stream_status_payload(config_dir)
+    _append_cli_runtime_log(
+        config_dir,
+        (
+            "[icecast] status requested: "
+            f"status={'True' if payload['status'] else 'False'}, "
+            f"running={'True' if payload['running'] else 'False'}, "
+            f"pid={payload['pid'] if payload['pid'] is not None else '-'}"
+        ),
+    )
+    pid_label = payload["pid"] if payload["pid"] is not None else "-"
+    configured = str(payload["configured_command"] or "").strip()
+    _print_success(
+        args,
+        text=(
+            f"Icecast status: {'True' if payload['status'] else 'False'} "
+            f"(process={'running' if payload['running'] else 'stopped'}, "
+            f"pid={pid_label}, command={'set' if configured else 'empty'})"
+        ),
+        payload=payload,
+    )
+    return 0
+
+
+def _cmd_stream_start(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    try:
+        command = _stream_command_from_args_or_settings(args)
+        command_source = "--command" if str(getattr(args, "command", "") or "").strip() else "settings"
+        if not command:
+            raise CliError(
+                "No icecast command configured. Set settings key 'icecast_command' "
+                "or pass --command."
+            )
+        masked_command = _mask_icecast_credentials(command)
+        _append_cli_runtime_log(
+            config_dir,
+            f"[icecast] start requested (source={command_source}, command={masked_command})",
+        )
+        existing_pid = read_stream_relay_pid(config_dir)
+        if existing_pid is not None and is_pid_running(existing_pid):
+            raise CliError(
+                f"Icecast relay is already running (pid={existing_pid}). Use icecast stop first."
+            )
+        if existing_pid is not None and not is_pid_running(existing_pid):
+            delete_stream_relay_pid(config_dir)
+            _append_cli_runtime_log(
+                config_dir,
+                f"[icecast] removed stale PID before start (pid={existing_pid})",
+            )
+
+        stdout_path = stream_relay_stdout_file_path(config_dir)
+        stderr_path = stream_relay_stderr_file_path(config_dir)
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            stdout_handle = stdout_path.open("a", encoding="utf-8")
+            stderr_handle = stderr_path.open("a", encoding="utf-8")
+        except OSError as exc:
+            raise CliError(f"Could not open icecast relay log files: {exc}") from exc
+
+        try:
+            process = subprocess.Popen(
+                ["/bin/bash", "-lc", f"exec {command}"],
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            stdout_handle.close()
+            stderr_handle.close()
+            raise CliError(f"Failed to start icecast command: {exc}") from exc
+        finally:
+            # Child process holds these FDs already; parent can close safely.
+            try:
+                stdout_handle.close()
+            except Exception:
+                pass
+            try:
+                stderr_handle.close()
+            except Exception:
+                pass
+
+        startup_exit_code = _wait_for_process_exit_code(
+            process,
+            timeout_seconds=1.5,
+            poll_interval_seconds=0.1,
+        )
+        if startup_exit_code is not None:
+            stderr_tail = _tail_text_file(stderr_path, max_lines=6)
+            detail = f"Exit code: {startup_exit_code}."
+            if stderr_tail:
+                sanitized_tail = [_sanitize_for_runtime_log(line) for line in stderr_tail[-2:]]
+                detail += f" stderr: {' | '.join(sanitized_tail)}"
+            if "icecast://" in command and "@localhost:" in command:
+                detail += " Hint: if Icecast runs on another machine, replace localhost with its IP/hostname."
+            raise CliError(f"Icecast command exited immediately. {detail}")
+        running_after_startup = is_pid_running(process.pid)
+        if not running_after_startup:
+            stderr_tail = _tail_text_file(stderr_path, max_lines=6)
+            detail = "Process is not running after startup check."
+            if stderr_tail:
+                sanitized_tail = [_sanitize_for_runtime_log(line) for line in stderr_tail[-2:]]
+                detail += f" stderr: {' | '.join(sanitized_tail)}"
+            raise CliError(f"Icecast command did not stay running. {detail}")
+
+        write_stream_relay_pid(config_dir, process.pid)
+        _, settings_path, app_config = _load_app_config_context(str(config_dir))
+        app_config.icecast_status = True
+        if command != str(app_config.icecast_command).strip():
+            app_config.icecast_command = command
+        save_app_config(settings_path, app_config)
+        detected_cmdline = _sanitize_for_runtime_log(_best_effort_process_cmdline(process.pid))
+        _append_cli_runtime_log(
+            config_dir,
+            (
+                f"[icecast] started pid={process.pid}, "
+                f"stdout={stdout_path}, stderr={stderr_path}, command={masked_command}"
+            ),
+        )
+        _append_cli_runtime_log(
+            config_dir,
+            (
+                "[icecast] process confirmed running after startup check: "
+                f"pid={process.pid}, running=True, "
+                f"cmdline={(detected_cmdline if detected_cmdline else '(unavailable)')}"
+            ),
+        )
+        _print_success(
+            args,
+            text=f"Icecast relay started (pid={process.pid}).",
+            payload={
+                "ok": True,
+                "started": True,
+                "status": True,
+                "pid": process.pid,
+                "command": command,
+                "pid_path": str(stream_relay_pid_file_path(config_dir)),
+                "stdout_path": str(stdout_path),
+                "stderr_path": str(stderr_path),
+            },
+        )
+        return 0
+    except CliError as exc:
+        _append_cli_runtime_log(
+            config_dir,
+            f"[icecast] start failed: {_sanitize_for_runtime_log(exc)}",
+        )
+        raise
+
+
+def _cmd_stream_stop(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    try:
+        target_pid = _validate_positive_pid(args.pid)
+        if target_pid is None:
+            target_pid = read_stream_relay_pid(config_dir)
+        if target_pid is None:
+            raise CliError("No icecast relay PID available. Start it first or pass --pid.")
+        timeout_seconds = float(args.timeout)
+        if timeout_seconds < 0:
+            raise CliError("Timeout must be zero or greater")
+        _append_cli_runtime_log(
+            config_dir,
+            (
+                f"[icecast] stop requested (pid={target_pid}, "
+                f"timeout={timeout_seconds:.1f}, force={'True' if args.force else 'False'})"
+            ),
+        )
+
+        stopped = not is_pid_running(target_pid)
+        signal_used = "none"
+        if not stopped:
+            try:
+                os.killpg(target_pid, signal.SIGTERM)
+                signal_used = "SIGTERM"
+            except ProcessLookupError:
+                stopped = True
+            except PermissionError as exc:
+                raise CliError(f"Permission denied when stopping icecast relay PID {target_pid}") from exc
+            except OSError as exc:
+                raise CliError(f"Failed to send SIGTERM to icecast relay PID {target_pid}: {exc}") from exc
+        if not stopped:
+            stopped = _wait_for_process_shutdown(target_pid, timeout_seconds)
+        if not stopped and args.force:
+            try:
+                os.killpg(target_pid, signal.SIGKILL)
+                signal_used = "SIGKILL"
+            except ProcessLookupError:
+                stopped = True
+            except PermissionError as exc:
+                raise CliError(
+                    f"Permission denied when force stopping icecast relay PID {target_pid}"
+                ) from exc
+            except OSError as exc:
+                raise CliError(
+                    f"Failed to send SIGKILL to icecast relay PID {target_pid}: {exc}"
+                ) from exc
+            if not stopped:
+                stopped = _wait_for_process_shutdown(target_pid, max(1.0, min(timeout_seconds, 3.0)))
+
+        if not stopped:
+            raise CliError(
+                (
+                    f"Icecast relay PID {target_pid} is still running after {timeout_seconds:.1f}s. "
+                    "Use --force to send SIGKILL or increase --timeout."
+                )
+            )
+
+        tracked_pid = read_stream_relay_pid(config_dir)
+        if tracked_pid == target_pid:
+            delete_stream_relay_pid(config_dir)
+        _, settings_path, app_config = _load_app_config_context(str(config_dir))
+        if app_config.icecast_status:
+            app_config.icecast_status = False
+            save_app_config(settings_path, app_config)
+        _append_cli_runtime_log(
+            config_dir,
+            f"[icecast] stopped pid={target_pid} using {signal_used}",
+        )
+        _print_success(
+            args,
+            text=f"Icecast relay stopped (pid={target_pid}, signal={signal_used}).",
+            payload={
+                "ok": True,
+                "stopped": True,
+                "status": False,
+                "pid": target_pid,
+                "signal": signal_used,
+                "pid_file_exists": stream_relay_pid_file_path(config_dir).is_file(),
+                "pid_path": str(stream_relay_pid_file_path(config_dir)),
+            },
+        )
+        return 0
+    except CliError as exc:
+        _append_cli_runtime_log(
+            config_dir,
+            f"[icecast] stop failed: {_sanitize_for_runtime_log(exc)}",
+        )
+        raise
+
+
 def _validate_positive_pid(raw_pid: int | None) -> int | None:
     if raw_pid is None:
         return None
@@ -1964,6 +2376,43 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     logs_export_parser.set_defaults(handler=_cmd_logs_export)
 
+    icecast_parser = top_level_subparsers.add_parser("icecast", help="Icecast relay commands")
+    icecast_subparsers = icecast_parser.add_subparsers(dest="icecast_command", required=True)
+
+    stream_status_parser = icecast_subparsers.add_parser(
+        "status",
+        help="Show icecast relay process status",
+    )
+    stream_status_parser.set_defaults(handler=_cmd_stream_status)
+
+    stream_start_parser = icecast_subparsers.add_parser(
+        "start",
+        help="Start icecast relay command (ffmpeg -> Icecast)",
+    )
+    stream_start_parser.add_argument(
+        "--command",
+        help="Override configured icecast command for this run",
+    )
+    stream_start_parser.set_defaults(handler=_cmd_stream_start)
+
+    stream_stop_parser = icecast_subparsers.add_parser(
+        "stop",
+        help="Stop icecast relay process",
+    )
+    stream_stop_parser.add_argument("--pid", type=int, help="Optional PID override")
+    stream_stop_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        help="Seconds to wait after SIGTERM before failing (default: 10)",
+    )
+    stream_stop_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Send SIGKILL if SIGTERM does not stop the process",
+    )
+    stream_stop_parser.set_defaults(handler=_cmd_stream_stop)
+
     runtime_parser = top_level_subparsers.add_parser("runtime", help="Runtime process commands")
     runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)
 
@@ -2091,6 +2540,11 @@ def run(argv: list[str] | None = None) -> int:
     try:
         return int(handler(args))
     except CliError as exc:
+        config_dir = _config_dir_from_args(str(getattr(args, "config", DEFAULT_CONFIG_DIR)))
+        _append_cli_runtime_log(
+            config_dir,
+            f"[cli] error ({_runtime_command_label_from_args(args)}): {_sanitize_for_runtime_log(exc)}",
+        )
         if _json_enabled(args):
             print(
                 json.dumps(
@@ -2106,6 +2560,34 @@ def run(argv: list[str] | None = None) -> int:
         else:
             print(f"Error: {exc}", file=sys.stderr)
         return 2
+    except Exception as exc:
+        config_dir = _config_dir_from_args(str(getattr(args, "config", DEFAULT_CONFIG_DIR)))
+        command_label = _runtime_command_label_from_args(args)
+        _append_cli_runtime_log(
+            config_dir,
+            (
+                f"[cli] unexpected error ({command_label}): {exc.__class__.__name__}: "
+                f"{_sanitize_for_runtime_log(exc)}"
+            ),
+        )
+        for line in traceback.format_exc().splitlines()[-12:]:
+            _append_cli_runtime_log(config_dir, f"[cli] traceback: {line}")
+        error_text = "Unexpected internal error. Check runtime logs."
+        if _json_enabled(args):
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": error_text,
+                    },
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ),
+                file=sys.stderr,
+            )
+        else:
+            print(f"Error: {error_text}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

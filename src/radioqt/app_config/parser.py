@@ -200,6 +200,18 @@ def parse_settings_yaml(raw_text: str) -> dict[str, Any]:
             except ValueError:
                 pass
             continue
+        if line.startswith("icecast_status:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["icecast_status"] = safe_bool(raw_value, False)
+            continue
+        if line.startswith("icecast_command:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["icecast_command"] = parse_scalar(raw_value)
+            continue
+        if line.startswith("stream_relay_command:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["stream_relay_command"] = parse_scalar(raw_value)
+            continue
         if line.startswith("greenwich_time_signal:"):
             signal_data: dict[str, Any] = {}
             while index < len(lines):
@@ -240,6 +252,44 @@ def parse_settings_yaml(raw_text: str) -> dict[str, Any]:
                         continue
             if audio_data:
                 data["audio"] = audio_data
+            continue
+        if line.startswith("icecast:"):
+            icecast_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                index += 1
+                if ":" not in detail:
+                    continue
+                key, value = detail.split(":", 1)
+                normalized_key = key.strip()
+                raw_value = value.strip()
+                if normalized_key == "status":
+                    icecast_data["status"] = safe_bool(raw_value, False)
+                elif normalized_key == "command":
+                    icecast_data["command"] = parse_scalar(raw_value)
+            if icecast_data:
+                data["icecast"] = icecast_data
+            continue
+        if line.startswith("stream_relay:"):
+            stream_relay_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                index += 1
+                if ":" not in detail:
+                    continue
+                key, value = detail.split(":", 1)
+                normalized_key = key.strip()
+                raw_value = value.strip()
+                if normalized_key == "command":
+                    stream_relay_data["command"] = parse_scalar(raw_value)
+            if stream_relay_data:
+                data["stream_relay"] = stream_relay_data
             continue
         if line.startswith("custom_paths:"):
             custom_paths_data: dict[str, Any] = {}

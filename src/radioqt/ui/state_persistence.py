@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime
+import os
 from pathlib import Path
+import re
+import signal
 import shutil
+import subprocess
+import time
 
 from PySide6.QtWidgets import QApplication
 
@@ -18,6 +23,14 @@ from ..runtime_control import (
     RUNTIME_CONTROL_ACTION_START_AUTOMATION,
     RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
 )
+from ..runtime_status import is_pid_running
+from ..stream_relay import (
+    delete_stream_relay_pid,
+    read_stream_relay_pid,
+    stream_relay_stderr_file_path,
+    stream_relay_stdout_file_path,
+    write_stream_relay_pid,
+)
 from ..scheduling import initial_schedule_filter_date, prepare_schedule_entries_for_startup
 from ..storage import (
     load_state_with_version,
@@ -28,6 +41,142 @@ from ..storage import (
 
 
 class MainWindowStatePersistenceMixin:
+    _ICECAST_LOG_MASK_PATTERN = re.compile(r"(icecast://[^:/@\s]+:)([^@/\s]+)(@)")
+
+    def _mask_icecast_command_for_log(self, value: str) -> str:
+        return self._ICECAST_LOG_MASK_PATTERN.sub(r"\1***\3", value)
+
+    @staticmethod
+    def _tail_text_file(path: Path, *, max_lines: int = 6) -> list[str]:
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return []
+        if max_lines <= 0:
+            return []
+        return [line.strip() for line in lines[-max_lines:] if line.strip()]
+
+    @staticmethod
+    def _wait_for_pid_shutdown(pid: int, timeout_seconds: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        while time.monotonic() < deadline:
+            if not is_pid_running(pid):
+                return True
+            time.sleep(0.1)
+        return not is_pid_running(pid)
+
+    def _synchronize_icecast_runtime(self, *, reason: str) -> None:
+        configured_command = str(self._icecast_command or "").strip()
+        enabled = bool(self._icecast_status)
+        tracked_pid = read_stream_relay_pid(self._config_dir)
+        running = is_pid_running(tracked_pid)
+        if tracked_pid is not None and not running:
+            delete_stream_relay_pid(self._config_dir)
+            tracked_pid = None
+
+        if enabled:
+            if running and tracked_pid is not None:
+                self._append_log(
+                    f"Icecast already running (pid={tracked_pid}) [{reason}]"
+                )
+                return
+            if not configured_command:
+                self._append_log(
+                    f"Icecast is enabled but command is empty; not starting [{reason}]"
+                )
+                return
+            stdout_path = stream_relay_stdout_file_path(self._config_dir)
+            stderr_path = stream_relay_stderr_file_path(self._config_dir)
+            stdout_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                stdout_handle = stdout_path.open("a", encoding="utf-8")
+                stderr_handle = stderr_path.open("a", encoding="utf-8")
+            except OSError as exc:
+                self._append_log(
+                    f"Icecast start failed opening log files [{reason}]: {exc}"
+                )
+                return
+
+            try:
+                process = subprocess.Popen(
+                    ["/bin/bash", "-lc", f"exec {configured_command}"],
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                self._append_log(f"Icecast start failed [{reason}]: {exc}")
+                try:
+                    stdout_handle.close()
+                except Exception:
+                    pass
+                try:
+                    stderr_handle.close()
+                except Exception:
+                    pass
+                return
+            finally:
+                try:
+                    stdout_handle.close()
+                except Exception:
+                    pass
+                try:
+                    stderr_handle.close()
+                except Exception:
+                    pass
+
+            time.sleep(0.35)
+            immediate_exit_code = process.poll()
+            if immediate_exit_code is not None:
+                stderr_tail = self._tail_text_file(stderr_path, max_lines=6)
+                detail = f"exit={immediate_exit_code}"
+                if stderr_tail:
+                    tail_text = " | ".join(stderr_tail[-2:])
+                    detail += f", stderr={self._mask_icecast_command_for_log(tail_text)}"
+                self._append_log(
+                    f"Icecast failed to stay running after start [{reason}]: {detail}"
+                )
+                return
+
+            write_stream_relay_pid(self._config_dir, process.pid)
+            masked_command = self._mask_icecast_command_for_log(configured_command)
+            self._append_log(
+                (
+                    f"Icecast started from GUI (pid={process.pid}) [{reason}], "
+                    f"command={masked_command}, stdout={stdout_path}, stderr={stderr_path}"
+                )
+            )
+            return
+
+        if tracked_pid is None or not is_pid_running(tracked_pid):
+            return
+        try:
+            os.killpg(tracked_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            delete_stream_relay_pid(self._config_dir)
+            return
+        except PermissionError as exc:
+            self._append_log(
+                f"Icecast stop failed (permission denied) [{reason}] pid={tracked_pid}: {exc}"
+            )
+            return
+        except OSError as exc:
+            self._append_log(
+                f"Icecast stop failed [{reason}] pid={tracked_pid}: {exc}"
+            )
+            return
+
+        if not self._wait_for_pid_shutdown(tracked_pid, 3.0):
+            self._append_log(
+                (
+                    f"Icecast did not stop within timeout [{reason}] pid={tracked_pid}; "
+                    "use CLI stop --force if needed"
+                )
+            )
+            return
+        delete_stream_relay_pid(self._config_dir)
+        self._append_log(f"Icecast stopped from GUI [{reason}] pid={tracked_pid}")
+
     def _load_initial_state(self) -> None:
         app_started_at = datetime.now().astimezone()
         self._migrate_legacy_state_location_if_needed()
@@ -63,6 +212,8 @@ class MainWindowStatePersistenceMixin:
         self._streams_default_fade_out = bool(app_config.streams_default_fade_out)
         self._greenwich_time_signal_enabled = bool(app_config.greenwich_time_signal_enabled)
         self._greenwich_time_signal_path = str(app_config.greenwich_time_signal_path).strip()
+        self._icecast_status = bool(app_config.icecast_status)
+        self._icecast_command = str(app_config.icecast_command).strip()
         self._volume_slider.setValue(max(0, min(100, int(app_config.default_volume_percent))))
         if app_config.font_size is not None:
             self._font_size_points = max(1, app_config.font_size)
@@ -127,6 +278,7 @@ class MainWindowStatePersistenceMixin:
         if hard_sync_normalized:
             self._append_log("Hard sync is now always active for all schedule/CRON entries")
         self._append_log(f"Loaded state from {self._state_path}")
+        self._synchronize_icecast_runtime(reason="startup")
 
     def _save_state(self) -> None:
         state = AppState(
@@ -269,6 +421,8 @@ class MainWindowStatePersistenceMixin:
             greenwich_time_signal_enabled=self._greenwich_time_signal_enabled,
             greenwich_time_signal_path=self._greenwich_time_signal_path,
             default_volume_percent=self._volume_slider.value(),
+            icecast_status=self._icecast_status,
+            icecast_command=self._icecast_command,
         )
         save_app_config(self._settings_path, app_config)
 
@@ -295,6 +449,8 @@ class MainWindowStatePersistenceMixin:
             greenwich_time_signal_enabled=False,
             greenwich_time_signal_path="",
             default_volume_percent=100,
+            icecast_status=False,
+            icecast_command="",
         )
         self._settings_path.parent.mkdir(parents=True, exist_ok=True)
         save_app_config(self._settings_path, seeded_config)

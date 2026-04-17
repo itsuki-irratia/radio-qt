@@ -36,6 +36,8 @@ def test_settings_get_json_defaults(tmp_path, capsys) -> None:
     assert payload["ok"] is True
     assert payload["settings"]["fade_seconds"] == 5
     assert payload["settings"]["default_volume_percent"] == 100
+    assert payload["settings"]["icecast_status"] is False
+    assert payload["settings"]["icecast_command"] == ""
 
 
 def test_settings_set_persists_fade_and_volume(tmp_path, capsys) -> None:
@@ -126,6 +128,60 @@ def test_settings_set_supported_extensions_and_library_tabs(tmp_path) -> None:
     assert app_config.supported_extensions == ["mp3", "ogg", "webm"]
     assert [tab.title for tab in app_config.library_tabs] == ["Studio", "Ads"]
     assert [tab.path for tab in app_config.library_tabs] == ["/tmp/studio", "/tmp/ads"]
+
+
+def test_settings_set_icecast_command_and_status(tmp_path, capsys) -> None:
+    set_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_command",
+            "ffmpeg -f pulse -i monitor",
+        ]
+    )
+    assert set_exit == 0
+    status_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_status",
+            "true",
+        ]
+    )
+    assert status_exit == 0
+    capsys.readouterr()
+
+    get_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "settings",
+            "get",
+            "icecast_command",
+        ]
+    )
+    assert get_exit == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["value"] == "ffmpeg -f pulse -i monitor"
+
+    get_status_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "settings",
+            "get",
+            "icecast_status",
+        ]
+    )
+    assert get_status_exit == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["value"] is True
 
 
 def test_media_list_json_output(tmp_path, capsys) -> None:
@@ -438,6 +494,134 @@ def test_runtime_status_json_defaults_offline(tmp_path, capsys) -> None:
     assert payload["ok"] is True
     assert payload["effective_status"] == "offline"
     assert payload["pid"] is None
+
+
+def test_icecast_start_status_stop_with_configured_command(tmp_path, capsys) -> None:
+    set_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_command",
+            "sleep 60",
+        ]
+    )
+    assert set_exit == 0
+    capsys.readouterr()
+
+    start_exit = run(["--json", "--config", str(tmp_path), "icecast", "start"])
+    assert start_exit == 0
+    start_payload = json.loads(capsys.readouterr().out)
+    assert start_payload["started"] is True
+    assert start_payload["status"] is True
+    assert start_payload["pid"] > 0
+    pid = int(start_payload["pid"])
+
+    try:
+        status_exit = run(["--json", "--config", str(tmp_path), "icecast", "status"])
+        assert status_exit == 0
+        status_payload = json.loads(capsys.readouterr().out)
+        assert status_payload["status"] is True
+        assert status_payload["running"] is True
+        assert status_payload["pid"] == pid
+        assert status_payload["configured_command"] == "sleep 60"
+    finally:
+        stop_exit = run(
+            [
+                "--json",
+                "--config",
+                str(tmp_path),
+                "icecast",
+                "stop",
+                "--timeout",
+                "2",
+            ]
+        )
+        assert stop_exit == 0
+        stop_payload = json.loads(capsys.readouterr().out)
+        assert stop_payload["stopped"] is True
+        assert stop_payload["status"] is False
+    log_text = runtime_log_file_path(tmp_path).read_text(encoding="utf-8")
+    assert "[icecast] start requested" in log_text
+    assert "[icecast] started pid=" in log_text
+    assert "[icecast] process confirmed running after startup check:" in log_text
+    assert "[icecast] stop requested" in log_text
+    assert "[icecast] stopped pid=" in log_text
+
+
+def test_icecast_start_accepts_wrapped_command_from_settings(tmp_path, capsys) -> None:
+    set_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_command",
+            '"sleep 60"',
+        ]
+    )
+    assert set_exit == 0
+    capsys.readouterr()
+
+    start_exit = run(["--json", "--config", str(tmp_path), "icecast", "start"])
+    assert start_exit == 0
+    start_payload = json.loads(capsys.readouterr().out)
+    assert start_payload["started"] is True
+    assert start_payload["status"] is True
+    assert start_payload["command"] == "sleep 60"
+    pid = int(start_payload["pid"])
+
+    try:
+        status_exit = run(["--json", "--config", str(tmp_path), "icecast", "status"])
+        assert status_exit == 0
+        status_payload = json.loads(capsys.readouterr().out)
+        assert status_payload["status"] is True
+        assert status_payload["running"] is True
+        assert status_payload["pid"] == pid
+        assert status_payload["configured_command"] == "sleep 60"
+    finally:
+        stop_exit = run(
+            [
+                "--json",
+                "--config",
+                str(tmp_path),
+                "icecast",
+                "stop",
+                "--timeout",
+                "2",
+            ]
+        )
+        assert stop_exit == 0
+        stop_payload = json.loads(capsys.readouterr().out)
+        assert stop_payload["stopped"] is True
+        assert stop_payload["status"] is False
+
+
+def test_icecast_start_reports_immediate_exit(tmp_path, capsys) -> None:
+    set_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_command",
+            "false",
+        ]
+    )
+    assert set_exit == 0
+    capsys.readouterr()
+
+    start_exit = run(["--json", "--config", str(tmp_path), "icecast", "start"])
+    assert start_exit == 2
+    error_payload = json.loads(capsys.readouterr().err)
+    assert error_payload["ok"] is False
+    assert "exited immediately" in error_payload["error"]
+    assert "Exit code:" in error_payload["error"]
+    log_text = runtime_log_file_path(tmp_path).read_text(encoding="utf-8")
+    assert "[icecast] start requested" in log_text
+    assert "[icecast] start failed:" in log_text
+    assert "[cli] error (icecast start):" in log_text
 
 
 def test_logs_show_json_empty(tmp_path, capsys) -> None:

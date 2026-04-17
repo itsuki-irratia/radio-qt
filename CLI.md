@@ -26,6 +26,9 @@ By default, the CLI uses:
 - YAML config: `$HOME/.config/radioqt/settings.yaml`
 - Runtime status file: `$HOME/.config/radioqt/radioqt.lock`
 - Runtime log file: `$HOME/.config/radioqt/runtime.log`
+- Icecast relay PID file: `$HOME/.config/radioqt/icecast.pid`
+- Icecast relay stdout log: `$HOME/.config/radioqt/icecast.stdout.log`
+- Icecast relay stderr log: `$HOME/.config/radioqt/icecast.stderr.log`
 
 Global option:
 
@@ -183,6 +186,8 @@ Supported setting keys:
 - `schedule_width_percent`
 - `greenwich_time_signal_enabled`
 - `greenwich_time_signal_path`
+- `icecast_status` (`true`/`false`)
+- `icecast_command` (stores the full ffmpeg->icecast command)
 - `supported_extensions` (CSV or JSON list)
 - `library_tabs` (JSON array of objects with `title` and `path`)
 
@@ -637,6 +642,55 @@ Export only last 300 lines:
 radioqt-cli logs export --output "/tmp/radioqt-export.log" --lines 300
 ```
 
+### `icecast`
+
+Control an external ffmpeg relay process (typically ffmpeg -> Icecast).
+
+First set your command once:
+
+```bash
+radioqt-cli settings set icecast_status true
+radioqt-cli settings set icecast_command 'ffmpeg -f pulse -i "alsa_output....monitor" -ac 2 -ar 44100 -c:a libmp3lame -b:a 128k -content_type audio/mpeg -f mp3 "icecast://source:PASS@HOST:8000/radio.mp3"'
+```
+
+#### `icecast status`
+
+```bash
+radioqt-cli icecast status
+```
+
+#### `icecast start`
+
+Uses configured `icecast_command`:
+
+```bash
+radioqt-cli icecast start
+```
+
+Override command for one run:
+
+```bash
+radioqt-cli icecast start --command 'ffmpeg ...'
+```
+
+#### `icecast stop`
+
+```bash
+radioqt-cli icecast stop
+```
+
+Stop with custom timeout:
+
+```bash
+radioqt-cli icecast stop --timeout 5
+```
+
+Force stop if needed:
+
+```bash
+radioqt-cli icecast stop --force
+```
+
 ## JSON output mode
 
 `--json` is a global flag. It works with all commands and returns compact JSON payloads suitable for scripting.
@@ -685,6 +739,14 @@ Example response:
   for `logs show --lines` or `logs export --lines`, use values above `0`.
 - `Output path is a directory`:
   for `logs export --output`, pass a file path, not a directory.
+- `No icecast command configured`:
+  set `settings set icecast_command 'ffmpeg ...'` or pass `icecast start --command`.
+- `Icecast relay is already running`:
+  run `icecast stop` first, then retry `icecast start`.
+- `No icecast relay PID available`:
+  no tracked relay process exists; start it first or pass `icecast stop --pid`.
+- `Icecast relay PID ... is still running after ...`:
+  graceful stop timed out; retry with `icecast stop --force`.
 - `Unknown settings key`:
   run `radioqt-cli settings get` and use one of the supported setting keys.
 
@@ -697,4 +759,4 @@ Example response:
 
 GUI (`radioqt`) and CLI (`radioqt-cli`) use the same SQLite database for the `--config` path you choose.
 If both are open at the same time using the same path, changes are persisted to the same data source.
-Both entry points also reuse shared domain modules (`library`, `scheduling`, `app_config`, `runtime_status`, `runtime_control`, `runtime_logs`) so behavior stays aligned between GUI actions and CLI commands.
+Both entry points also reuse shared domain modules (`library`, `scheduling`, `app_config`, `runtime_status`, `runtime_control`, `runtime_logs`, and icecast relay runtime modules) so behavior stays aligned between GUI actions and CLI commands.

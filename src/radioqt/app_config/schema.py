@@ -31,6 +31,8 @@ class AppConfig:
     greenwich_time_signal_enabled: bool = False
     greenwich_time_signal_path: str = ""
     default_volume_percent: int = 100
+    icecast_status: bool = False
+    icecast_command: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
@@ -139,6 +141,28 @@ class AppConfig:
                 default_volume_percent,
             )
 
+        icecast_status = safe_bool(
+            data.get("icecast_status"),
+            False,
+        )
+        icecast_command = str(
+            data.get("icecast_command", data.get("stream_relay_command", "")) or ""
+        ).strip()
+        icecast_payload = data.get("icecast")
+        if isinstance(icecast_payload, dict):
+            icecast_status = safe_bool(
+                icecast_payload.get("status"),
+                icecast_status,
+            )
+            icecast_command = str(
+                icecast_payload.get("command", icecast_command) or ""
+            ).strip()
+        stream_relay_payload = data.get("stream_relay")
+        if isinstance(stream_relay_payload, dict):
+            icecast_command = str(
+                stream_relay_payload.get("command", icecast_command) or ""
+            ).strip()
+
         custom_paths_payload = data.get("custom_paths")
         tabs_raw = (
             custom_paths_payload.get("tabs")
@@ -171,6 +195,8 @@ class AppConfig:
             greenwich_time_signal_enabled=greenwich_time_signal_enabled,
             greenwich_time_signal_path=greenwich_time_signal_path,
             default_volume_percent=default_volume_percent,
+            icecast_status=icecast_status,
+            icecast_command=icecast_command,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -211,6 +237,10 @@ class AppConfig:
                     self.default_volume_percent,
                     100,
                 ),
+            },
+            "icecast": {
+                "status": bool(self.icecast_status),
+                "command": str(self.icecast_command).strip(),
             },
             "custom_paths": {
                 "tabs": [tab.to_dict() for tab in self.library_tabs],
