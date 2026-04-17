@@ -65,6 +65,7 @@ from ..runtime_control import (
     RUNTIME_CONTROL_ACTION_START_AUTOMATION,
     RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
 )
+from ..runtime_logs import read_runtime_log_lines, runtime_log_file_path
 from ..storage.io import (
     load_state_with_version,
     save_state,
@@ -1378,6 +1379,76 @@ def _cmd_settings_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validated_log_lines_limit(raw_lines: int) -> int:
+    if raw_lines <= 0:
+        raise CliError("lines must be greater than zero")
+    return raw_lines
+
+
+def _cmd_logs_show(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    log_path = runtime_log_file_path(config_dir)
+    limit: int | None
+    if args.all:
+        limit = None
+    else:
+        limit = _validated_log_lines_limit(args.lines)
+    lines = read_runtime_log_lines(config_dir, limit=limit)
+    if not lines:
+        _print_success(
+            args,
+            text="No runtime logs found.",
+            payload={
+                "ok": True,
+                "count": 0,
+                "lines": [],
+                "log_path": str(log_path),
+            },
+        )
+        return 0
+    if _json_enabled(args):
+        _print_success(
+            args,
+            text="",
+            payload={
+                "ok": True,
+                "count": len(lines),
+                "lines": lines,
+                "log_path": str(log_path),
+            },
+        )
+        return 0
+    for line in lines:
+        print(line)
+    return 0
+
+
+def _cmd_logs_export(args: argparse.Namespace) -> int:
+    config_dir = _config_dir_from_args(args.config)
+    log_path = runtime_log_file_path(config_dir)
+    limit = _validated_log_lines_limit(args.lines) if args.lines is not None else None
+    lines = read_runtime_log_lines(config_dir, limit=limit)
+    output_path = Path(args.output).expanduser()
+    if output_path.exists() and output_path.is_dir():
+        raise CliError(f"Output path is a directory: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    exported_text = "\n".join(lines)
+    if lines:
+        exported_text += "\n"
+    output_path.write_text(exported_text, encoding="utf-8")
+    _print_success(
+        args,
+        text=f"Exported {len(lines)} log line(s) to {output_path}",
+        payload={
+            "ok": True,
+            "count": len(lines),
+            "output_path": str(output_path),
+            "source_log_path": str(log_path),
+        },
+    )
+    return 0
+
+
 def _validate_positive_pid(raw_pid: int | None) -> int | None:
     if raw_pid is None:
         return None
@@ -1855,6 +1926,43 @@ def _build_parser() -> argparse.ArgumentParser:
     cron_remove_parser = cron_subparsers.add_parser("remove", help="Remove a CRON entry")
     cron_remove_parser.add_argument("cron_id", help="CRON id")
     cron_remove_parser.set_defaults(handler=_cmd_cron_remove)
+
+    logs_parser = top_level_subparsers.add_parser("logs", help="Runtime logs commands")
+    logs_subparsers = logs_parser.add_subparsers(dest="logs_command", required=True)
+
+    logs_show_parser = logs_subparsers.add_parser(
+        "show",
+        help="Show runtime log lines",
+    )
+    logs_show_group = logs_show_parser.add_mutually_exclusive_group()
+    logs_show_group.add_argument(
+        "--all",
+        action="store_true",
+        help="Show all runtime log lines",
+    )
+    logs_show_group.add_argument(
+        "--lines",
+        type=int,
+        default=200,
+        help="Show the last N lines (default: 200)",
+    )
+    logs_show_parser.set_defaults(handler=_cmd_logs_show)
+
+    logs_export_parser = logs_subparsers.add_parser(
+        "export",
+        help="Export runtime log lines to a file",
+    )
+    logs_export_parser.add_argument(
+        "--output",
+        required=True,
+        help="Target file path",
+    )
+    logs_export_parser.add_argument(
+        "--lines",
+        type=int,
+        help="Optional tail size: export only the last N lines",
+    )
+    logs_export_parser.set_defaults(handler=_cmd_logs_export)
 
     runtime_parser = top_level_subparsers.add_parser("runtime", help="Runtime process commands")
     runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)

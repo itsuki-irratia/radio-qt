@@ -6,14 +6,20 @@ from pathlib import Path
 from PySide6.QtCore import Slot
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
+from ..runtime_logs import append_runtime_log_line, format_runtime_log_line
 from ..ui_components import ConfigurationDialog, CronHelpDialog
 
 
 class MainWindowSettingsLoggingMixin:
     @Slot(str)
     def _append_log(self, message: str) -> None:
-        timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
-        self._log_view.appendPlainText(f"[{timestamp}] {message}")
+        line = format_runtime_log_line(message, timestamp=datetime.now().astimezone())
+        self._log_view.appendPlainText(line)
+        try:
+            append_runtime_log_line(self._config_dir, line)
+        except OSError:
+            # Runtime log persistence is best-effort and should not block UI updates.
+            pass
 
     @Slot(bool)
     def _set_logs_visible(self, visible: bool) -> None:

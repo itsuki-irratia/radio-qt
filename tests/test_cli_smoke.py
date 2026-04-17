@@ -7,6 +7,7 @@ from radioqt.app_config import load_app_config
 from radioqt.cli.app import run
 from radioqt.models import AppState, MediaItem
 from radioqt.runtime_control import drain_runtime_control_commands
+from radioqt.runtime_logs import runtime_log_file_path
 from radioqt.storage.io import load_state, save_state
 
 
@@ -437,6 +438,66 @@ def test_runtime_status_json_defaults_offline(tmp_path, capsys) -> None:
     assert payload["ok"] is True
     assert payload["effective_status"] == "offline"
     assert payload["pid"] is None
+
+
+def test_logs_show_json_empty(tmp_path, capsys) -> None:
+    exit_code = run(["--json", "--config", str(tmp_path), "logs", "show", "--all"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["count"] == 0
+    assert payload["lines"] == []
+    assert payload["log_path"] == str(runtime_log_file_path(tmp_path))
+
+
+def test_logs_show_tail_and_export(tmp_path, capsys) -> None:
+    log_path = runtime_log_file_path(tmp_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        (
+            "[10:00:00] first\n"
+            "[10:00:01] second\n"
+            "[10:00:02] third\n"
+        ),
+        encoding="utf-8",
+    )
+
+    show_exit = run(
+        ["--json", "--config", str(tmp_path), "logs", "show", "--lines", "2"]
+    )
+    assert show_exit == 0
+    show_payload = json.loads(capsys.readouterr().out)
+    assert show_payload["count"] == 2
+    assert show_payload["lines"] == ["[10:00:01] second", "[10:00:02] third"]
+
+    output_path = tmp_path / "exported-runtime.log"
+    export_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "logs",
+            "export",
+            "--output",
+            str(output_path),
+            "--lines",
+            "2",
+        ]
+    )
+    assert export_exit == 0
+    export_payload = json.loads(capsys.readouterr().out)
+    assert export_payload["count"] == 2
+    assert export_payload["output_path"] == str(output_path)
+    assert output_path.read_text(encoding="utf-8") == (
+        "[10:00:01] second\n"
+        "[10:00:02] third\n"
+    )
+
+
+def test_logs_show_rejects_non_positive_lines(tmp_path, capsys) -> None:
+    exit_code = run(["--config", str(tmp_path), "logs", "show", "--lines", "0"])
+    assert exit_code == 2
+    assert "lines must be greater than zero" in capsys.readouterr().err
 
 
 def test_runtime_set_status_requires_pid_when_online(tmp_path, capsys) -> None:

@@ -25,6 +25,7 @@ By default, the CLI uses:
 - SQLite database: `$HOME/.config/radioqt/db.sqlite`
 - YAML config: `$HOME/.config/radioqt/settings.yaml`
 - Runtime status file: `$HOME/.config/radioqt/radioqt.lock`
+- Runtime log file: `$HOME/.config/radioqt/runtime.log`
 
 Global option:
 
@@ -592,6 +593,50 @@ Alias for setting volume to zero (same as `runtime volume --value 0`).
 radioqt-cli runtime mute
 ```
 
+### `logs`
+
+Read/export runtime logs written by the GUI and runtime control handlers.
+
+#### `logs show`
+
+Show last 200 lines (default):
+
+```bash
+radioqt-cli logs show
+```
+
+Show all lines:
+
+```bash
+radioqt-cli logs show --all
+```
+
+Show only last 50:
+
+```bash
+radioqt-cli logs show --lines 50
+```
+
+JSON mode:
+
+```bash
+radioqt-cli --json logs show --lines 20
+```
+
+#### `logs export`
+
+Export all lines to a file:
+
+```bash
+radioqt-cli logs export --output "/tmp/radioqt-export.log"
+```
+
+Export only last 300 lines:
+
+```bash
+radioqt-cli logs export --output "/tmp/radioqt-export.log" --lines 300
+```
+
 ## JSON output mode
 
 `--json` is a global flag. It works with all commands and returns compact JSON payloads suitable for scripting.
@@ -636,6 +681,10 @@ Example response:
   start `radioqt` first (or verify `runtime status`) before sending live runtime commands.
 - `Volume must be between 0 and 100`:
   for `runtime volume`, use values in the `0..100` range.
+- `lines must be greater than zero`:
+  for `logs show --lines` or `logs export --lines`, use values above `0`.
+- `Output path is a directory`:
+  for `logs export --output`, pass a file path, not a directory.
 - `Unknown settings key`:
   run `radioqt-cli settings get` and use one of the supported setting keys.
 
@@ -648,4 +697,4 @@ Example response:
 
 GUI (`radioqt`) and CLI (`radioqt-cli`) use the same SQLite database for the `--config` path you choose.
 If both are open at the same time using the same path, changes are persisted to the same data source.
-Both entry points also reuse shared domain modules (`library`, `scheduling`, `app_config`, `runtime_status`, `runtime_control`) so behavior stays aligned between GUI actions and CLI commands.
+Both entry points also reuse shared domain modules (`library`, `scheduling`, `app_config`, `runtime_status`, `runtime_control`, `runtime_logs`) so behavior stays aligned between GUI actions and CLI commands.
