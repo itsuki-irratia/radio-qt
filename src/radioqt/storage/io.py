@@ -21,6 +21,7 @@ from .migrations import (
     migrate_schedule_entries_for_cron,
 )
 from .read import read_state
+from .schedule_export import export_schedule_incremental
 from .schema import connect, ensure_schema
 from .write import write_state
 
@@ -112,8 +113,11 @@ def state_version(path: Path) -> int:
 def save_state(path: Path, state: AppState, *, expected_version: int | None = None) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     legacy_json_path = path.with_suffix(".json")
+    new_version: int
+    previous_state: AppState
     with connect(path) as connection:
         _prepare_state_connection(connection, legacy_json_path=legacy_json_path)
+        previous_state = read_state(connection)
         current_version = _state_version(connection)
         if expected_version is not None and current_version != expected_version:
             raise StateVersionConflictError(
@@ -123,4 +127,13 @@ def save_state(path: Path, state: AppState, *, expected_version: int | None = No
         write_state(connection, state)
         new_version = current_version + 1
         _set_state_version(connection, new_version)
-        return new_version
+    try:
+        export_schedule_incremental(
+            path.parent,
+            previous_state=previous_state,
+            current_state=state,
+        )
+    except Exception:
+        # Schedule export should never block normal state persistence.
+        pass
+    return new_version

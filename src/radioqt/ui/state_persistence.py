@@ -328,19 +328,7 @@ class MainWindowStatePersistenceMixin:
         self._synchronize_icecast_runtime(reason="startup")
 
     def _save_state(self) -> None:
-        state = AppState(
-            media_items=list(self._media_items.values()),
-            schedule_entries=self._schedule_entries,
-            cron_entries=self._cron_entries,
-            queue=list(self._play_queue),
-            library_tabs=self._library_tab_configs,
-            supported_extensions=self._supported_extensions,
-            schedule_auto_focus=self._schedule_auto_focus_enabled,
-            logs_visible=self._logs_visible,
-            fade_in_duration_seconds=self._fade_in_duration_seconds,
-            fade_out_duration_seconds=self._fade_out_duration_seconds,
-            duration_probe_cache=dict(self._duration_probe_cache),
-        )
+        state = self._build_app_state_snapshot()
         try:
             self._state_version = save_state(
                 self._state_path,
@@ -356,6 +344,21 @@ class MainWindowStatePersistenceMixin:
                 )
             )
             self._reload_runtime_state_after_conflict()
+
+    def _build_app_state_snapshot(self) -> AppState:
+        return AppState(
+            media_items=list(self._media_items.values()),
+            schedule_entries=self._schedule_entries,
+            cron_entries=self._cron_entries,
+            queue=list(self._play_queue),
+            library_tabs=self._library_tab_configs,
+            supported_extensions=self._supported_extensions,
+            schedule_auto_focus=self._schedule_auto_focus_enabled,
+            logs_visible=self._logs_visible,
+            fade_in_duration_seconds=self._fade_in_duration_seconds,
+            fade_out_duration_seconds=self._fade_out_duration_seconds,
+            duration_probe_cache=dict(self._duration_probe_cache),
+        )
 
     def _reload_runtime_state_after_conflict(self) -> None:
         loaded_state = load_state_with_version(self._state_path)

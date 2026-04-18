@@ -26,6 +26,7 @@ By default, the CLI uses:
 - YAML config: `$HOME/.config/radioqt/settings.yaml`
 - Runtime status file: `$HOME/.config/radioqt/radioqt.lock`
 - Runtime log file: `$HOME/.config/radioqt/runtime.log`
+- Schedule daily export dir: `$HOME/.config/radioqt/export/$YEAR/$YEAR-$MONTH-$DAY.json`
 - Icecast relay PID file: `$HOME/.config/radioqt/icecast.pid`
 - Icecast relay stdout log: `$HOME/.config/radioqt/icecast.stdout.log`
 - Icecast relay stderr log: `$HOME/.config/radioqt/icecast.stderr.log`
@@ -46,6 +47,33 @@ Machine-readable output for scripts/SSH automation:
 
 ```bash
 radioqt-cli --json --config "/home/user/radioqt-prod" schedule list --all
+```
+
+## Automatic schedule day export
+
+On every successful state save (GUI or CLI), RadioQt exports the current schedule grouped by day into:
+
+```text
+$HOME/.config/radioqt/export/$YEAR/$YEAR-$MONTH-$DAY.json
+```
+
+Example:
+
+```text
+$HOME/.config/radioqt/export/2026/2026-04-18.json
+```
+
+Behavior:
+
+- Automatic export updates only the affected day files (incremental by changed schedule/media data).
+- One file is generated per schedule day.
+- If a day is removed from schedule, only that day JSON is removed automatically.
+- For local files, each entry includes `media.local_file_metadata` (`path`, `size_bytes`, `modified_at`, and `probe` when `ffprobe` succeeds).
+
+Manual date-range export:
+
+```bash
+radioqt-cli schedule export --from 2026-01-01 --to 2026-02-02
 ```
 
 ## Important formats
@@ -289,6 +317,20 @@ Lists all runtime-visible dates:
 
 ```bash
 radioqt-cli schedule list --all
+```
+
+#### `schedule export`
+
+Exports day JSON files only for the provided date range:
+
+```bash
+radioqt-cli schedule export --from 2026-01-01 --to 2026-02-02
+```
+
+JSON mode:
+
+```bash
+radioqt-cli --json schedule export --from 2026-01-01 --to 2026-02-02
 ```
 
 #### `schedule add`

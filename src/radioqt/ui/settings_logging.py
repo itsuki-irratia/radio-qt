@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from PySide6.QtCore import Slot
-from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 
 from ..runtime_logs import append_runtime_log_line, format_runtime_log_line
+from ..storage.schedule_export import export_schedule_range
 from ..stream_relay import (
     build_icecast_ffmpeg_command,
     IcecastFfmpegConfig,
@@ -55,6 +56,84 @@ class MainWindowSettingsLoggingMixin:
             return
 
         self._append_log(f"Exported logs to {target_path}")
+
+    @Slot()
+    def _export_schedule_range(self) -> None:
+        if self._schedule_entries:
+            schedule_days = sorted({entry.start_at.astimezone().date() for entry in self._schedule_entries})
+            default_start_date = schedule_days[0]
+            default_end_date = schedule_days[-1]
+        else:
+            today = datetime.now().astimezone().date()
+            default_start_date = today
+            default_end_date = today
+
+        from_text, from_ok = QInputDialog.getText(
+            self,
+            "Export Schedule (From)",
+            "Start date (YYYY-MM-DD):",
+            text=default_start_date.isoformat(),
+        )
+        if not from_ok:
+            return
+        to_text, to_ok = QInputDialog.getText(
+            self,
+            "Export Schedule (To)",
+            "End date (YYYY-MM-DD):",
+            text=default_end_date.isoformat(),
+        )
+        if not to_ok:
+            return
+
+        try:
+            start_date = date.fromisoformat(from_text.strip())
+            end_date = date.fromisoformat(to_text.strip())
+        except ValueError:
+            QMessageBox.warning(
+                self,
+                "Invalid Date",
+                "Use YYYY-MM-DD format for both start and end date.",
+            )
+            return
+        if end_date < start_date:
+            QMessageBox.warning(
+                self,
+                "Invalid Range",
+                "End date cannot be before start date.",
+            )
+            return
+
+        state_snapshot = self._build_app_state_snapshot()
+        try:
+            result = export_schedule_range(
+                self._config_dir,
+                state=state_snapshot,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Export Failed", f"Could not export schedule JSON:\n{exc}")
+            return
+
+        export_root = self._config_dir / "export"
+        self._append_log(
+            (
+                f"Exported schedule JSON range {start_date.isoformat()}..{end_date.isoformat()} "
+                f"(updated={result.updated_count}, removed={result.removed_count}) to {export_root}"
+            )
+        )
+        QMessageBox.information(
+            self,
+            "Export Complete",
+            (
+                f"Schedule export completed.\n\n"
+                f"Range: {start_date.isoformat()} to {end_date.isoformat()}\n"
+                f"Updated files: {result.updated_count}\n"
+                f"Removed files: {result.removed_count}\n"
+                f"Unchanged files: {result.unchanged_count}\n"
+                f"Path: {export_root}"
+            ),
+        )
 
     @Slot()
     def _show_cron_help(self) -> None:

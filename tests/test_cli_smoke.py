@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import subprocess
 
 from radioqt.app_config import load_app_config
 from radioqt.cli.app import run
-from radioqt.models import AppState, MediaItem
+from radioqt.models import AppState, MediaItem, ScheduleEntry
 from radioqt.runtime_control import drain_runtime_control_commands
 from radioqt.runtime_logs import runtime_log_file_path
 from radioqt.storage.io import load_state, save_state
@@ -668,6 +669,50 @@ def test_schedule_bulk_status_updates_entries_by_date(tmp_path) -> None:
     loaded = load_state(state_path)
     assert len(loaded.schedule_entries) == 2
     assert {entry.status for entry in loaded.schedule_entries} == {"disabled"}
+
+
+def test_schedule_export_range_json_updates_and_removes_files(tmp_path, capsys) -> None:
+    state_path = tmp_path / "db.sqlite"
+    local_tz = datetime.now().astimezone().tzinfo
+    assert local_tz is not None
+    media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
+    entry = ScheduleEntry.create(
+        media_id=media.id,
+        start_at=datetime(2026, 4, 18, 10, 0, tzinfo=local_tz),
+    )
+    save_state(
+        state_path,
+        AppState(
+            media_items=[media],
+            schedule_entries=[entry],
+        ),
+    )
+
+    stale_path = tmp_path / "export" / "2026" / "2026-04-19.json"
+    stale_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_path.write_text("{}", encoding="utf-8")
+
+    exit_code = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "export",
+            "--from",
+            "2026-04-18",
+            "--to",
+            "2026-04-19",
+        ]
+    )
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["from"] == "2026-04-18"
+    assert payload["to"] == "2026-04-19"
+    assert payload["removed_count"] == 1
+    assert not stale_path.exists()
+    assert (tmp_path / "export" / "2026" / "2026-04-18.json").is_file()
 
 
 def test_cron_add_invalid_expression(tmp_path, capsys) -> None:

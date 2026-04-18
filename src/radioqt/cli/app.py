@@ -100,6 +100,7 @@ from ..storage.io import (
     save_state,
     StateVersionConflictError,
 )
+from ..storage.schedule_export import export_schedule_range
 
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "radioqt"
 SUPPORTED_SETTINGS_KEYS = (
@@ -1114,6 +1115,41 @@ def _cmd_schedule_list(args: argparse.Namespace) -> int:
             f"{entry.id}\t{_format_datetime(entry.start_at, now)}\t{entry.status}\t{media_label}"
             f"\t{entry.cron_id or '-'}\t{entry.fade_in}\t{entry.fade_out}"
         )
+    return 0
+
+
+def _cmd_schedule_export(args: argparse.Namespace) -> int:
+    context = _load_state_context(args.config)
+    start_date = _parse_date(args.from_date)
+    end_date = _parse_date(args.to_date)
+    if end_date < start_date:
+        raise CliError("Invalid range: --to cannot be before --from")
+
+    result = export_schedule_range(
+        context.config_dir,
+        state=context.state,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    export_root = context.config_dir / "export"
+    _print_success(
+        args,
+        text=(
+            f"Exported schedule JSON range {start_date.isoformat()}..{end_date.isoformat()} "
+            f"(updated={result.updated_count}, removed={result.removed_count}, unchanged={result.unchanged_count})"
+        ),
+        payload={
+            "ok": True,
+            "from": start_date.isoformat(),
+            "to": end_date.isoformat(),
+            "export_dir": str(export_root),
+            "updated_count": result.updated_count,
+            "removed_count": result.removed_count,
+            "unchanged_count": result.unchanged_count,
+            "updated_paths": [str(path) for path in result.updated_paths],
+            "removed_paths": [str(path) for path in result.removed_paths],
+        },
+    )
     return 0
 
 
@@ -2423,6 +2459,24 @@ def _build_parser() -> argparse.ArgumentParser:
     schedule_list_parser.add_argument("--date", help="Filter by date (YYYY-MM-DD)")
     schedule_list_parser.add_argument("--all", action="store_true", help="List all dates")
     schedule_list_parser.set_defaults(handler=_cmd_schedule_list)
+
+    schedule_export_parser = schedule_subparsers.add_parser(
+        "export",
+        help="Export schedule JSON files for a date range",
+    )
+    schedule_export_parser.add_argument(
+        "--from",
+        dest="from_date",
+        required=True,
+        help="Range start date (YYYY-MM-DD)",
+    )
+    schedule_export_parser.add_argument(
+        "--to",
+        dest="to_date",
+        required=True,
+        help="Range end date (YYYY-MM-DD)",
+    )
+    schedule_export_parser.set_defaults(handler=_cmd_schedule_export)
 
     schedule_add_parser = schedule_subparsers.add_parser("add", help="Create a schedule entry")
     schedule_add_parser.add_argument("--media-id", required=True, help="Media id to schedule")
