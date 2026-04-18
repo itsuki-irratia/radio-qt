@@ -76,6 +76,10 @@ class _ScheduleExportDispatcher(QObject):
     export_finished = Signal(object, int, int, str)
 
 
+class _ScheduleIncrementalExportDispatcher(QObject):
+    export_finished = Signal(int, int, str)
+
+
 class MainWindow(
     MainWindowLayoutBuildersMixin,
     MainWindowInteractionRuntimeMixin,
@@ -150,6 +154,9 @@ class MainWindow(
         self._schedule_filter_date = datetime.now().astimezone().date()
         self._current_playback_position_ms = 0
         self._pending_schedule_start_entry_id: str | None = None
+        self._pending_incremental_export_previous_state: AppState | None = None
+        self._pending_incremental_export_current_state: AppState | None = None
+        self._incremental_export_inflight = False
         self._shutting_down = False
         self._font_size_points = self._default_font_size_points()
         self._media_library_width_percent = 35
@@ -174,6 +181,7 @@ class MainWindow(
         )
         self._duration_probe_dispatcher = _DurationProbeDispatcher(self)
         self._schedule_export_dispatcher = _ScheduleExportDispatcher(self)
+        self._schedule_incremental_export_dispatcher = _ScheduleIncrementalExportDispatcher(self)
         self._cron_refresh_timer = QTimer(self)
         self._cron_refresh_timer.setInterval(30000)
         self._schedule_focus_timer = QTimer(self)

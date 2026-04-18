@@ -33,6 +33,9 @@ class MainWindowInteractionRuntimeMixin:
         self._schedule_export_dispatcher.export_finished.connect(
             self._on_schedule_export_days_finished
         )
+        self._schedule_incremental_export_dispatcher.export_finished.connect(
+            self._on_incremental_schedule_export_finished
+        )
 
         self._scheduler.schedule_triggered.connect(self._on_schedule_triggered)
         self._scheduler.log.connect(self._append_log)

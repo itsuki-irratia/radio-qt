@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import Future
 from datetime import datetime
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import shutil
 import subprocess
 import time
 
+from PySide6.QtCore import Slot
 from PySide6.QtWidgets import QApplication
 
 from ..app_config import AppConfig, load_app_config, save_app_config
@@ -50,6 +52,7 @@ from ..storage import (
     state_version,
     StateVersionConflictError,
 )
+from ..storage.schedule_export import export_schedule_incremental
 
 
 class MainWindowStatePersistenceMixin:
@@ -328,6 +331,70 @@ class MainWindowStatePersistenceMixin:
         self._append_log(f"Loaded state from {self._state_path}")
         self._synchronize_icecast_runtime(reason="startup")
 
+    def _queue_incremental_schedule_export(
+        self,
+        _config_dir: Path,
+        previous_state: AppState,
+        current_state: AppState,
+    ) -> None:
+        if self._shutting_down:
+            return
+        if self._pending_incremental_export_previous_state is None:
+            self._pending_incremental_export_previous_state = previous_state
+        self._pending_incremental_export_current_state = current_state
+        self._start_pending_incremental_schedule_export_if_idle()
+
+    def _start_pending_incremental_schedule_export_if_idle(self) -> None:
+        if self._shutting_down or self._incremental_export_inflight:
+            return
+        previous_state = self._pending_incremental_export_previous_state
+        current_state = self._pending_incremental_export_current_state
+        if previous_state is None or current_state is None:
+            return
+        self._pending_incremental_export_previous_state = None
+        self._pending_incremental_export_current_state = None
+        self._incremental_export_inflight = True
+        future = self._schedule_export_executor.submit(
+            export_schedule_incremental,
+            self._config_dir,
+            previous_state=previous_state,
+            current_state=current_state,
+        )
+        future.add_done_callback(self._emit_incremental_schedule_export_result)
+
+    def _emit_incremental_schedule_export_result(self, task: Future[object]) -> None:
+        updated_count = 0
+        removed_count = 0
+        error_message = ""
+        try:
+            result = task.result()
+            updated_count = int(getattr(result, "updated_count", 0) or 0)
+            removed_count = int(getattr(result, "removed_count", 0) or 0)
+        except Exception as exc:
+            error_message = str(exc)
+        try:
+            self._schedule_incremental_export_dispatcher.export_finished.emit(
+                updated_count,
+                removed_count,
+                error_message,
+            )
+        except RuntimeError:
+            return
+
+    @Slot(int, int, str)
+    def _on_incremental_schedule_export_finished(
+        self,
+        updated_count: int,
+        removed_count: int,
+        error_message: str,
+    ) -> None:
+        self._incremental_export_inflight = False
+        if self._shutting_down:
+            return
+        if error_message:
+            self._append_log(f"Background schedule export failed: {error_message}")
+        self._start_pending_incremental_schedule_export_if_idle()
+
     def _save_state(self) -> None:
         state = self._build_app_state_snapshot()
         try:
@@ -335,6 +402,7 @@ class MainWindowStatePersistenceMixin:
                 self._state_path,
                 state,
                 expected_version=self._state_version,
+                on_schedule_export=self._queue_incremental_schedule_export,
             )
         except StateVersionConflictError as conflict_error:
             self._append_log(

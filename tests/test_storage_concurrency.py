@@ -15,6 +15,7 @@ from radioqt.storage import (
     state_version,
     StateVersionConflictError,
 )
+from radioqt.storage import io as storage_io
 
 
 def test_save_state_rejects_stale_expected_version(tmp_path) -> None:
@@ -61,6 +62,44 @@ def test_state_version_increments_on_successful_save(tmp_path) -> None:
     )
     assert version_after_second_save == 2
     assert state_version(state_path) == 2
+
+
+def test_save_state_allows_custom_schedule_export_handler(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    state_path = tmp_path / "db.sqlite"
+    media = MediaItem.create(title="Callback", source="/tmp/callback.mp3")
+    state = AppState(media_items=[media], schedule_entries=[])
+
+    sync_export_called = False
+    callback_payload: dict[str, object] = {}
+
+    def _fake_sync_export(*args, **kwargs):
+        del args, kwargs
+        nonlocal sync_export_called
+        sync_export_called = True
+        return schedule_export.ScheduleExportResult()
+
+    def _capture_export(config_dir, previous_state, current_state):
+        callback_payload["config_dir"] = config_dir
+        callback_payload["previous_state"] = previous_state
+        callback_payload["current_state"] = current_state
+
+    monkeypatch.setattr(storage_io, "export_schedule_incremental", _fake_sync_export)
+
+    save_state(
+        state_path,
+        state,
+        on_schedule_export=_capture_export,
+    )
+
+    assert sync_export_called is False
+    assert callback_payload["config_dir"] == tmp_path
+    previous_state = callback_payload["previous_state"]
+    current_state = callback_payload["current_state"]
+    assert isinstance(previous_state, AppState)
+    assert isinstance(current_state, AppState)
+    assert current_state is not state
+    assert len(previous_state.media_items) == 0
+    assert [item.title for item in current_state.media_items] == ["Callback"]
 
 
 def test_save_state_exports_schedule_by_day_files(tmp_path) -> None:

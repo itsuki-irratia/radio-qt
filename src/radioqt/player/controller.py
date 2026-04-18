@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from array import array
+import os
 from pathlib import Path
 import time
 
@@ -64,9 +65,9 @@ class MediaPlayerController(QObject):
         fade_in_duration_ms: int = _DEFAULT_FADE_DURATION_MS,
         fade_out_duration_ms: int = _DEFAULT_FADE_DURATION_MS,
     ) -> None:
-        source_url = self._resolve_source(media.source)
+        source_url, resolve_error = self._resolve_source(media.source)
         if source_url is None:
-            self.playback_error.emit(f"Cannot resolve media source: {media.source}")
+            self.playback_error.emit(resolve_error or f"Cannot resolve media source: {media.source}")
             return
         normalized_start_position_ms = self._normalize_start_position_ms(start_position_ms)
         seek_start_position_ms = normalized_start_position_ms if source_url.isLocalFile() else 0
@@ -202,19 +203,36 @@ class MediaPlayerController(QObject):
         return max(0, parsed)
 
     @staticmethod
-    def _resolve_source(source: str) -> QUrl | None:
+    def _resolve_source(source: str) -> tuple[QUrl | None, str | None]:
         source = source.strip()
         if not source:
-            return None
+            return None, "Cannot resolve media source: source is empty"
 
         url = QUrl(source)
         if url.isValid() and url.scheme():
-            return url
+            if url.scheme().lower() != "file":
+                return url, None
+            local_file = url.toLocalFile().strip()
+            if not local_file:
+                return None, f"Cannot resolve media source: invalid file URL '{source}'"
+            return MediaPlayerController._resolve_local_file_path(Path(local_file))
 
         path = Path(source).expanduser()
-        if path.exists():
-            return QUrl.fromLocalFile(str(path.resolve()))
-        return None
+        return MediaPlayerController._resolve_local_file_path(path)
+
+    @staticmethod
+    def _resolve_local_file_path(path: Path) -> tuple[QUrl | None, str | None]:
+        try:
+            resolved_path = path.resolve()
+        except OSError:
+            resolved_path = path
+        if not resolved_path.exists():
+            return None, f"Local media file does not exist: {resolved_path}"
+        if not resolved_path.is_file():
+            return None, f"Local media source is not a file: {resolved_path}"
+        if not os.access(resolved_path, os.R_OK):
+            return None, f"Local media file is not readable: {resolved_path}"
+        return QUrl.fromLocalFile(str(resolved_path)), None
 
     @Slot(QMediaPlayer.MediaStatus)
     def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:

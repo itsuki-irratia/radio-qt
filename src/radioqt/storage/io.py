@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from ..models import AppState
 from .legacy import (
@@ -110,7 +111,13 @@ def state_version(path: Path) -> int:
         return _state_version(connection)
 
 
-def save_state(path: Path, state: AppState, *, expected_version: int | None = None) -> int:
+def save_state(
+    path: Path,
+    state: AppState,
+    *,
+    expected_version: int | None = None,
+    on_schedule_export: Callable[[Path, AppState, AppState], None] | None = None,
+) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     legacy_json_path = path.with_suffix(".json")
     new_version: int
@@ -127,6 +134,17 @@ def save_state(path: Path, state: AppState, *, expected_version: int | None = No
         write_state(connection, state)
         new_version = current_version + 1
         _set_state_version(connection, new_version)
+    if on_schedule_export is not None:
+        try:
+            on_schedule_export(
+                path.parent,
+                AppState.from_dict(previous_state.to_dict()),
+                AppState.from_dict(state.to_dict()),
+            )
+        except Exception:
+            # Schedule export should never block normal state persistence.
+            pass
+        return new_version
     try:
         export_schedule_incremental(
             path.parent,
