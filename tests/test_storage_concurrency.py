@@ -106,7 +106,8 @@ def test_save_state_exports_schedule_by_day_files(tmp_path) -> None:
     state_path = tmp_path / "db.sqlite"
     local_tz = datetime.now().astimezone().tzinfo
     assert local_tz is not None
-    day_one = datetime(2026, 4, 18, 9, 0, tzinfo=local_tz)
+    today_local = datetime.now().astimezone().date()
+    day_one = datetime(today_local.year, today_local.month, today_local.day, 9, 0, tzinfo=local_tz)
     day_two = day_one + timedelta(days=1)
 
     media = MediaItem.create(title="Morning Show", source="/tmp/morning.mp3")
@@ -120,15 +121,17 @@ def test_save_state_exports_schedule_by_day_files(tmp_path) -> None:
 
     save_state(state_path, state)
 
-    export_day_one_path = tmp_path / "export" / "2026" / "2026-04-18.json"
-    export_day_two_path = tmp_path / "export" / "2026" / "2026-04-19.json"
+    day_one_key = day_one.astimezone().date().isoformat()
+    day_two_key = day_two.astimezone().date().isoformat()
+    export_day_one_path = tmp_path / "export" / day_one_key[:4] / f"{day_one_key}.json"
+    export_day_two_path = tmp_path / "export" / day_two_key[:4] / f"{day_two_key}.json"
     assert export_day_one_path.is_file()
     assert export_day_two_path.is_file()
 
     day_one_payload = json.loads(export_day_one_path.read_text(encoding="utf-8"))
     day_two_payload = json.loads(export_day_two_path.read_text(encoding="utf-8"))
-    assert day_one_payload["date"] == "2026-04-18"
-    assert day_two_payload["date"] == "2026-04-19"
+    assert day_one_payload["date"] == day_one_key
+    assert day_two_payload["date"] == day_two_key
     assert day_one_payload["entry_count"] == 1
     assert day_one_payload["entries"][0]["media"]["metadata"]["title"] == "Morning Show"
 
@@ -137,7 +140,8 @@ def test_save_state_schedule_export_updates_metadata_and_removes_stale_day_file(
     state_path = tmp_path / "db.sqlite"
     local_tz = datetime.now().astimezone().tzinfo
     assert local_tz is not None
-    day_one = datetime(2026, 4, 18, 10, 0, tzinfo=local_tz)
+    today_local = datetime.now().astimezone().date()
+    day_one = datetime(today_local.year, today_local.month, today_local.day, 10, 0, tzinfo=local_tz)
     day_two = day_one + timedelta(days=1)
 
     media = MediaItem.create(title="Original Title", source="/tmp/show.mp3")
@@ -154,8 +158,10 @@ def test_save_state_schedule_export_updates_metadata_and_removes_stale_day_file(
         AppState(media_items=[media], schedule_entries=[entry_day_one]),
     )
 
-    export_day_one_path = tmp_path / "export" / "2026" / "2026-04-18.json"
-    export_day_two_path = tmp_path / "export" / "2026" / "2026-04-19.json"
+    day_one_key = day_one.astimezone().date().isoformat()
+    day_two_key = day_two.astimezone().date().isoformat()
+    export_day_one_path = tmp_path / "export" / day_one_key[:4] / f"{day_one_key}.json"
+    export_day_two_path = tmp_path / "export" / day_two_key[:4] / f"{day_two_key}.json"
     assert export_day_one_path.is_file()
     assert not export_day_two_path.exists()
 
@@ -167,7 +173,8 @@ def test_save_state_schedule_export_includes_media_metadata_and_file_info(tmp_pa
     state_path = tmp_path / "db.sqlite"
     local_tz = datetime.now().astimezone().tzinfo
     assert local_tz is not None
-    start_at = datetime(2026, 4, 18, 11, 0, tzinfo=local_tz)
+    today_local = datetime.now().astimezone().date()
+    start_at = datetime(today_local.year, today_local.month, today_local.day, 11, 0, tzinfo=local_tz)
     media_path = tmp_path / "audio.mp3"
     media_path.write_bytes(b"ID3")
     save_app_config(
@@ -191,7 +198,8 @@ def test_save_state_schedule_export_includes_media_metadata_and_file_info(tmp_pa
         ),
     )
 
-    export_path = tmp_path / "export" / "2026" / "2026-04-18.json"
+    day_key = start_at.astimezone().date().isoformat()
+    export_path = tmp_path / "export" / day_key[:4] / f"{day_key}.json"
     payload_text = export_path.read_text(encoding="utf-8")
     payload = json.loads(payload_text)
     entry_payload = payload["entries"][0]
@@ -246,7 +254,8 @@ def test_save_state_schedule_export_uses_original_path_without_mapping(tmp_path)
     state_path = tmp_path / "db.sqlite"
     local_tz = datetime.now().astimezone().tzinfo
     assert local_tz is not None
-    start_at = datetime(2026, 4, 18, 11, 30, tzinfo=local_tz)
+    today_local = datetime.now().astimezone().date()
+    start_at = datetime(today_local.year, today_local.month, today_local.day, 11, 30, tzinfo=local_tz)
     media_path = tmp_path / "no-mapping.mp3"
     media_path.write_bytes(b"ID3")
 
@@ -259,7 +268,8 @@ def test_save_state_schedule_export_uses_original_path_without_mapping(tmp_path)
         ),
     )
 
-    export_path = tmp_path / "export" / "2026" / "2026-04-18.json"
+    day_key = start_at.astimezone().date().isoformat()
+    export_path = tmp_path / "export" / day_key[:4] / f"{day_key}.json"
     payload = json.loads(export_path.read_text(encoding="utf-8"))
     media_payload = payload["entries"][0]["media"]
     file_info = media_payload["file_info"]
@@ -280,7 +290,8 @@ def test_save_state_schedule_export_prefers_embedded_title_over_item_title(
     state_path = tmp_path / "db.sqlite"
     local_tz = datetime.now().astimezone().tzinfo
     assert local_tz is not None
-    start_at = datetime(2026, 4, 18, 12, 0, tzinfo=local_tz)
+    today_local = datetime.now().astimezone().date()
+    start_at = datetime(today_local.year, today_local.month, today_local.day, 12, 0, tzinfo=local_tz)
     media_path = tmp_path / "title-conflict.mp3"
     media_path.write_bytes(b"ID3")
 
@@ -308,7 +319,8 @@ def test_save_state_schedule_export_prefers_embedded_title_over_item_title(
         ),
     )
 
-    export_path = tmp_path / "export" / "2026" / "2026-04-18.json"
+    day_key = start_at.astimezone().date().isoformat()
+    export_path = tmp_path / "export" / day_key[:4] / f"{day_key}.json"
     payload = json.loads(export_path.read_text(encoding="utf-8"))
     metadata = payload["entries"][0]["media"]["metadata"]
     assert metadata["title"] == "Embedded File Title"
