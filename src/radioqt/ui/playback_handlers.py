@@ -15,6 +15,7 @@ from ..models import (
     SCHEDULE_STATUS_MISSED,
     SCHEDULE_STATUS_PENDING,
 )
+from ..player import MediaPlayerController
 from ..playback import dequeue_next_playable_media, process_schedule_trigger, resolve_play_request
 from ..runtime_status import mark_runtime_offline, mark_runtime_online
 from ..scheduling import prepare_schedule_entries_for_play
@@ -445,6 +446,24 @@ class MainWindowPlaybackHandlersMixin:
         )
         self._append_log(f"Player error on '{current_media_name}': {message}")
         if getattr(self, "_shutting_down", False):
+            return
+        if MediaPlayerController.is_play_request_rejection(message):
+            pending_schedule_entry = self._consume_pending_schedule_start_entry()
+            if (
+                pending_schedule_entry is not None
+                and pending_schedule_entry.one_shot
+                and pending_schedule_entry.status == SCHEDULE_STATUS_PENDING
+            ):
+                pending_schedule_entry.status = SCHEDULE_STATUS_MISSED
+                self._append_log(
+                    "Marked scheduled one-shot as missed after play request rejection: "
+                    f"{pending_schedule_entry.id}"
+                )
+                self._refresh_schedule_table()
+                self._save_state()
+            if self._play_queue and not self._player.is_playing():
+                self._append_log("Playback recovery: trying next queued media item")
+                self._play_next_from_queue()
             return
         self._set_pending_schedule_start_entry_id(None)
         self._player.clear_current_media()
