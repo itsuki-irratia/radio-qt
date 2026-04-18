@@ -518,6 +518,13 @@ class MainWindowStatePersistenceMixin:
                 )
             )
             self._reload_runtime_state_after_conflict()
+        except Exception as error:
+            self._append_log(
+                (
+                    "Failed to persist runtime state; changes are still active in memory "
+                    f"({self._error_detail(error)})"
+                )
+            )
 
     def _build_app_state_snapshot(self) -> AppState:
         return AppState(
@@ -658,7 +665,15 @@ class MainWindowStatePersistenceMixin:
             icecast_output_format=self._icecast_output_format,
             icecast_url=self._icecast_url,
         )
-        save_app_config(self._settings_path, app_config)
+        try:
+            save_app_config(self._settings_path, app_config)
+        except Exception as error:
+            self._append_log(
+                (
+                    "Failed to persist settings; using in-memory values until restart "
+                    f"({self._error_detail(error)})"
+                )
+            )
 
     def _load_or_initialize_app_config(self, state: AppState) -> AppConfig:
         if self._settings_path.exists():
