@@ -358,6 +358,75 @@ def test_settings_set_icecast_params_preserve_command_suffix(tmp_path, capsys) -
     assert command.endswith("-af loudnorm")
 
 
+def test_settings_set_icecast_params_updates_quoted_equivalent_command(
+    tmp_path, capsys
+) -> None:
+    old_device = "alsa_output.usb-Generic_KM_B2_USB_Audio_20210726905926-00.analog-stereo.monitor"
+    new_device = "bluez_output.F8_DF_15_C7_1C_3D.a2dp-sink.monitor"
+
+    rate_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_audio_rate",
+            "44100",
+        ]
+    )
+    assert rate_exit == 0
+    capsys.readouterr()
+
+    quoted_command = (
+        'ffmpeg -f pulse -thread_queue_size 4096 -i '
+        f'"{old_device}" -ac 2 -ar 44100 -c:a libmp3lame -b:a 128k '
+        '-content_type audio/mpeg -f mp3 '
+        '"icecast://source:hackme@localhost:8000/radio.mp3"'
+    )
+    set_command_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_command",
+            quoted_command,
+        ]
+    )
+    assert set_command_exit == 0
+    capsys.readouterr()
+
+    set_device_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_device",
+            new_device,
+        ]
+    )
+    assert set_device_exit == 0
+    capsys.readouterr()
+
+    get_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "settings",
+            "get",
+            "icecast_command",
+        ]
+    )
+    assert get_exit == 0
+    payload = json.loads(capsys.readouterr().out)
+    command = str(payload["value"])
+    assert new_device in command
+    assert old_device not in command
+    assert "-ar 44100" in command
+
+
 def test_media_list_json_output(tmp_path, capsys) -> None:
     state_path = tmp_path / "db.sqlite"
     media = MediaItem.create(title="Test Media", source="/tmp/test.mp4")

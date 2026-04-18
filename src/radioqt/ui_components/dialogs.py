@@ -433,17 +433,21 @@ class ConfigurationDialog(QDialog):
         )
         self._icecast_device_selector = QComboBox(self)
         self._icecast_device_selector.setEditable(True)
-        available_devices = list_pulse_source_devices(monitors_only=True)
+        self._icecast_device_selector.setToolTip(
+            "Pulse monitor source. Bluetooth outputs are shown as ...a2dp-sink.monitor."
+        )
+        self._icecast_device_refresh_button = QPushButton("Refresh", self)
+        self._icecast_device_refresh_button.clicked.connect(
+            lambda _checked=False: self._reload_icecast_device_options()
+        )
+        self._icecast_device_widget = QWidget(self)
+        self._icecast_device_layout = QHBoxLayout(self._icecast_device_widget)
+        self._icecast_device_layout.setContentsMargins(0, 0, 0, 0)
+        self._icecast_device_layout.setSpacing(6)
+        self._icecast_device_layout.addWidget(self._icecast_device_selector, 1)
+        self._icecast_device_layout.addWidget(self._icecast_device_refresh_button)
         selected_device = icecast_device.strip() or DEFAULT_ICECAST_DEVICE
-        if selected_device not in available_devices:
-            available_devices.insert(0, selected_device)
-        elif available_devices and available_devices[0] != selected_device:
-            available_devices.remove(selected_device)
-            available_devices.insert(0, selected_device)
-        if not available_devices:
-            available_devices = [selected_device]
-        self._icecast_device_selector.addItems(available_devices)
-        self._icecast_device_selector.setCurrentText(selected_device)
+        self._reload_icecast_device_options(preferred_device=selected_device)
         self._icecast_audio_channels_spinbox = QSpinBox(self)
         self._icecast_audio_channels_spinbox.setRange(1, 8)
         self._icecast_audio_channels_spinbox.setValue(
@@ -555,7 +559,7 @@ class ConfigurationDialog(QDialog):
         self._icecast_table.setItem(3, 0, _make_readonly_label_item("Thread Queue Size"))
         self._icecast_table.setCellWidget(3, 1, self._icecast_thread_queue_size_spinbox)
         self._icecast_table.setItem(4, 0, _make_readonly_label_item("Device (Pulse Source)"))
-        self._icecast_table.setCellWidget(4, 1, self._icecast_device_selector)
+        self._icecast_table.setCellWidget(4, 1, self._icecast_device_widget)
         self._icecast_table.setItem(5, 0, _make_readonly_label_item("Audio Channels"))
         self._icecast_table.setCellWidget(5, 1, self._icecast_audio_channels_spinbox)
         self._icecast_table.setItem(6, 0, _make_readonly_label_item("Audio Rate"))
@@ -707,6 +711,28 @@ class ConfigurationDialog(QDialog):
 
     def icecast_device(self) -> str:
         return self._icecast_device_selector.currentText().strip() or DEFAULT_ICECAST_DEVICE
+
+    def _reload_icecast_device_options(self, *, preferred_device: str | None = None) -> None:
+        current_device = (
+            preferred_device
+            if preferred_device is not None
+            else self._icecast_device_selector.currentText().strip()
+        )
+        if not current_device:
+            current_device = DEFAULT_ICECAST_DEVICE
+        available_devices = list_pulse_source_devices(monitors_only=True)
+        if current_device not in available_devices:
+            available_devices.insert(0, current_device)
+        elif available_devices and available_devices[0] != current_device:
+            available_devices.remove(current_device)
+            available_devices.insert(0, current_device)
+        if not available_devices:
+            available_devices = [current_device]
+        self._icecast_device_selector.blockSignals(True)
+        self._icecast_device_selector.clear()
+        self._icecast_device_selector.addItems(available_devices)
+        self._icecast_device_selector.setCurrentText(current_device)
+        self._icecast_device_selector.blockSignals(False)
 
     def icecast_audio_channels(self) -> int:
         return max(1, int(self._icecast_audio_channels_spinbox.value()))

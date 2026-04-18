@@ -119,6 +119,28 @@ def sync_icecast_command_with_generated(
         return next_generated
     if not previous_generated:
         return current
+    # Compare commands as shell tokens so quote-style differences
+    # (e.g. "value" vs 'value' vs unquoted) do not block synchronization.
+    try:
+        current_tokens = shlex.split(current)
+        previous_generated_tokens = shlex.split(previous_generated)
+        next_generated_tokens = shlex.split(next_generated)
+    except ValueError:
+        current_tokens = []
+        previous_generated_tokens = []
+        next_generated_tokens = []
+    if current_tokens and previous_generated_tokens and next_generated_tokens:
+        if current_tokens == previous_generated_tokens:
+            return next_generated
+        if (
+            len(current_tokens) >= len(previous_generated_tokens)
+            and current_tokens[: len(previous_generated_tokens)] == previous_generated_tokens
+        ):
+            suffix_tokens = current_tokens[len(previous_generated_tokens) :]
+            if not suffix_tokens:
+                return next_generated
+            merged_tokens = [*next_generated_tokens, *suffix_tokens]
+            return " ".join(shlex.quote(token) for token in merged_tokens)
     if current == previous_generated:
         return next_generated
     if current.startswith(previous_generated):
@@ -131,36 +153,82 @@ def sync_icecast_command_with_generated(
     return current
 
 
-def list_pulse_source_devices(*, monitors_only: bool = True) -> list[str]:
+def _run_pactl(*args: str) -> str | None:
     try:
         result = subprocess.run(
-            ["pactl", "list", "short", "sources"],
+            ["pactl", *args],
             capture_output=True,
             text=True,
             check=False,
             timeout=2.0,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return []
+        return None
     if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _pactl_short_device_names(kind: str) -> list[str]:
+    output = _run_pactl("list", "short", kind)
+    if not output:
         return []
-    devices: list[str] = []
-    for line in result.stdout.splitlines():
+    names: list[str] = []
+    for line in output.splitlines():
         row = line.strip()
         if not row:
             continue
         columns = row.split("\t")
         if len(columns) < 2:
+            columns = row.split()
+        if len(columns) < 2:
             continue
-        device_name = columns[1].strip()
-        if not device_name:
+        name = columns[1].strip()
+        if not name or name in names:
             continue
-        if monitors_only and not device_name.endswith(".monitor"):
-            continue
-        if device_name in devices:
-            continue
-        devices.append(device_name)
-    return devices
+        names.append(name)
+    return names
+
+
+def _pactl_default_sink_name() -> str | None:
+    output = _run_pactl("info")
+    if not output:
+        return None
+    for line in output.splitlines():
+        row = line.strip()
+        if row.lower().startswith("default sink:"):
+            sink = row.split(":", 1)[1].strip()
+            if sink:
+                return sink
+    return None
+
+
+def list_pulse_source_devices(*, monitors_only: bool = True) -> list[str]:
+    source_names = _pactl_short_device_names("sources")
+    if not monitors_only:
+        return source_names
+
+    monitors: list[str] = []
+    for source_name in source_names:
+        if source_name.endswith(".monitor") and source_name not in monitors:
+            monitors.append(source_name)
+
+    sink_names = _pactl_short_device_names("sinks")
+    for sink_name in sink_names:
+        monitor_name = f"{sink_name}.monitor"
+        if monitor_name not in monitors:
+            monitors.append(monitor_name)
+
+    default_sink = _pactl_default_sink_name()
+    if default_sink:
+        default_monitor = f"{default_sink}.monitor"
+        if default_monitor in monitors:
+            monitors.remove(default_monitor)
+        monitors.insert(0, default_monitor)
+
+    if monitors:
+        return monitors
+    return source_names
 
 
 def stream_relay_pid_file_path(config_dir: Path) -> Path:
