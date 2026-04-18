@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from pathlib import Path
 
 from PySide6.QtCore import Slot
-from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
 
 from ..runtime_logs import append_runtime_log_line, format_runtime_log_line
 from ..storage.schedule_export import export_schedule_range
@@ -36,26 +35,6 @@ class MainWindowSettingsLoggingMixin:
         self._logs_visible = bool(checked)
         self._set_logs_visible(self._logs_visible)
         self._save_state()
-
-    @Slot()
-    def _export_logs(self) -> None:
-        default_name = f"radioqt-log-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S')}.log"
-        target_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Logs",
-            str(Path.cwd() / default_name),
-            "Log Files (*.log);;Text Files (*.txt);;All Files (*)",
-        )
-        if not target_path:
-            return
-
-        try:
-            Path(target_path).write_text(self._log_view.toPlainText(), encoding="utf-8")
-        except OSError as exc:
-            QMessageBox.warning(self, "Export Failed", f"Could not export logs:\n{exc}")
-            return
-
-        self._append_log(f"Exported logs to {target_path}")
 
     @Slot()
     def _export_schedule_range(self) -> None:

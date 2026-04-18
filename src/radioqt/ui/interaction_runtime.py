@@ -44,7 +44,6 @@ class MainWindowInteractionRuntimeMixin:
         self._configuration_action.triggered.connect(self._open_configuration_dialog)
         self._export_schedule_action.triggered.connect(self._export_schedule_range)
         self._toggle_logs_action.toggled.connect(self._on_logs_visibility_toggled)
-        self._export_logs_action.triggered.connect(self._export_logs)
         self._cron_help_action.triggered.connect(self._show_cron_help)
         # Sync fullscreen button with video widget state
         try:

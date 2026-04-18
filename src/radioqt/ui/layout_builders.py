@@ -145,8 +145,6 @@ class MainWindowLayoutBuildersMixin:
         view_menu.addAction(self._toggle_logs_action)
         help_menu = menu_bar.addMenu("&Help")
         self._cron_help_action = QAction("&CRON", self)
-        self._export_logs_action = QAction("Export &Logs...", self)
-        help_menu.addAction(self._export_logs_action)
         help_menu.addAction(self._cron_help_action)
 
     def _build_library_panel(self) -> QWidget:
