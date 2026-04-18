@@ -6,10 +6,12 @@ from datetime import datetime
 from pathlib import Path
 import subprocess
 import tempfile
+from typing import Callable
 
 from PySide6.QtCore import QDate, QModelIndex, Qt, Slot
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -201,6 +203,7 @@ class MainWindowHandlersMixin:
         *,
         initial_library_title: str,
         initial_file_tags: dict[str, str],
+        on_submit: Callable[[str, dict[str, str]], tuple[bool, str | None]],
     ) -> tuple[str, dict[str, str]] | None:
         dialog = QDialog(self)
         dialog.setWindowTitle("Edit Local Metadata")
@@ -221,16 +224,40 @@ class MainWindowHandlersMixin:
 
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog)
-        buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
+
+        submitted_values: dict[str, tuple[str, dict[str, str]]] = {}
+
+        def _attempt_submit() -> None:
+            updated_library_title = library_title_input.text().strip()
+            updated_file_tags = {
+                key: input_box.text().strip() for key, input_box in tag_inputs.items()
+            }
+            buttons.setEnabled(False)
+            dialog.setCursor(Qt.WaitCursor)
+            QApplication.processEvents()
+            try:
+                ok, error_message = on_submit(updated_library_title, updated_file_tags)
+            finally:
+                dialog.unsetCursor()
+                buttons.setEnabled(True)
+            if not ok:
+                QMessageBox.warning(
+                    dialog,
+                    "Metadata Update Failed",
+                    error_message or "Could not save metadata.",
+                )
+                return
+            submitted_values["value"] = (updated_library_title, updated_file_tags)
+            dialog.accept()
+
+        buttons.accepted.connect(_attempt_submit)
 
         if dialog.exec() != QDialog.Accepted:
             return None
 
-        updated_library_title = library_title_input.text().strip()
-        updated_file_tags = {key: input_box.text().strip() for key, input_box in tag_inputs.items()}
-        return updated_library_title, updated_file_tags
+        return submitted_values.get("value")
 
     @staticmethod
     def _write_local_file_metadata(path: Path, tags: dict[str, str]) -> tuple[bool, str | None]:
@@ -303,59 +330,57 @@ class MainWindowHandlersMixin:
             return
         ffprobe_payload = self._ffprobe_metadata(local_file_path)
         initial_file_tags = self._editable_local_file_tags_from_ffprobe(ffprobe_payload)
-        editor_result = self._show_local_file_metadata_editor(
+        previous_title = media.title
+
+        def _submit_local_metadata(
+            normalized_title: str,
+            updated_file_tags: dict[str, str],
+        ) -> tuple[bool, str | None]:
+            if not normalized_title:
+                return False, "Title cannot be empty."
+
+            title_changed = normalized_title != media.title
+            file_metadata_changed = updated_file_tags != initial_file_tags
+            if not title_changed and not file_metadata_changed:
+                return True, None
+
+            if file_metadata_changed:
+                succeeded, error_message = self._write_local_file_metadata(
+                    local_file_path, updated_file_tags
+                )
+                if not succeeded:
+                    return False, error_message or "Could not update embedded file metadata."
+
+            if title_changed:
+                media.title = normalized_title
+
+            self._refresh_urls_list()
+            self._refresh_cron_table()
+            self._refresh_schedule_table()
+            self._save_state()
+            if title_changed and file_metadata_changed:
+                self._append_log(
+                    (
+                        f"Updated local metadata for {local_file_path} "
+                        f"(library title '{previous_title}' -> '{normalized_title}' + embedded tags)"
+                    )
+                )
+            elif title_changed:
+                self._append_log(
+                    (
+                        f"Updated local metadata title '{previous_title}' -> '{normalized_title}' "
+                        f"for {local_file_path}"
+                    )
+                )
+            else:
+                self._append_log(f"Updated embedded local file metadata for {local_file_path}")
+            return True, None
+
+        self._show_local_file_metadata_editor(
             initial_library_title=media.title,
             initial_file_tags=initial_file_tags,
+            on_submit=_submit_local_metadata,
         )
-        if editor_result is None:
-            return
-
-        normalized_title, updated_file_tags = editor_result
-        if not normalized_title:
-            QMessageBox.warning(self, "Invalid Title", "Title cannot be empty.")
-            return
-
-        title_changed = normalized_title != media.title
-        file_metadata_changed = updated_file_tags != initial_file_tags
-        if not title_changed and not file_metadata_changed:
-            return
-
-        if file_metadata_changed:
-            succeeded, error_message = self._write_local_file_metadata(local_file_path, updated_file_tags)
-            if not succeeded:
-                QMessageBox.warning(
-                    self,
-                    "Metadata Update Failed",
-                    f"Could not update embedded file metadata.\n{error_message or ''}".strip(),
-                )
-                return
-
-        if title_changed:
-            previous_title = media.title
-            media.title = normalized_title
-        else:
-            previous_title = media.title
-        self._refresh_urls_list()
-        self._refresh_cron_table()
-        self._refresh_schedule_table()
-        self._save_state()
-        if title_changed and file_metadata_changed:
-            self._append_log(
-                (
-                    f"Updated local metadata for {local_file_path} "
-                    f"(library title '{previous_title}' -> '{normalized_title}' + embedded tags)"
-                )
-            )
-            return
-        if title_changed:
-            self._append_log(
-                (
-                    f"Updated local metadata title '{previous_title}' -> '{normalized_title}' "
-                    f"for {local_file_path}"
-                )
-            )
-            return
-        self._append_log(f"Updated embedded local file metadata for {local_file_path}")
 
     def _disable_schedule_auto_focus(self, *, reason: str) -> None:
         if not self._schedule_auto_focus_enabled:
@@ -673,11 +698,13 @@ class MainWindowHandlersMixin:
 
     @Slot("QPoint")
     def _on_schedule_context_menu(self, position) -> None:
-        item = self._schedule_table.itemAt(position)
-        if item is None:
+        index = self._schedule_table.indexAt(position)
+        if not index.isValid():
             return
-        self._schedule_table.setCurrentCell(item.row(), 0)
-        entry_id = item.data(Qt.UserRole)
+        row = index.row()
+        self._schedule_table.setCurrentCell(row, 0)
+        entry_item = self._schedule_table.item(row, 0)
+        entry_id = entry_item.data(Qt.UserRole) if entry_item is not None else None
         entry = self._schedule_entry_by_id(entry_id) if isinstance(entry_id, str) else None
         entry_media = self._media_items.get(entry.media_id) if entry is not None else None
         can_edit_local_metadata = (
@@ -692,9 +719,6 @@ class MainWindowHandlersMixin:
             for entry in self._schedule_entries
         )
         menu = QMenu(self._schedule_table)
-        metadata_action = QAction("View Entry Metadata", menu)
-        metadata_action.triggered.connect(self._show_selected_schedule_metadata)
-        menu.addAction(metadata_action)
         edit_metadata_action = QAction("Edit Local Metadata", menu)
         edit_metadata_action.setEnabled(can_edit_local_metadata)
         edit_metadata_action.triggered.connect(self._edit_selected_schedule_local_metadata)
