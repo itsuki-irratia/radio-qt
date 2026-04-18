@@ -75,8 +75,21 @@ from ..runtime_logs import (
     runtime_log_file_path,
 )
 from ..stream_relay import (
+    build_icecast_ffmpeg_command,
+    IcecastFfmpegConfig,
     delete_stream_relay_pid,
+    DEFAULT_ICECAST_AUDIO_BITRATE,
+    DEFAULT_ICECAST_AUDIO_CHANNELS,
+    DEFAULT_ICECAST_AUDIO_CODEC,
+    DEFAULT_ICECAST_AUDIO_RATE,
+    DEFAULT_ICECAST_CONTENT_TYPE,
+    DEFAULT_ICECAST_DEVICE,
+    DEFAULT_ICECAST_INPUT_FORMAT,
+    DEFAULT_ICECAST_OUTPUT_FORMAT,
+    DEFAULT_ICECAST_THREAD_QUEUE_SIZE,
+    DEFAULT_ICECAST_URL,
     read_stream_relay_pid,
+    sync_icecast_command_with_generated,
     stream_relay_pid_file_path,
     stream_relay_stderr_file_path,
     stream_relay_stdout_file_path,
@@ -102,7 +115,18 @@ SUPPORTED_SETTINGS_KEYS = (
     "greenwich_time_signal_enabled",
     "greenwich_time_signal_path",
     "icecast_status",
+    "icecast_run_in_background",
     "icecast_command",
+    "icecast_input_format",
+    "icecast_thread_queue_size",
+    "icecast_device",
+    "icecast_audio_channels",
+    "icecast_audio_rate",
+    "icecast_audio_codec",
+    "icecast_audio_bitrate",
+    "icecast_content_type",
+    "icecast_output_format",
+    "icecast_url",
     "supported_extensions",
     "library_tabs",
 )
@@ -121,6 +145,20 @@ class StateContext:
 
 
 _ICECAST_CREDENTIALS_PATTERN = re.compile(r"(icecast://[^:/@\s]+:)([^@/\s]+)(@)")
+_ICECAST_PARAMETER_SETTINGS_KEYS = frozenset(
+    {
+        "icecast_input_format",
+        "icecast_thread_queue_size",
+        "icecast_device",
+        "icecast_audio_channels",
+        "icecast_audio_rate",
+        "icecast_audio_codec",
+        "icecast_audio_bitrate",
+        "icecast_content_type",
+        "icecast_output_format",
+        "icecast_url",
+    }
+)
 
 
 def _config_dir_from_args(raw_config_dir: str) -> Path:
@@ -279,6 +317,9 @@ def _settings_to_dict(app_config: object) -> dict[str, object]:
         }
         for tab in list(app_config.library_tabs)
     ]
+    configured_icecast_command = _normalize_icecast_command(str(app_config.icecast_command))
+    if not configured_icecast_command:
+        configured_icecast_command = _icecast_ffmpeg_command_from_settings(app_config)
     return {
         "fade_seconds": max(
             1,
@@ -296,7 +337,22 @@ def _settings_to_dict(app_config: object) -> dict[str, object]:
         "greenwich_time_signal_enabled": bool(app_config.greenwich_time_signal_enabled),
         "greenwich_time_signal_path": str(app_config.greenwich_time_signal_path).strip(),
         "icecast_status": bool(app_config.icecast_status),
-        "icecast_command": str(app_config.icecast_command).strip(),
+        "icecast_run_in_background": bool(app_config.icecast_run_in_background),
+        "icecast_command": configured_icecast_command,
+        "icecast_input_format": str(app_config.icecast_input_format).strip()
+        or DEFAULT_ICECAST_INPUT_FORMAT,
+        "icecast_thread_queue_size": max(1, int(app_config.icecast_thread_queue_size)),
+        "icecast_device": str(app_config.icecast_device).strip() or DEFAULT_ICECAST_DEVICE,
+        "icecast_audio_channels": max(1, int(app_config.icecast_audio_channels)),
+        "icecast_audio_rate": max(1, int(app_config.icecast_audio_rate)),
+        "icecast_audio_codec": str(app_config.icecast_audio_codec).strip()
+        or DEFAULT_ICECAST_AUDIO_CODEC,
+        "icecast_audio_bitrate": max(1, int(app_config.icecast_audio_bitrate)),
+        "icecast_content_type": str(app_config.icecast_content_type).strip()
+        or DEFAULT_ICECAST_CONTENT_TYPE,
+        "icecast_output_format": str(app_config.icecast_output_format).strip()
+        or DEFAULT_ICECAST_OUTPUT_FORMAT,
+        "icecast_url": str(app_config.icecast_url).strip() or DEFAULT_ICECAST_URL,
         "supported_extensions": supported_extensions,
         "library_tabs": library_tabs,
     }
@@ -327,10 +383,45 @@ def _normalize_settings_key(raw_key: str) -> str:
         "icecast_status": "icecast_status",
         "stream_relay_status": "icecast_status",
         "icecast_stream_status": "icecast_status",
+        "icecast_run_in_background": "icecast_run_in_background",
+        "stream_relay_run_in_background": "icecast_run_in_background",
+        "icecast_background": "icecast_run_in_background",
+        "icecast_background_enabled": "icecast_run_in_background",
+        "icecast_keep_running": "icecast_run_in_background",
         "icecast_command": "icecast_command",
         "stream_relay_command": "icecast_command",
         "icecast_stream_command": "icecast_command",
         "ffmpeg_command": "icecast_command",
+        "icecast_input_format": "icecast_input_format",
+        "ffmpeg_input_format": "icecast_input_format",
+        "input_format": "icecast_input_format",
+        "icecast_thread_queue_size": "icecast_thread_queue_size",
+        "ffmpeg_thread_queue_size": "icecast_thread_queue_size",
+        "thread_queue_size": "icecast_thread_queue_size",
+        "icecast_device": "icecast_device",
+        "ffmpeg_device": "icecast_device",
+        "device": "icecast_device",
+        "icecast_audio_channels": "icecast_audio_channels",
+        "ffmpeg_audio_channels": "icecast_audio_channels",
+        "audio_channels": "icecast_audio_channels",
+        "icecast_audio_rate": "icecast_audio_rate",
+        "ffmpeg_audio_rate": "icecast_audio_rate",
+        "audio_rate": "icecast_audio_rate",
+        "icecast_audio_codec": "icecast_audio_codec",
+        "ffmpeg_audio_codec": "icecast_audio_codec",
+        "audio_codec": "icecast_audio_codec",
+        "icecast_audio_bitrate": "icecast_audio_bitrate",
+        "ffmpeg_audio_bitrate": "icecast_audio_bitrate",
+        "audio_bitrate": "icecast_audio_bitrate",
+        "icecast_content_type": "icecast_content_type",
+        "ffmpeg_content_type": "icecast_content_type",
+        "content_type": "icecast_content_type",
+        "icecast_output_format": "icecast_output_format",
+        "ffmpeg_output_format": "icecast_output_format",
+        "output_format": "icecast_output_format",
+        "icecast_url": "icecast_url",
+        "stream_relay_url": "icecast_url",
+        "url": "icecast_url",
         "supported_extensions": "supported_extensions",
         "extensions_supported": "supported_extensions",
         "library_tabs": "library_tabs",
@@ -378,6 +469,13 @@ def _parse_settings_panel_percent(raw_value: str, key: str) -> int:
     if parsed < 10 or parsed > 90:
         raise CliError(f"{key} must be between 10 and 90.")
     return parsed
+
+
+def _parse_settings_non_empty_text(raw_value: str, key: str) -> str:
+    value = raw_value.strip()
+    if not value:
+        raise CliError(f"{key} cannot be empty.")
+    return value
 
 
 def _normalize_icecast_command(raw_value: str) -> str:
@@ -495,8 +593,41 @@ def _apply_setting_value(app_config: object, *, key: str, raw_value: str) -> Non
     if key == "icecast_status":
         app_config.icecast_status = _parse_settings_bool(raw_value, key)
         return
+    if key == "icecast_run_in_background":
+        app_config.icecast_run_in_background = _parse_settings_bool(raw_value, key)
+        return
     if key == "icecast_command":
         app_config.icecast_command = _normalize_icecast_command(raw_value)
+        return
+    if key == "icecast_input_format":
+        app_config.icecast_input_format = _parse_settings_non_empty_text(raw_value, key)
+        return
+    if key == "icecast_thread_queue_size":
+        app_config.icecast_thread_queue_size = _parse_settings_positive_int(raw_value, key)
+        return
+    if key == "icecast_device":
+        app_config.icecast_device = _parse_settings_non_empty_text(raw_value, key)
+        return
+    if key == "icecast_audio_channels":
+        app_config.icecast_audio_channels = _parse_settings_positive_int(raw_value, key)
+        return
+    if key == "icecast_audio_rate":
+        app_config.icecast_audio_rate = _parse_settings_positive_int(raw_value, key)
+        return
+    if key == "icecast_audio_codec":
+        app_config.icecast_audio_codec = _parse_settings_non_empty_text(raw_value, key)
+        return
+    if key == "icecast_audio_bitrate":
+        app_config.icecast_audio_bitrate = _parse_settings_positive_int(raw_value, key)
+        return
+    if key == "icecast_content_type":
+        app_config.icecast_content_type = _parse_settings_non_empty_text(raw_value, key)
+        return
+    if key == "icecast_output_format":
+        app_config.icecast_output_format = _parse_settings_non_empty_text(raw_value, key)
+        return
+    if key == "icecast_url":
+        app_config.icecast_url = _parse_settings_non_empty_text(raw_value, key)
         return
     if key == "supported_extensions":
         app_config.supported_extensions = _parse_settings_supported_extensions(raw_value, key)
@@ -1436,12 +1567,20 @@ def _cmd_settings_set(args: argparse.Namespace) -> int:
     config_dir, settings_path, app_config = _load_app_config_context(args.config)
     del config_dir
     key = _normalize_settings_key(args.key)
+    previous_generated_command = _icecast_ffmpeg_command_from_settings(app_config)
     before_data = _settings_to_dict(app_config)
     before_value = before_data[key]
     _apply_setting_value(app_config, key=key, raw_value=args.value)
+    if key in _ICECAST_PARAMETER_SETTINGS_KEYS:
+        next_generated_command = _icecast_ffmpeg_command_from_settings(app_config)
+        app_config.icecast_command = sync_icecast_command_with_generated(
+            current_command=str(app_config.icecast_command),
+            previous_generated_command=previous_generated_command,
+            next_generated_command=next_generated_command,
+        )
     after_data = _settings_to_dict(app_config)
     after_value = after_data[key]
-    changed = before_value != after_value
+    changed = before_data != after_data
     if changed:
         save_app_config(settings_path, app_config)
 
@@ -1585,12 +1724,58 @@ def _best_effort_process_cmdline(pid: int) -> str:
     return ""
 
 
-def _stream_command_from_args_or_settings(args: argparse.Namespace) -> str:
+def _icecast_ffmpeg_command_from_settings(app_config: object) -> str:
+    return build_icecast_ffmpeg_command(
+        IcecastFfmpegConfig(
+            input_format=str(
+                getattr(app_config, "icecast_input_format", DEFAULT_ICECAST_INPUT_FORMAT) or ""
+            ).strip()
+            or DEFAULT_ICECAST_INPUT_FORMAT,
+            thread_queue_size=max(
+                1,
+                int(getattr(app_config, "icecast_thread_queue_size", DEFAULT_ICECAST_THREAD_QUEUE_SIZE)),
+            ),
+            device=str(getattr(app_config, "icecast_device", DEFAULT_ICECAST_DEVICE) or "").strip()
+            or DEFAULT_ICECAST_DEVICE,
+            audio_channels=max(
+                1,
+                int(getattr(app_config, "icecast_audio_channels", DEFAULT_ICECAST_AUDIO_CHANNELS)),
+            ),
+            audio_rate=max(
+                1,
+                int(getattr(app_config, "icecast_audio_rate", DEFAULT_ICECAST_AUDIO_RATE)),
+            ),
+            audio_codec=str(
+                getattr(app_config, "icecast_audio_codec", DEFAULT_ICECAST_AUDIO_CODEC) or ""
+            ).strip()
+            or DEFAULT_ICECAST_AUDIO_CODEC,
+            audio_bitrate=max(
+                1,
+                int(getattr(app_config, "icecast_audio_bitrate", DEFAULT_ICECAST_AUDIO_BITRATE)),
+            ),
+            content_type=str(
+                getattr(app_config, "icecast_content_type", DEFAULT_ICECAST_CONTENT_TYPE) or ""
+            ).strip()
+            or DEFAULT_ICECAST_CONTENT_TYPE,
+            output_format=str(
+                getattr(app_config, "icecast_output_format", DEFAULT_ICECAST_OUTPUT_FORMAT) or ""
+            ).strip()
+            or DEFAULT_ICECAST_OUTPUT_FORMAT,
+            icecast_url=str(getattr(app_config, "icecast_url", DEFAULT_ICECAST_URL) or "").strip()
+            or DEFAULT_ICECAST_URL,
+        )
+    )
+
+
+def _stream_command_from_args_or_settings(args: argparse.Namespace) -> tuple[str, str]:
     raw_command = _normalize_icecast_command(str(getattr(args, "command", "") or ""))
     if raw_command:
-        return raw_command
+        return raw_command, "--command"
     _, _, app_config = _load_app_config_context(args.config)
-    return _normalize_icecast_command(str(app_config.icecast_command))
+    configured_command = _normalize_icecast_command(str(app_config.icecast_command))
+    if configured_command:
+        return configured_command, "settings.command"
+    return _icecast_ffmpeg_command_from_settings(app_config), "settings.parameters"
 
 
 def _stream_status_payload(config_dir: Path, configured_command: str | None = None) -> dict[str, object]:
@@ -1603,7 +1788,9 @@ def _stream_status_payload(config_dir: Path, configured_command: str | None = No
         pid = None
     _, _, app_config = _load_app_config_context(str(config_dir))
     if configured_command is None:
-        configured_command = str(app_config.icecast_command).strip()
+        configured_command = _normalize_icecast_command(str(app_config.icecast_command))
+        if not configured_command:
+            configured_command = _icecast_ffmpeg_command_from_settings(app_config)
     return {
         "ok": True,
         "pid": pid,
@@ -1647,12 +1834,11 @@ def _cmd_stream_status(args: argparse.Namespace) -> int:
 def _cmd_stream_start(args: argparse.Namespace) -> int:
     config_dir = _config_dir_from_args(args.config)
     try:
-        command = _stream_command_from_args_or_settings(args)
-        command_source = "--command" if str(getattr(args, "command", "") or "").strip() else "settings"
+        command, command_source = _stream_command_from_args_or_settings(args)
         if not command:
             raise CliError(
-                "No icecast command configured. Set settings key 'icecast_command' "
-                "or pass --command."
+                "No icecast command configured. Set settings key 'icecast_command', "
+                "configure icecast_* ffmpeg settings, or pass --command."
             )
         masked_command = _mask_icecast_credentials(command)
         _append_cli_runtime_log(
@@ -1728,7 +1914,7 @@ def _cmd_stream_start(args: argparse.Namespace) -> int:
         write_stream_relay_pid(config_dir, process.pid)
         _, settings_path, app_config = _load_app_config_context(str(config_dir))
         app_config.icecast_status = True
-        if command != str(app_config.icecast_command).strip():
+        if command_source == "settings.command" and command != str(app_config.icecast_command).strip():
             app_config.icecast_command = command
         save_app_config(settings_path, app_config)
         detected_cmdline = _sanitize_for_runtime_log(_best_effort_process_cmdline(process.pid))

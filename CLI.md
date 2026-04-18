@@ -187,7 +187,18 @@ Supported setting keys:
 - `greenwich_time_signal_enabled`
 - `greenwich_time_signal_path`
 - `icecast_status` (`true`/`false`)
-- `icecast_command` (stores the full ffmpeg->icecast command)
+- `icecast_run_in_background` (`true`/`false`, default: `false`)
+- `icecast_command` (auto-generated command result; supports extra args suffix)
+- `icecast_input_format` (default: `pulse`)
+- `icecast_thread_queue_size` (default: `4096`)
+- `icecast_device` (Pulse source/monitor; required for Pulse capture)
+- `icecast_audio_channels` (default: `2`)
+- `icecast_audio_rate` (default: `48000`)
+- `icecast_audio_codec` (default: `libmp3lame`)
+- `icecast_audio_bitrate` (kbps, default: `128`)
+- `icecast_content_type` (default: `audio/mpeg`)
+- `icecast_output_format` (default: `mp3`)
+- `icecast_url` (default: `icecast://source:hackme@localhost:8000/radio.mp3`)
 - `supported_extensions` (CSV or JSON list)
 - `library_tabs` (JSON array of objects with `title` and `path`)
 
@@ -646,11 +657,31 @@ radioqt-cli logs export --output "/tmp/radioqt-export.log" --lines 300
 
 Control an external ffmpeg relay process (typically ffmpeg -> Icecast).
 
-First set your command once:
+`icecast_command` is regenerated from `icecast_*` parameters whenever those parameters change.
+If you append extra ffmpeg args at the end of `icecast_command`, that suffix is preserved when parameters change.
+
+Recommended setup (parameter-based):
 
 ```bash
 radioqt-cli settings set icecast_status true
-radioqt-cli settings set icecast_command 'ffmpeg -f pulse -i "alsa_output....monitor" -ac 2 -ar 44100 -c:a libmp3lame -b:a 128k -content_type audio/mpeg -f mp3 "icecast://source:PASS@HOST:8000/radio.mp3"'
+radioqt-cli settings set icecast_run_in_background false
+radioqt-cli settings set icecast_device "alsa_output.usb-Generic_KM_B2_USB_Audio_20210726905926-00.analog-stereo.monitor"
+radioqt-cli settings set icecast_audio_bitrate 128
+radioqt-cli settings set icecast_audio_rate 48000
+radioqt-cli settings set icecast_url "icecast://source:PASS@HOST:8000/radio.mp3"
+```
+
+Background behavior:
+
+- If `icecast_run_in_background=false`, closing GUI will stop Icecast relay.
+- If `icecast_run_in_background=true`, GUI close keeps relay running in background.
+
+Optional extra args suffix (preserved on parameter changes):
+
+```bash
+radioqt-cli --json settings get icecast_command
+# copy value and append suffix, example:
+radioqt-cli settings set icecast_command '<generated-command> -af loudnorm'
 ```
 
 #### `icecast status`
@@ -661,7 +692,11 @@ radioqt-cli icecast status
 
 #### `icecast start`
 
-Uses configured `icecast_command`:
+Uses priority order:
+
+1. `--command` (one run)
+2. `settings.icecast_command` (normally generated from `icecast_*`)
+3. generated command from `icecast_*` ffmpeg parameters (fallback when empty)
 
 ```bash
 radioqt-cli icecast start
@@ -740,7 +775,7 @@ Example response:
 - `Output path is a directory`:
   for `logs export --output`, pass a file path, not a directory.
 - `No icecast command configured`:
-  set `settings set icecast_command 'ffmpeg ...'` or pass `icecast start --command`.
+  configure `icecast_*` keys (or pass `icecast start --command`). `icecast_command` is usually generated automatically.
 - `Icecast relay is already running`:
   run `icecast stop` first, then retry `icecast start`.
 - `No icecast relay PID available`:

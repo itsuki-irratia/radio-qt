@@ -42,6 +42,18 @@ from ..scheduling import (
     RadioScheduler,
     normalize_overdue_one_shots,
 )
+from ..stream_relay import (
+    DEFAULT_ICECAST_AUDIO_BITRATE,
+    DEFAULT_ICECAST_AUDIO_CHANNELS,
+    DEFAULT_ICECAST_AUDIO_CODEC,
+    DEFAULT_ICECAST_AUDIO_RATE,
+    DEFAULT_ICECAST_CONTENT_TYPE,
+    DEFAULT_ICECAST_DEVICE,
+    DEFAULT_ICECAST_INPUT_FORMAT,
+    DEFAULT_ICECAST_OUTPUT_FORMAT,
+    DEFAULT_ICECAST_THREAD_QUEUE_SIZE,
+    DEFAULT_ICECAST_URL,
+)
 from .handlers import MainWindowHandlersMixin
 from .fullscreen_visuals import MainWindowFullscreenVisualsMixin
 from .interaction_runtime import MainWindowInteractionRuntimeMixin
@@ -116,7 +128,18 @@ class MainWindow(
         self._greenwich_time_signal_enabled = False
         self._greenwich_time_signal_path = ""
         self._icecast_status = False
+        self._icecast_run_in_background = False
         self._icecast_command = ""
+        self._icecast_input_format = DEFAULT_ICECAST_INPUT_FORMAT
+        self._icecast_thread_queue_size = DEFAULT_ICECAST_THREAD_QUEUE_SIZE
+        self._icecast_device = DEFAULT_ICECAST_DEVICE
+        self._icecast_audio_channels = DEFAULT_ICECAST_AUDIO_CHANNELS
+        self._icecast_audio_rate = DEFAULT_ICECAST_AUDIO_RATE
+        self._icecast_audio_codec = DEFAULT_ICECAST_AUDIO_CODEC
+        self._icecast_audio_bitrate = DEFAULT_ICECAST_AUDIO_BITRATE
+        self._icecast_content_type = DEFAULT_ICECAST_CONTENT_TYPE
+        self._icecast_output_format = DEFAULT_ICECAST_OUTPUT_FORMAT
+        self._icecast_url = DEFAULT_ICECAST_URL
         self._fullscreen_active = False
         self._schedule_filter_date = datetime.now().astimezone().date()
         self._current_playback_position_ms = 0
@@ -339,6 +362,13 @@ class MainWindow(
             delete_runtime_lock(self._config_dir)
         except OSError:
             pass
+        if not self._icecast_run_in_background:
+            # On GUI shutdown, stop any running Icecast relay process so ffmpeg
+            # does not continue detached after the app closes.
+            previous_icecast_status = bool(self._icecast_status)
+            self._icecast_status = False
+            self._synchronize_icecast_runtime(reason="shutdown")
+            self._icecast_status = previous_icecast_status
         self._save_settings()
         self._save_state()
         super().closeEvent(event)

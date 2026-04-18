@@ -77,8 +77,48 @@ def dump_settings_yaml(config: AppConfig) -> str:
         f"{'true' if icecast_payload.get('status', False) else 'false'}"
     )
     lines.append(
+        "  run_in_background: "
+        f"{'true' if icecast_payload.get('run_in_background', False) else 'false'}"
+    )
+    lines.append(
         "  command: "
         f"{string_as_yaml(str(icecast_payload.get('command', '')))}"
+    )
+    lines.append(
+        "  input_format: "
+        f"{string_as_yaml(str(icecast_payload.get('input_format', 'pulse')))}"
+    )
+    lines.append(
+        f"  thread_queue_size: {int(icecast_payload.get('thread_queue_size', 4096))}"
+    )
+    lines.append(
+        "  device: "
+        f"{string_as_yaml(str(icecast_payload.get('device', '')))}"
+    )
+    lines.append(
+        f"  audio_channels: {int(icecast_payload.get('audio_channels', 2))}"
+    )
+    lines.append(
+        f"  audio_rate: {int(icecast_payload.get('audio_rate', 48000))}"
+    )
+    lines.append(
+        "  audio_codec: "
+        f"{string_as_yaml(str(icecast_payload.get('audio_codec', 'libmp3lame')))}"
+    )
+    lines.append(
+        f"  audio_bitrate: {int(icecast_payload.get('audio_bitrate', 128))}"
+    )
+    lines.append(
+        "  content_type: "
+        f"{string_as_yaml(str(icecast_payload.get('content_type', 'audio/mpeg')))}"
+    )
+    lines.append(
+        "  output_format: "
+        f"{string_as_yaml(str(icecast_payload.get('output_format', 'mp3')))}"
+    )
+    lines.append(
+        "  url: "
+        f"{string_as_yaml(str(icecast_payload.get('url', '')))}"
     )
 
     lines.append("custom_paths:")

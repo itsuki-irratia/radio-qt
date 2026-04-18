@@ -4,6 +4,18 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..models import DEFAULT_SUPPORTED_EXTENSIONS, LibraryTab
+from ..stream_relay import (
+    DEFAULT_ICECAST_AUDIO_BITRATE,
+    DEFAULT_ICECAST_AUDIO_CHANNELS,
+    DEFAULT_ICECAST_AUDIO_CODEC,
+    DEFAULT_ICECAST_AUDIO_RATE,
+    DEFAULT_ICECAST_CONTENT_TYPE,
+    DEFAULT_ICECAST_DEVICE,
+    DEFAULT_ICECAST_INPUT_FORMAT,
+    DEFAULT_ICECAST_OUTPUT_FORMAT,
+    DEFAULT_ICECAST_THREAD_QUEUE_SIZE,
+    DEFAULT_ICECAST_URL,
+)
 from ._shared import normalize_extensions, safe_bool, safe_panel_percent, safe_positive_int
 
 
@@ -32,7 +44,18 @@ class AppConfig:
     greenwich_time_signal_path: str = ""
     default_volume_percent: int = 100
     icecast_status: bool = False
+    icecast_run_in_background: bool = False
     icecast_command: str = ""
+    icecast_input_format: str = DEFAULT_ICECAST_INPUT_FORMAT
+    icecast_thread_queue_size: int = DEFAULT_ICECAST_THREAD_QUEUE_SIZE
+    icecast_device: str = DEFAULT_ICECAST_DEVICE
+    icecast_audio_channels: int = DEFAULT_ICECAST_AUDIO_CHANNELS
+    icecast_audio_rate: int = DEFAULT_ICECAST_AUDIO_RATE
+    icecast_audio_codec: str = DEFAULT_ICECAST_AUDIO_CODEC
+    icecast_audio_bitrate: int = DEFAULT_ICECAST_AUDIO_BITRATE
+    icecast_content_type: str = DEFAULT_ICECAST_CONTENT_TYPE
+    icecast_output_format: str = DEFAULT_ICECAST_OUTPUT_FORMAT
+    icecast_url: str = DEFAULT_ICECAST_URL
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
@@ -145,8 +168,46 @@ class AppConfig:
             data.get("icecast_status"),
             False,
         )
+        icecast_run_in_background = safe_bool(
+            data.get("icecast_run_in_background"),
+            False,
+        )
         icecast_command = str(
             data.get("icecast_command", data.get("stream_relay_command", "")) or ""
+        ).strip()
+        icecast_input_format = str(
+            data.get("icecast_input_format", DEFAULT_ICECAST_INPUT_FORMAT) or ""
+        ).strip()
+        icecast_thread_queue_size = safe_positive_int(
+            data.get("icecast_thread_queue_size"),
+            DEFAULT_ICECAST_THREAD_QUEUE_SIZE,
+        )
+        icecast_device = str(
+            data.get("icecast_device", DEFAULT_ICECAST_DEVICE) or ""
+        ).strip()
+        icecast_audio_channels = safe_positive_int(
+            data.get("icecast_audio_channels"),
+            DEFAULT_ICECAST_AUDIO_CHANNELS,
+        )
+        icecast_audio_rate = safe_positive_int(
+            data.get("icecast_audio_rate"),
+            DEFAULT_ICECAST_AUDIO_RATE,
+        )
+        icecast_audio_codec = str(
+            data.get("icecast_audio_codec", DEFAULT_ICECAST_AUDIO_CODEC) or ""
+        ).strip()
+        icecast_audio_bitrate = safe_positive_int(
+            data.get("icecast_audio_bitrate"),
+            DEFAULT_ICECAST_AUDIO_BITRATE,
+        )
+        icecast_content_type = str(
+            data.get("icecast_content_type", DEFAULT_ICECAST_CONTENT_TYPE) or ""
+        ).strip()
+        icecast_output_format = str(
+            data.get("icecast_output_format", DEFAULT_ICECAST_OUTPUT_FORMAT) or ""
+        ).strip()
+        icecast_url = str(
+            data.get("icecast_url", DEFAULT_ICECAST_URL) or ""
         ).strip()
         icecast_payload = data.get("icecast")
         if isinstance(icecast_payload, dict):
@@ -154,8 +215,46 @@ class AppConfig:
                 icecast_payload.get("status"),
                 icecast_status,
             )
+            icecast_run_in_background = safe_bool(
+                icecast_payload.get("run_in_background"),
+                icecast_run_in_background,
+            )
             icecast_command = str(
                 icecast_payload.get("command", icecast_command) or ""
+            ).strip()
+            icecast_input_format = str(
+                icecast_payload.get("input_format", icecast_input_format) or ""
+            ).strip()
+            icecast_thread_queue_size = safe_positive_int(
+                icecast_payload.get("thread_queue_size"),
+                icecast_thread_queue_size,
+            )
+            icecast_device = str(
+                icecast_payload.get("device", icecast_device) or ""
+            ).strip()
+            icecast_audio_channels = safe_positive_int(
+                icecast_payload.get("audio_channels"),
+                icecast_audio_channels,
+            )
+            icecast_audio_rate = safe_positive_int(
+                icecast_payload.get("audio_rate"),
+                icecast_audio_rate,
+            )
+            icecast_audio_codec = str(
+                icecast_payload.get("audio_codec", icecast_audio_codec) or ""
+            ).strip()
+            icecast_audio_bitrate = safe_positive_int(
+                icecast_payload.get("audio_bitrate"),
+                icecast_audio_bitrate,
+            )
+            icecast_content_type = str(
+                icecast_payload.get("content_type", icecast_content_type) or ""
+            ).strip()
+            icecast_output_format = str(
+                icecast_payload.get("output_format", icecast_output_format) or ""
+            ).strip()
+            icecast_url = str(
+                icecast_payload.get("url", icecast_url) or ""
             ).strip()
         stream_relay_payload = data.get("stream_relay")
         if isinstance(stream_relay_payload, dict):
@@ -196,7 +295,18 @@ class AppConfig:
             greenwich_time_signal_path=greenwich_time_signal_path,
             default_volume_percent=default_volume_percent,
             icecast_status=icecast_status,
+            icecast_run_in_background=icecast_run_in_background,
             icecast_command=icecast_command,
+            icecast_input_format=icecast_input_format or DEFAULT_ICECAST_INPUT_FORMAT,
+            icecast_thread_queue_size=max(1, int(icecast_thread_queue_size)),
+            icecast_device=icecast_device or DEFAULT_ICECAST_DEVICE,
+            icecast_audio_channels=max(1, int(icecast_audio_channels)),
+            icecast_audio_rate=max(1, int(icecast_audio_rate)),
+            icecast_audio_codec=icecast_audio_codec or DEFAULT_ICECAST_AUDIO_CODEC,
+            icecast_audio_bitrate=max(1, int(icecast_audio_bitrate)),
+            icecast_content_type=icecast_content_type or DEFAULT_ICECAST_CONTENT_TYPE,
+            icecast_output_format=icecast_output_format or DEFAULT_ICECAST_OUTPUT_FORMAT,
+            icecast_url=icecast_url or DEFAULT_ICECAST_URL,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -240,7 +350,34 @@ class AppConfig:
             },
             "icecast": {
                 "status": bool(self.icecast_status),
+                "run_in_background": bool(self.icecast_run_in_background),
                 "command": str(self.icecast_command).strip(),
+                "input_format": str(self.icecast_input_format).strip()
+                or DEFAULT_ICECAST_INPUT_FORMAT,
+                "thread_queue_size": max(
+                    1,
+                    int(self.icecast_thread_queue_size),
+                ),
+                "device": str(self.icecast_device).strip() or DEFAULT_ICECAST_DEVICE,
+                "audio_channels": max(
+                    1,
+                    int(self.icecast_audio_channels),
+                ),
+                "audio_rate": max(
+                    1,
+                    int(self.icecast_audio_rate),
+                ),
+                "audio_codec": str(self.icecast_audio_codec).strip()
+                or DEFAULT_ICECAST_AUDIO_CODEC,
+                "audio_bitrate": max(
+                    1,
+                    int(self.icecast_audio_bitrate),
+                ),
+                "content_type": str(self.icecast_content_type).strip()
+                or DEFAULT_ICECAST_CONTENT_TYPE,
+                "output_format": str(self.icecast_output_format).strip()
+                or DEFAULT_ICECAST_OUTPUT_FORMAT,
+                "url": str(self.icecast_url).strip() or DEFAULT_ICECAST_URL,
             },
             "custom_paths": {
                 "tabs": [tab.to_dict() for tab in self.library_tabs],

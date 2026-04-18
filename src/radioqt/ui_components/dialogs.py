@@ -30,6 +30,19 @@ from PySide6.QtWidgets import (
 
 from ..cron import CronExpression, CronParseError
 from ..models import LibraryTab
+from ..stream_relay import (
+    DEFAULT_ICECAST_AUDIO_BITRATE,
+    DEFAULT_ICECAST_AUDIO_CHANNELS,
+    DEFAULT_ICECAST_AUDIO_CODEC,
+    DEFAULT_ICECAST_AUDIO_RATE,
+    DEFAULT_ICECAST_CONTENT_TYPE,
+    DEFAULT_ICECAST_DEVICE,
+    DEFAULT_ICECAST_INPUT_FORMAT,
+    DEFAULT_ICECAST_OUTPUT_FORMAT,
+    DEFAULT_ICECAST_THREAD_QUEUE_SIZE,
+    DEFAULT_ICECAST_URL,
+    list_pulse_source_devices,
+)
 from .boolean_selectors import _configure_boolean_selector
 
 
@@ -290,7 +303,18 @@ class ConfigurationDialog(QDialog):
         greenwich_time_signal_enabled: bool,
         greenwich_time_signal_path: str,
         icecast_status: bool,
+        icecast_run_in_background: bool,
         icecast_command: str,
+        icecast_input_format: str,
+        icecast_thread_queue_size: int,
+        icecast_device: str,
+        icecast_audio_channels: int,
+        icecast_audio_rate: int,
+        icecast_audio_codec: str,
+        icecast_audio_bitrate: int,
+        icecast_content_type: str,
+        icecast_output_format: str,
+        icecast_url: str,
         library_tabs: list[LibraryTab],
         supported_extensions: list[str],
     ) -> None:
@@ -386,11 +410,76 @@ class ConfigurationDialog(QDialog):
             "True" if icecast_status else "False"
         )
         _configure_boolean_selector(self._icecast_status_selector)
+        self._icecast_run_in_background_selector = QComboBox(self)
+        self._icecast_run_in_background_selector.addItems(["True", "False"])
+        self._icecast_run_in_background_selector.setCurrentText(
+            "True" if icecast_run_in_background else "False"
+        )
+        _configure_boolean_selector(self._icecast_run_in_background_selector)
         self._icecast_command_edit = QLineEdit(self)
         self._icecast_command_edit.setPlaceholderText(
-            "ffmpeg -f pulse -i <monitor> ... icecast://source:pass@host:8000/mount.mp3"
+            "Auto-generated. Append extra ffmpeg args at the end (kept when params change)."
         )
         self._icecast_command_edit.setText(icecast_command.strip())
+        self._icecast_input_format_edit = QLineEdit(self)
+        self._icecast_input_format_edit.setPlaceholderText("pulse")
+        self._icecast_input_format_edit.setText(
+            icecast_input_format.strip() or DEFAULT_ICECAST_INPUT_FORMAT
+        )
+        self._icecast_thread_queue_size_spinbox = QSpinBox(self)
+        self._icecast_thread_queue_size_spinbox.setRange(1, 2000000)
+        self._icecast_thread_queue_size_spinbox.setValue(
+            max(1, int(icecast_thread_queue_size or DEFAULT_ICECAST_THREAD_QUEUE_SIZE))
+        )
+        self._icecast_device_selector = QComboBox(self)
+        self._icecast_device_selector.setEditable(True)
+        available_devices = list_pulse_source_devices(monitors_only=True)
+        selected_device = icecast_device.strip() or DEFAULT_ICECAST_DEVICE
+        if selected_device not in available_devices:
+            available_devices.insert(0, selected_device)
+        elif available_devices and available_devices[0] != selected_device:
+            available_devices.remove(selected_device)
+            available_devices.insert(0, selected_device)
+        if not available_devices:
+            available_devices = [selected_device]
+        self._icecast_device_selector.addItems(available_devices)
+        self._icecast_device_selector.setCurrentText(selected_device)
+        self._icecast_audio_channels_spinbox = QSpinBox(self)
+        self._icecast_audio_channels_spinbox.setRange(1, 8)
+        self._icecast_audio_channels_spinbox.setValue(
+            max(1, int(icecast_audio_channels or DEFAULT_ICECAST_AUDIO_CHANNELS))
+        )
+        self._icecast_audio_rate_spinbox = QSpinBox(self)
+        self._icecast_audio_rate_spinbox.setRange(8000, 384000)
+        self._icecast_audio_rate_spinbox.setSingleStep(1000)
+        self._icecast_audio_rate_spinbox.setValue(
+            max(1, int(icecast_audio_rate or DEFAULT_ICECAST_AUDIO_RATE))
+        )
+        self._icecast_audio_codec_edit = QLineEdit(self)
+        self._icecast_audio_codec_edit.setPlaceholderText("libmp3lame")
+        self._icecast_audio_codec_edit.setText(
+            icecast_audio_codec.strip() or DEFAULT_ICECAST_AUDIO_CODEC
+        )
+        self._icecast_audio_bitrate_spinbox = QSpinBox(self)
+        self._icecast_audio_bitrate_spinbox.setRange(8, 10000)
+        self._icecast_audio_bitrate_spinbox.setValue(
+            max(1, int(icecast_audio_bitrate or DEFAULT_ICECAST_AUDIO_BITRATE))
+        )
+        self._icecast_content_type_edit = QLineEdit(self)
+        self._icecast_content_type_edit.setPlaceholderText("audio/mpeg")
+        self._icecast_content_type_edit.setText(
+            icecast_content_type.strip() or DEFAULT_ICECAST_CONTENT_TYPE
+        )
+        self._icecast_output_format_edit = QLineEdit(self)
+        self._icecast_output_format_edit.setPlaceholderText("mp3")
+        self._icecast_output_format_edit.setText(
+            icecast_output_format.strip() or DEFAULT_ICECAST_OUTPUT_FORMAT
+        )
+        self._icecast_url_edit = QLineEdit(self)
+        self._icecast_url_edit.setPlaceholderText(
+            "icecast://source:pass@localhost:8000/radio.mp3"
+        )
+        self._icecast_url_edit.setText(icecast_url.strip() or DEFAULT_ICECAST_URL)
         self._configured_library_tabs: list[LibraryTab] = list(library_tabs)
         self._configured_supported_extensions: list[str] = list(supported_extensions)
 
@@ -456,11 +545,33 @@ class ConfigurationDialog(QDialog):
         icecast_layout = QVBoxLayout(icecast_page)
         icecast_layout.setContentsMargins(0, 0, 0, 0)
         self._icecast_table = QTableWidget(self)
-        _configure_settings_table(self._icecast_table, row_count=2)
+        _configure_settings_table(self._icecast_table, row_count=13)
         self._icecast_table.setItem(0, 0, _make_readonly_label_item("Status"))
         self._icecast_table.setCellWidget(0, 1, self._icecast_status_selector)
-        self._icecast_table.setItem(1, 0, _make_readonly_label_item("FFmpeg Command"))
-        self._icecast_table.setCellWidget(1, 1, self._icecast_command_edit)
+        self._icecast_table.setItem(1, 0, _make_readonly_label_item("Run In Background"))
+        self._icecast_table.setCellWidget(1, 1, self._icecast_run_in_background_selector)
+        self._icecast_table.setItem(2, 0, _make_readonly_label_item("Input Format"))
+        self._icecast_table.setCellWidget(2, 1, self._icecast_input_format_edit)
+        self._icecast_table.setItem(3, 0, _make_readonly_label_item("Thread Queue Size"))
+        self._icecast_table.setCellWidget(3, 1, self._icecast_thread_queue_size_spinbox)
+        self._icecast_table.setItem(4, 0, _make_readonly_label_item("Device (Pulse Source)"))
+        self._icecast_table.setCellWidget(4, 1, self._icecast_device_selector)
+        self._icecast_table.setItem(5, 0, _make_readonly_label_item("Audio Channels"))
+        self._icecast_table.setCellWidget(5, 1, self._icecast_audio_channels_spinbox)
+        self._icecast_table.setItem(6, 0, _make_readonly_label_item("Audio Rate"))
+        self._icecast_table.setCellWidget(6, 1, self._icecast_audio_rate_spinbox)
+        self._icecast_table.setItem(7, 0, _make_readonly_label_item("Audio Codec"))
+        self._icecast_table.setCellWidget(7, 1, self._icecast_audio_codec_edit)
+        self._icecast_table.setItem(8, 0, _make_readonly_label_item("Audio Bitrate (kbps)"))
+        self._icecast_table.setCellWidget(8, 1, self._icecast_audio_bitrate_spinbox)
+        self._icecast_table.setItem(9, 0, _make_readonly_label_item("Content Type"))
+        self._icecast_table.setCellWidget(9, 1, self._icecast_content_type_edit)
+        self._icecast_table.setItem(10, 0, _make_readonly_label_item("Output Format"))
+        self._icecast_table.setCellWidget(10, 1, self._icecast_output_format_edit)
+        self._icecast_table.setItem(11, 0, _make_readonly_label_item("Icecast URL"))
+        self._icecast_table.setCellWidget(11, 1, self._icecast_url_edit)
+        self._icecast_table.setItem(12, 0, _make_readonly_label_item("FFmpeg Command (Override)"))
+        self._icecast_table.setCellWidget(12, 1, self._icecast_command_edit)
         self._icecast_table.resizeColumnsToContents()
         icecast_layout.addWidget(self._icecast_table, 1)
 
@@ -582,8 +693,41 @@ class ConfigurationDialog(QDialog):
     def icecast_status(self) -> bool:
         return self._icecast_status_selector.currentText() == "True"
 
+    def icecast_run_in_background(self) -> bool:
+        return self._icecast_run_in_background_selector.currentText() == "True"
+
     def icecast_command(self) -> str:
         return self._icecast_command_edit.text().strip()
+
+    def icecast_input_format(self) -> str:
+        return self._icecast_input_format_edit.text().strip() or DEFAULT_ICECAST_INPUT_FORMAT
+
+    def icecast_thread_queue_size(self) -> int:
+        return max(1, int(self._icecast_thread_queue_size_spinbox.value()))
+
+    def icecast_device(self) -> str:
+        return self._icecast_device_selector.currentText().strip() or DEFAULT_ICECAST_DEVICE
+
+    def icecast_audio_channels(self) -> int:
+        return max(1, int(self._icecast_audio_channels_spinbox.value()))
+
+    def icecast_audio_rate(self) -> int:
+        return max(1, int(self._icecast_audio_rate_spinbox.value()))
+
+    def icecast_audio_codec(self) -> str:
+        return self._icecast_audio_codec_edit.text().strip() or DEFAULT_ICECAST_AUDIO_CODEC
+
+    def icecast_audio_bitrate(self) -> int:
+        return max(1, int(self._icecast_audio_bitrate_spinbox.value()))
+
+    def icecast_content_type(self) -> str:
+        return self._icecast_content_type_edit.text().strip() or DEFAULT_ICECAST_CONTENT_TYPE
+
+    def icecast_output_format(self) -> str:
+        return self._icecast_output_format_edit.text().strip() or DEFAULT_ICECAST_OUTPUT_FORMAT
+
+    def icecast_url(self) -> str:
+        return self._icecast_url_edit.text().strip() or DEFAULT_ICECAST_URL
 
     def library_tabs(self) -> list[LibraryTab]:
         collected_settings = self._collect_settings_values(show_warning=False)

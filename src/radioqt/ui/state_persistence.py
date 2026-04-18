@@ -25,7 +25,19 @@ from ..runtime_control import (
 )
 from ..runtime_status import is_pid_running
 from ..stream_relay import (
+    build_icecast_ffmpeg_command,
     delete_stream_relay_pid,
+    DEFAULT_ICECAST_AUDIO_BITRATE,
+    DEFAULT_ICECAST_AUDIO_CHANNELS,
+    DEFAULT_ICECAST_AUDIO_CODEC,
+    DEFAULT_ICECAST_AUDIO_RATE,
+    DEFAULT_ICECAST_CONTENT_TYPE,
+    DEFAULT_ICECAST_DEVICE,
+    DEFAULT_ICECAST_INPUT_FORMAT,
+    DEFAULT_ICECAST_OUTPUT_FORMAT,
+    DEFAULT_ICECAST_THREAD_QUEUE_SIZE,
+    DEFAULT_ICECAST_URL,
+    IcecastFfmpegConfig,
     read_stream_relay_pid,
     stream_relay_stderr_file_path,
     stream_relay_stdout_file_path,
@@ -65,8 +77,30 @@ class MainWindowStatePersistenceMixin:
             time.sleep(0.1)
         return not is_pid_running(pid)
 
+    def _resolved_icecast_command(self) -> str:
+        manual_command = str(self._icecast_command or "").strip()
+        if manual_command:
+            return manual_command
+        return build_icecast_ffmpeg_command(
+            IcecastFfmpegConfig(
+                input_format=str(self._icecast_input_format or "").strip()
+                or DEFAULT_ICECAST_INPUT_FORMAT,
+                thread_queue_size=max(1, int(self._icecast_thread_queue_size)),
+                device=str(self._icecast_device or "").strip() or DEFAULT_ICECAST_DEVICE,
+                audio_channels=max(1, int(self._icecast_audio_channels)),
+                audio_rate=max(1, int(self._icecast_audio_rate)),
+                audio_codec=str(self._icecast_audio_codec or "").strip() or DEFAULT_ICECAST_AUDIO_CODEC,
+                audio_bitrate=max(1, int(self._icecast_audio_bitrate)),
+                content_type=str(self._icecast_content_type or "").strip()
+                or DEFAULT_ICECAST_CONTENT_TYPE,
+                output_format=str(self._icecast_output_format or "").strip()
+                or DEFAULT_ICECAST_OUTPUT_FORMAT,
+                icecast_url=str(self._icecast_url or "").strip() or DEFAULT_ICECAST_URL,
+            )
+        )
+
     def _synchronize_icecast_runtime(self, *, reason: str) -> None:
-        configured_command = str(self._icecast_command or "").strip()
+        configured_command = self._resolved_icecast_command()
         enabled = bool(self._icecast_status)
         tracked_pid = read_stream_relay_pid(self._config_dir)
         running = is_pid_running(tracked_pid)
@@ -213,7 +247,20 @@ class MainWindowStatePersistenceMixin:
         self._greenwich_time_signal_enabled = bool(app_config.greenwich_time_signal_enabled)
         self._greenwich_time_signal_path = str(app_config.greenwich_time_signal_path).strip()
         self._icecast_status = bool(app_config.icecast_status)
+        self._icecast_run_in_background = bool(app_config.icecast_run_in_background)
         self._icecast_command = str(app_config.icecast_command).strip()
+        self._icecast_input_format = str(app_config.icecast_input_format).strip()
+        self._icecast_thread_queue_size = max(1, int(app_config.icecast_thread_queue_size))
+        self._icecast_device = str(app_config.icecast_device).strip()
+        self._icecast_audio_channels = max(1, int(app_config.icecast_audio_channels))
+        self._icecast_audio_rate = max(1, int(app_config.icecast_audio_rate))
+        self._icecast_audio_codec = str(app_config.icecast_audio_codec).strip()
+        self._icecast_audio_bitrate = max(1, int(app_config.icecast_audio_bitrate))
+        self._icecast_content_type = str(app_config.icecast_content_type).strip()
+        self._icecast_output_format = str(app_config.icecast_output_format).strip()
+        self._icecast_url = str(app_config.icecast_url).strip()
+        if not self._icecast_command:
+            self._icecast_command = self._resolved_icecast_command()
         self._volume_slider.setValue(max(0, min(100, int(app_config.default_volume_percent))))
         if app_config.font_size is not None:
             self._font_size_points = max(1, app_config.font_size)
@@ -422,7 +469,18 @@ class MainWindowStatePersistenceMixin:
             greenwich_time_signal_path=self._greenwich_time_signal_path,
             default_volume_percent=self._volume_slider.value(),
             icecast_status=self._icecast_status,
+            icecast_run_in_background=self._icecast_run_in_background,
             icecast_command=self._icecast_command,
+            icecast_input_format=self._icecast_input_format,
+            icecast_thread_queue_size=self._icecast_thread_queue_size,
+            icecast_device=self._icecast_device,
+            icecast_audio_channels=self._icecast_audio_channels,
+            icecast_audio_rate=self._icecast_audio_rate,
+            icecast_audio_codec=self._icecast_audio_codec,
+            icecast_audio_bitrate=self._icecast_audio_bitrate,
+            icecast_content_type=self._icecast_content_type,
+            icecast_output_format=self._icecast_output_format,
+            icecast_url=self._icecast_url,
         )
         save_app_config(self._settings_path, app_config)
 
@@ -450,7 +508,18 @@ class MainWindowStatePersistenceMixin:
             greenwich_time_signal_path="",
             default_volume_percent=100,
             icecast_status=False,
+            icecast_run_in_background=False,
             icecast_command="",
+            icecast_input_format=DEFAULT_ICECAST_INPUT_FORMAT,
+            icecast_thread_queue_size=DEFAULT_ICECAST_THREAD_QUEUE_SIZE,
+            icecast_device=DEFAULT_ICECAST_DEVICE,
+            icecast_audio_channels=DEFAULT_ICECAST_AUDIO_CHANNELS,
+            icecast_audio_rate=DEFAULT_ICECAST_AUDIO_RATE,
+            icecast_audio_codec=DEFAULT_ICECAST_AUDIO_CODEC,
+            icecast_audio_bitrate=DEFAULT_ICECAST_AUDIO_BITRATE,
+            icecast_content_type=DEFAULT_ICECAST_CONTENT_TYPE,
+            icecast_output_format=DEFAULT_ICECAST_OUTPUT_FORMAT,
+            icecast_url=DEFAULT_ICECAST_URL,
         )
         self._settings_path.parent.mkdir(parents=True, exist_ok=True)
         save_app_config(self._settings_path, seeded_config)

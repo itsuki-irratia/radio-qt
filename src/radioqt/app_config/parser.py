@@ -204,9 +204,65 @@ def parse_settings_yaml(raw_text: str) -> dict[str, Any]:
             raw_value = line.split(":", 1)[1].strip()
             data["icecast_status"] = safe_bool(raw_value, False)
             continue
+        if line.startswith("icecast_run_in_background:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["icecast_run_in_background"] = safe_bool(raw_value, False)
+            continue
         if line.startswith("icecast_command:"):
             raw_value = line.split(":", 1)[1].strip()
             data["icecast_command"] = parse_scalar(raw_value)
+            continue
+        if line.startswith("icecast_input_format:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["icecast_input_format"] = parse_scalar(raw_value)
+            continue
+        if line.startswith("icecast_thread_queue_size:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["icecast_thread_queue_size"] = int(raw_value)
+            except ValueError:
+                pass
+            continue
+        if line.startswith("icecast_device:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["icecast_device"] = parse_scalar(raw_value)
+            continue
+        if line.startswith("icecast_audio_channels:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["icecast_audio_channels"] = int(raw_value)
+            except ValueError:
+                pass
+            continue
+        if line.startswith("icecast_audio_rate:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["icecast_audio_rate"] = int(raw_value)
+            except ValueError:
+                pass
+            continue
+        if line.startswith("icecast_audio_codec:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["icecast_audio_codec"] = parse_scalar(raw_value)
+            continue
+        if line.startswith("icecast_audio_bitrate:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                data["icecast_audio_bitrate"] = int(raw_value)
+            except ValueError:
+                pass
+            continue
+        if line.startswith("icecast_content_type:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["icecast_content_type"] = parse_scalar(raw_value)
+            continue
+        if line.startswith("icecast_output_format:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["icecast_output_format"] = parse_scalar(raw_value)
+            continue
+        if line.startswith("icecast_url:"):
+            raw_value = line.split(":", 1)[1].strip()
+            data["icecast_url"] = parse_scalar(raw_value)
             continue
         if line.startswith("stream_relay_command:"):
             raw_value = line.split(":", 1)[1].strip()
@@ -268,8 +324,42 @@ def parse_settings_yaml(raw_text: str) -> dict[str, Any]:
                 raw_value = value.strip()
                 if normalized_key == "status":
                     icecast_data["status"] = safe_bool(raw_value, False)
+                elif normalized_key == "run_in_background":
+                    icecast_data["run_in_background"] = safe_bool(raw_value, False)
                 elif normalized_key == "command":
                     icecast_data["command"] = parse_scalar(raw_value)
+                elif normalized_key == "input_format":
+                    icecast_data["input_format"] = parse_scalar(raw_value)
+                elif normalized_key == "thread_queue_size":
+                    try:
+                        icecast_data["thread_queue_size"] = int(raw_value)
+                    except ValueError:
+                        continue
+                elif normalized_key == "device":
+                    icecast_data["device"] = parse_scalar(raw_value)
+                elif normalized_key == "audio_channels":
+                    try:
+                        icecast_data["audio_channels"] = int(raw_value)
+                    except ValueError:
+                        continue
+                elif normalized_key == "audio_rate":
+                    try:
+                        icecast_data["audio_rate"] = int(raw_value)
+                    except ValueError:
+                        continue
+                elif normalized_key == "audio_codec":
+                    icecast_data["audio_codec"] = parse_scalar(raw_value)
+                elif normalized_key == "audio_bitrate":
+                    try:
+                        icecast_data["audio_bitrate"] = int(raw_value)
+                    except ValueError:
+                        continue
+                elif normalized_key == "content_type":
+                    icecast_data["content_type"] = parse_scalar(raw_value)
+                elif normalized_key == "output_format":
+                    icecast_data["output_format"] = parse_scalar(raw_value)
+                elif normalized_key == "url":
+                    icecast_data["url"] = parse_scalar(raw_value)
             if icecast_data:
                 data["icecast"] = icecast_data
             continue

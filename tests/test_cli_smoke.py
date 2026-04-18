@@ -37,7 +37,18 @@ def test_settings_get_json_defaults(tmp_path, capsys) -> None:
     assert payload["settings"]["fade_seconds"] == 5
     assert payload["settings"]["default_volume_percent"] == 100
     assert payload["settings"]["icecast_status"] is False
-    assert payload["settings"]["icecast_command"] == ""
+    assert payload["settings"]["icecast_run_in_background"] is False
+    assert payload["settings"]["icecast_command"].startswith("ffmpeg ")
+    assert payload["settings"]["icecast_input_format"] == "pulse"
+    assert payload["settings"]["icecast_thread_queue_size"] == 4096
+    assert payload["settings"]["icecast_device"] != ""
+    assert payload["settings"]["icecast_audio_channels"] == 2
+    assert payload["settings"]["icecast_audio_rate"] == 48000
+    assert payload["settings"]["icecast_audio_codec"] == "libmp3lame"
+    assert payload["settings"]["icecast_audio_bitrate"] == 128
+    assert payload["settings"]["icecast_content_type"] == "audio/mpeg"
+    assert payload["settings"]["icecast_output_format"] == "mp3"
+    assert payload["settings"]["icecast_url"].startswith("icecast://")
 
 
 def test_settings_set_persists_fade_and_volume(tmp_path, capsys) -> None:
@@ -182,6 +193,169 @@ def test_settings_set_icecast_command_and_status(tmp_path, capsys) -> None:
     assert get_status_exit == 0
     status_payload = json.loads(capsys.readouterr().out)
     assert status_payload["value"] is True
+
+
+def test_settings_set_icecast_run_in_background(tmp_path, capsys) -> None:
+    set_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_run_in_background",
+            "true",
+        ]
+    )
+    assert set_exit == 0
+    capsys.readouterr()
+
+    get_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "settings",
+            "get",
+            "icecast_run_in_background",
+        ]
+    )
+    assert get_exit == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["value"] is True
+
+    app_config = load_app_config(tmp_path / "settings.yaml")
+    assert app_config.icecast_run_in_background is True
+
+
+def test_settings_set_icecast_ffmpeg_params(tmp_path, capsys) -> None:
+    queue_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "thread_queue_size",
+            "8192",
+        ]
+    )
+    assert queue_exit == 0
+    bitrate_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "audio-bitrate",
+            "192",
+        ]
+    )
+    assert bitrate_exit == 0
+    device_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "device",
+            "alsa_output.test.monitor",
+        ]
+    )
+    assert device_exit == 0
+    capsys.readouterr()
+
+    get_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "settings",
+            "get",
+            "icecast_audio_bitrate",
+        ]
+    )
+    assert get_exit == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["value"] == 192
+
+    app_config = load_app_config(tmp_path / "settings.yaml")
+    assert app_config.icecast_thread_queue_size == 8192
+    assert app_config.icecast_audio_bitrate == 192
+    assert app_config.icecast_device == "alsa_output.test.monitor"
+    assert "-thread_queue_size 8192" in app_config.icecast_command
+    assert "-b:a 192k" in app_config.icecast_command
+    assert "alsa_output.test.monitor" in app_config.icecast_command
+
+
+def test_settings_set_icecast_params_preserve_command_suffix(tmp_path, capsys) -> None:
+    bitrate_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_audio_bitrate",
+            "160",
+        ]
+    )
+    assert bitrate_exit == 0
+    capsys.readouterr()
+
+    get_base_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "settings",
+            "get",
+            "icecast_command",
+        ]
+    )
+    assert get_base_exit == 0
+    base_payload = json.loads(capsys.readouterr().out)
+    base_command = str(base_payload["value"])
+    assert base_command.startswith("ffmpeg ")
+
+    set_suffix_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_command",
+            f"{base_command} -af loudnorm",
+        ]
+    )
+    assert set_suffix_exit == 0
+    capsys.readouterr()
+
+    rate_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "icecast_audio_rate",
+            "44100",
+        ]
+    )
+    assert rate_exit == 0
+    capsys.readouterr()
+
+    get_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "settings",
+            "get",
+            "icecast_command",
+        ]
+    )
+    assert get_exit == 0
+    payload = json.loads(capsys.readouterr().out)
+    command = str(payload["value"])
+    assert "-ar 44100" in command
+    assert command.endswith("-af loudnorm")
 
 
 def test_media_list_json_output(tmp_path, capsys) -> None:
@@ -494,6 +668,16 @@ def test_runtime_status_json_defaults_offline(tmp_path, capsys) -> None:
     assert payload["ok"] is True
     assert payload["effective_status"] == "offline"
     assert payload["pid"] is None
+
+
+def test_icecast_status_uses_generated_command_when_manual_command_is_empty(
+    tmp_path, capsys
+) -> None:
+    status_exit = run(["--json", "--config", str(tmp_path), "icecast", "status"])
+    assert status_exit == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["configured_command"].startswith("ffmpeg ")
 
 
 def test_icecast_start_status_stop_with_configured_command(tmp_path, capsys) -> None:
