@@ -14,6 +14,7 @@ from ..models import MediaItem
 
 class MediaPlayerController(QObject):
     _DEFAULT_FADE_DURATION_MS = 5000
+    _PLAY_REQUEST_REJECTED_PREFIX = "Play request rejected: "
 
     media_started = Signal(object)
     media_finished = Signal()
@@ -67,7 +68,10 @@ class MediaPlayerController(QObject):
     ) -> None:
         source_url, resolve_error = self._resolve_source(media.source)
         if source_url is None:
-            self.playback_error.emit(resolve_error or f"Cannot resolve media source: {media.source}")
+            self.playback_error.emit(
+                f"{self._PLAY_REQUEST_REJECTED_PREFIX}"
+                f"{resolve_error or f'Cannot resolve media source: {media.source}'}"
+            )
             return
         normalized_start_position_ms = self._normalize_start_position_ms(start_position_ms)
         seek_start_position_ms = normalized_start_position_ms if source_url.isLocalFile() else 0
@@ -219,6 +223,10 @@ class MediaPlayerController(QObject):
 
         path = Path(source).expanduser()
         return MediaPlayerController._resolve_local_file_path(path)
+
+    @classmethod
+    def is_play_request_rejection(cls, message: str) -> bool:
+        return str(message).startswith(cls._PLAY_REQUEST_REJECTED_PREFIX)
 
     @staticmethod
     def _resolve_local_file_path(path: Path) -> tuple[QUrl | None, str | None]:
