@@ -25,6 +25,7 @@ from ..runtime_control import (
     RUNTIME_CONTROL_ACTION_START_AUTOMATION,
     RUNTIME_CONTROL_ACTION_STOP_AUTOMATION,
 )
+from ..startup_recovery import backup_file_for_recovery, recovery_timestamp
 from ..runtime_status import is_pid_running
 from ..stream_relay import (
     build_icecast_ffmpeg_command,
@@ -79,6 +80,112 @@ class MainWindowStatePersistenceMixin:
                 return True
             time.sleep(0.1)
         return not is_pid_running(pid)
+
+    @staticmethod
+    def _error_detail(error: Exception) -> str:
+        message = str(error).strip()
+        if message:
+            return f"{type(error).__name__}: {message}"
+        return type(error).__name__
+
+    def _state_recovery_candidates(self) -> list[Path]:
+        return [
+            self._state_path,
+            self._state_path.with_suffix(".json"),
+            Path(f"{self._state_path}-wal"),
+            Path(f"{self._state_path}-shm"),
+        ]
+
+    def _recover_state_after_load_failure(self, error: Exception) -> AppState:
+        timestamp = recovery_timestamp()
+        backup_paths: list[Path] = []
+        for path in self._state_recovery_candidates():
+            backup_path = backup_file_for_recovery(path, timestamp=timestamp)
+            if backup_path is not None:
+                backup_paths.append(backup_path)
+
+        if backup_paths:
+            self._append_log(
+                (
+                    "Recovered from invalid persisted state "
+                    f"({self._error_detail(error)}); moved {len(backup_paths)} file(s) "
+                    "to *.corrupt-* backups"
+                )
+            )
+            for backup_path in backup_paths:
+                self._append_log(f"State recovery backup: {backup_path}")
+        else:
+            self._append_log(
+                f"Failed to load persisted state ({self._error_detail(error)}); starting with empty state"
+            )
+        self._state_version = 0
+        return AppState()
+
+    def _load_state_with_recovery(self) -> AppState:
+        try:
+            loaded_state = load_state_with_version(self._state_path)
+        except Exception as error:
+            return self._recover_state_after_load_failure(error)
+        self._state_version = loaded_state.version
+        return loaded_state.state
+
+    def _build_seeded_app_config(self, state: AppState) -> AppConfig:
+        return AppConfig(
+            fade_in_duration_seconds=max(1, state.fade_in_duration_seconds),
+            fade_out_duration_seconds=max(1, state.fade_out_duration_seconds),
+            filesystem_default_fade_in=False,
+            filesystem_default_fade_out=False,
+            streams_default_fade_in=False,
+            streams_default_fade_out=False,
+            media_library_width_percent=35,
+            schedule_width_percent=65,
+            font_size=self._font_size_points,
+            library_tabs=list(state.library_tabs),
+            export_path_mappings=[],
+            supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
+            greenwich_time_signal_enabled=False,
+            greenwich_time_signal_path="",
+            default_volume_percent=100,
+            icecast_status=False,
+            icecast_run_in_background=False,
+            icecast_command="",
+            icecast_input_format=DEFAULT_ICECAST_INPUT_FORMAT,
+            icecast_thread_queue_size=DEFAULT_ICECAST_THREAD_QUEUE_SIZE,
+            icecast_device=DEFAULT_ICECAST_DEVICE,
+            icecast_audio_channels=DEFAULT_ICECAST_AUDIO_CHANNELS,
+            icecast_audio_rate=DEFAULT_ICECAST_AUDIO_RATE,
+            icecast_audio_codec=DEFAULT_ICECAST_AUDIO_CODEC,
+            icecast_audio_bitrate=DEFAULT_ICECAST_AUDIO_BITRATE,
+            icecast_content_type=DEFAULT_ICECAST_CONTENT_TYPE,
+            icecast_output_format=DEFAULT_ICECAST_OUTPUT_FORMAT,
+            icecast_url=DEFAULT_ICECAST_URL,
+        )
+
+    def _load_app_config_with_recovery(self, state: AppState) -> AppConfig:
+        try:
+            return self._load_or_initialize_app_config(state)
+        except Exception as error:
+            backup_path = backup_file_for_recovery(self._settings_path)
+            config = self._build_seeded_app_config(state)
+            if backup_path is not None:
+                self._append_log(
+                    (
+                        "Recovered from invalid settings file "
+                        f"({self._error_detail(error)}); backup created at {backup_path}"
+                    )
+                )
+            else:
+                self._append_log(
+                    f"Failed to load settings ({self._error_detail(error)}); using defaults"
+                )
+            try:
+                self._settings_path.parent.mkdir(parents=True, exist_ok=True)
+                save_app_config(self._settings_path, config)
+            except Exception as save_error:
+                self._append_log(
+                    f"Could not persist fallback settings: {self._error_detail(save_error)}"
+                )
+            return config
 
     def _resolved_icecast_command(self) -> str:
         manual_command = str(self._icecast_command or "").strip()
@@ -217,10 +324,8 @@ class MainWindowStatePersistenceMixin:
     def _load_initial_state(self) -> None:
         app_started_at = datetime.now().astimezone()
         self._migrate_legacy_state_location_if_needed()
-        loaded_state = load_state_with_version(self._state_path)
-        self._state_version = loaded_state.version
-        state = loaded_state.state
-        app_config = self._load_or_initialize_app_config(state)
+        state = self._load_state_with_recovery()
+        app_config = self._load_app_config_with_recovery(state)
         self._media_items = {item.id: item for item in state.media_items}
         self._media_duration_cache.clear()
         self._duration_probe_cache = sanitize_duration_probe_cache(
@@ -430,9 +535,7 @@ class MainWindowStatePersistenceMixin:
         )
 
     def _reload_runtime_state_after_conflict(self) -> None:
-        loaded_state = load_state_with_version(self._state_path)
-        self._state_version = loaded_state.version
-        state = loaded_state.state
+        state = self._load_state_with_recovery()
         self._media_items = {item.id: item for item in state.media_items}
         self._media_duration_cache.clear()
         self._duration_probe_cache = sanitize_duration_probe_cache(
@@ -565,36 +668,7 @@ class MainWindowStatePersistenceMixin:
                 save_app_config(self._settings_path, config)
             return config
 
-        seeded_config = AppConfig(
-            fade_in_duration_seconds=max(1, state.fade_in_duration_seconds),
-            fade_out_duration_seconds=max(1, state.fade_out_duration_seconds),
-            filesystem_default_fade_in=False,
-            filesystem_default_fade_out=False,
-            streams_default_fade_in=False,
-            streams_default_fade_out=False,
-            media_library_width_percent=35,
-            schedule_width_percent=65,
-            font_size=self._font_size_points,
-            library_tabs=list(state.library_tabs),
-            export_path_mappings=[],
-            supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
-            greenwich_time_signal_enabled=False,
-            greenwich_time_signal_path="",
-            default_volume_percent=100,
-            icecast_status=False,
-            icecast_run_in_background=False,
-            icecast_command="",
-            icecast_input_format=DEFAULT_ICECAST_INPUT_FORMAT,
-            icecast_thread_queue_size=DEFAULT_ICECAST_THREAD_QUEUE_SIZE,
-            icecast_device=DEFAULT_ICECAST_DEVICE,
-            icecast_audio_channels=DEFAULT_ICECAST_AUDIO_CHANNELS,
-            icecast_audio_rate=DEFAULT_ICECAST_AUDIO_RATE,
-            icecast_audio_codec=DEFAULT_ICECAST_AUDIO_CODEC,
-            icecast_audio_bitrate=DEFAULT_ICECAST_AUDIO_BITRATE,
-            icecast_content_type=DEFAULT_ICECAST_CONTENT_TYPE,
-            icecast_output_format=DEFAULT_ICECAST_OUTPUT_FORMAT,
-            icecast_url=DEFAULT_ICECAST_URL,
-        )
+        seeded_config = self._build_seeded_app_config(state)
         self._settings_path.parent.mkdir(parents=True, exist_ok=True)
         save_app_config(self._settings_path, seeded_config)
         return seeded_config

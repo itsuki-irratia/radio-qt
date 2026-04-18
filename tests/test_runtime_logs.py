@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import radioqt.runtime_logs as runtime_logs
 from radioqt.runtime_logs import (
     append_runtime_log_line,
     format_runtime_log_line,
@@ -32,4 +33,19 @@ def test_append_and_read_runtime_logs_roundtrip(tmp_path) -> None:
     assert read_runtime_log_lines(tmp_path, limit=2) == [
         "[10:00:01] second",
         "[10:00:02] third",
+    ]
+
+
+def test_append_runtime_log_line_rotates_large_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(runtime_logs, "RUNTIME_LOG_MAX_BYTES", 70)
+    monkeypatch.setattr(runtime_logs, "RUNTIME_LOG_ROTATE_KEEP_LINES", 2)
+
+    append_runtime_log_line(tmp_path, "[10:00:00] first-0123456789")
+    append_runtime_log_line(tmp_path, "[10:00:01] second-0123456789")
+    append_runtime_log_line(tmp_path, "[10:00:02] third-0123456789")
+    append_runtime_log_line(tmp_path, "[10:00:03] fourth-0123456789")
+
+    assert read_runtime_log_lines(tmp_path, limit=None) == [
+        "[10:00:02] third-0123456789",
+        "[10:00:03] fourth-0123456789",
     ]
