@@ -210,6 +210,7 @@ class MainWindowSettingsLoggingMixin:
             icecast_output_format=self._icecast_output_format,
             icecast_url=self._icecast_url,
             library_tabs=self._library_tab_configs,
+            export_path_mappings=self._export_path_mappings,
             supported_extensions=self._supported_extensions,
         )
         if dialog.exec() != QDialog.Accepted:
@@ -256,6 +257,7 @@ class MainWindowSettingsLoggingMixin:
             next_generated_command=next_generated_command,
         )
         next_library_tabs = dialog.library_tabs()
+        next_export_path_mappings = dialog.export_path_mappings()
         next_supported_extensions = self._normalize_supported_extensions(dialog.supported_extensions())
         fade_changed = not (
             next_shared_fade_duration_seconds == self._fade_in_duration_seconds
@@ -290,6 +292,7 @@ class MainWindowSettingsLoggingMixin:
             or next_icecast_url != self._icecast_url
         )
         library_tabs_changed = next_library_tabs != self._library_tab_configs
+        export_path_mappings_changed = next_export_path_mappings != self._export_path_mappings
         supported_extensions_changed = next_supported_extensions != self._supported_extensions
 
         if (
@@ -299,6 +302,7 @@ class MainWindowSettingsLoggingMixin:
             and not greenwich_time_signal_changed
             and not icecast_changed
             and not library_tabs_changed
+            and not export_path_mappings_changed
             and not supported_extensions_changed
         ):
             return
@@ -337,6 +341,8 @@ class MainWindowSettingsLoggingMixin:
         if library_tabs_changed:
             self._library_tab_configs = next_library_tabs
             self._rebuild_custom_library_tabs()
+        if export_path_mappings_changed:
+            self._export_path_mappings = next_export_path_mappings
         self._save_settings()
         self._append_log(
             f"Updated settings: fade in={self._fade_in_duration_seconds}s, "
@@ -355,6 +361,7 @@ class MainWindowSettingsLoggingMixin:
             f"schedule_width={self._schedule_width_percent}%, "
             f"font={self._font_size_points}pt, "
             f"custom library tabs={len(self._library_tab_configs)}, "
+            f"export path mappings={len(self._export_path_mappings)}, "
             f"extensions={','.join(self._supported_extensions)}"
         )
         if icecast_changed:

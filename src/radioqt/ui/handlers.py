@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future
 import json
 import os
 from datetime import datetime
@@ -48,6 +49,7 @@ from ..scheduling import (
     update_schedule_fade_out,
     update_schedule_status,
 )
+from ..storage.schedule_export import export_schedule_day_keys
 from ..ui_components import CronDialog, ScheduleDialog
 
 
@@ -56,11 +58,32 @@ class MainWindowHandlersMixin:
         ("title", "Title"),
         ("artist", "Artist"),
         ("album", "Album"),
+        ("copyright", "Copyright"),
         ("genre", "Genre"),
         ("date", "Date/Year"),
         ("track", "Track"),
         ("comment", "Comment"),
     )
+    _LOCAL_FILE_METADATA_READ_TAG_ALIASES: dict[str, tuple[str, ...]] = {
+        "title": ("title",),
+        "artist": ("artist", "album_artist", "albumartist"),
+        "album": ("album",),
+        "copyright": ("copyright",),
+        "genre": ("genre",),
+        "date": ("date", "year", "creation_time"),
+        "track": ("track", "tracknumber", "track_number"),
+        "comment": ("comment", "description"),
+    }
+    _LOCAL_FILE_METADATA_WRITE_TAG_ALIASES: dict[str, tuple[str, ...]] = {
+        "title": ("title",),
+        "artist": ("artist", "album_artist", "albumartist"),
+        "album": ("album",),
+        "copyright": ("copyright",),
+        "genre": ("genre",),
+        "date": ("date", "year"),
+        "track": ("track", "tracknumber", "track_number"),
+        "comment": ("comment", "description"),
+    }
 
     @staticmethod
     def _local_media_path_if_file(source: str) -> Path | None:
@@ -181,39 +204,144 @@ class MainWindowHandlersMixin:
             return
         self._show_metadata_viewer("Schedule Entry Metadata", payload)
 
+    def _export_schedule_days_for_media(self, media_id: str) -> None:
+        target_day_keys = {
+            entry.start_at.astimezone().date().isoformat()
+            for entry in self._schedule_entries
+            if entry.media_id == media_id
+        }
+        if not target_day_keys or self._shutting_down:
+            return
+        state_snapshot = self._build_app_state_snapshot()
+        requested_day_keys = set(target_day_keys)
+        future = self._schedule_export_executor.submit(
+            export_schedule_day_keys,
+            self._config_dir,
+            state=state_snapshot,
+            day_keys=requested_day_keys,
+        )
+        future.add_done_callback(
+            lambda task, keys=requested_day_keys: self._emit_schedule_export_days_result(
+                keys,
+                task,
+            )
+        )
+
+    def _emit_schedule_export_days_result(
+        self,
+        requested_day_keys: set[str],
+        task: Future[object],
+    ) -> None:
+        if self._shutting_down:
+            return
+        updated_count = 0
+        removed_count = 0
+        error_message = ""
+        try:
+            result = task.result()
+            updated_count = int(getattr(result, "updated_count", 0) or 0)
+            removed_count = int(getattr(result, "removed_count", 0) or 0)
+        except Exception as exc:
+            error_message = str(exc)
+        try:
+            self._schedule_export_dispatcher.export_finished.emit(
+                sorted(requested_day_keys),
+                updated_count,
+                removed_count,
+                error_message,
+            )
+        except RuntimeError:
+            return
+
+    @Slot(object, int, int, str)
+    def _on_schedule_export_days_finished(
+        self,
+        requested_day_keys: object,
+        updated_count: int,
+        removed_count: int,
+        error_message: str,
+    ) -> None:
+        if self._shutting_down:
+            return
+        if error_message:
+            self._append_log(f"Schedule export failed after metadata edit: {error_message}")
+            return
+        if updated_count or removed_count:
+            days = (
+                requested_day_keys
+                if isinstance(requested_day_keys, list)
+                else []
+            )
+            day_summary = ", ".join(days[:3])
+            if len(days) > 3:
+                day_summary = f"{day_summary} (+{len(days) - 3} more)"
+            self._append_log(
+                (
+                    "Schedule export refreshed affected days after metadata edit: "
+                    f"updated={updated_count}, removed={removed_count}, days=[{day_summary}]"
+                )
+            )
+
     @classmethod
     def _editable_local_file_tags_from_ffprobe(
         cls, ffprobe_payload: dict[str, object] | None
     ) -> dict[str, str]:
-        tags_lower: dict[str, str] = {}
+        candidates: list[dict[str, str]] = []
         if ffprobe_payload is not None:
             format_payload = ffprobe_payload.get("format")
             if isinstance(format_payload, dict):
-                raw_tags = format_payload.get("tags")
-                if isinstance(raw_tags, dict):
-                    for raw_key, raw_value in raw_tags.items():
-                        key = str(raw_key).strip().lower()
-                        if not key:
-                            continue
-                        tags_lower[key] = "" if raw_value is None else str(raw_value)
-        return {key: tags_lower.get(key, "") for key, _ in cls._LOCAL_FILE_METADATA_FIELDS}
+                candidates.append(cls._normalize_ffprobe_tags(format_payload.get("tags")))
+            streams_payload = ffprobe_payload.get("streams")
+            if isinstance(streams_payload, list):
+                for stream_payload in streams_payload:
+                    if not isinstance(stream_payload, dict):
+                        continue
+                    candidates.append(cls._normalize_ffprobe_tags(stream_payload.get("tags")))
+
+        extracted: dict[str, str] = {}
+        for key, _ in cls._LOCAL_FILE_METADATA_FIELDS:
+            extracted[key] = cls._first_tag_match(
+                key,
+                candidates,
+            )
+        return extracted
+
+    @classmethod
+    def _first_tag_match(cls, key: str, candidates: list[dict[str, str]]) -> str:
+        aliases = cls._LOCAL_FILE_METADATA_READ_TAG_ALIASES.get(key, (key,))
+        for candidate in candidates:
+            for alias in aliases:
+                value = candidate.get(alias)
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _normalize_ffprobe_tags(raw_tags: object) -> dict[str, str]:
+        if not isinstance(raw_tags, dict):
+            return {}
+        normalized: dict[str, str] = {}
+        for raw_key, raw_value in raw_tags.items():
+            key = str(raw_key).strip().lower()
+            if not key:
+                continue
+            value = "" if raw_value is None else str(raw_value).strip()
+            if not value:
+                continue
+            normalized[key] = value
+        return normalized
 
     def _show_local_file_metadata_editor(
         self,
         *,
-        initial_library_title: str,
         initial_file_tags: dict[str, str],
-        on_submit: Callable[[str, dict[str, str]], tuple[bool, str | None]],
-    ) -> tuple[str, dict[str, str]] | None:
+        on_submit: Callable[[dict[str, str]], tuple[bool, str | None]],
+    ) -> dict[str, str] | None:
         dialog = QDialog(self)
         dialog.setWindowTitle("Edit Local Metadata")
         dialog.resize(560, 360)
         layout = QVBoxLayout(dialog)
         form = QFormLayout()
-
-        library_title_input = QLineEdit(dialog)
-        library_title_input.setText(initial_library_title)
-        form.addRow("Library title:", library_title_input)
 
         tag_inputs: dict[str, QLineEdit] = {}
         for key, label in self._LOCAL_FILE_METADATA_FIELDS:
@@ -227,10 +355,9 @@ class MainWindowHandlersMixin:
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
 
-        submitted_values: dict[str, tuple[str, dict[str, str]]] = {}
+        submitted_values: dict[str, dict[str, str]] = {}
 
         def _attempt_submit() -> None:
-            updated_library_title = library_title_input.text().strip()
             updated_file_tags = {
                 key: input_box.text().strip() for key, input_box in tag_inputs.items()
             }
@@ -238,7 +365,7 @@ class MainWindowHandlersMixin:
             dialog.setCursor(Qt.WaitCursor)
             QApplication.processEvents()
             try:
-                ok, error_message = on_submit(updated_library_title, updated_file_tags)
+                ok, error_message = on_submit(updated_file_tags)
             finally:
                 dialog.unsetCursor()
                 buttons.setEnabled(True)
@@ -249,7 +376,7 @@ class MainWindowHandlersMixin:
                     error_message or "Could not save metadata.",
                 )
                 return
-            submitted_values["value"] = (updated_library_title, updated_file_tags)
+            submitted_values["value"] = updated_file_tags
             dialog.accept()
 
         buttons.accepted.connect(_attempt_submit)
@@ -282,7 +409,19 @@ class MainWindowHandlersMixin:
             "-map_metadata",
             "0",
         ]
+        expanded_tag_items: list[tuple[str, str]] = []
+        seen_aliases: set[str] = set()
         for key, value in tags.items():
+            aliases = MainWindowHandlersMixin._LOCAL_FILE_METADATA_WRITE_TAG_ALIASES.get(
+                key, (key,)
+            )
+            for alias in aliases:
+                normalized_alias = str(alias).strip().lower()
+                if not normalized_alias or normalized_alias in seen_aliases:
+                    continue
+                seen_aliases.add(normalized_alias)
+                expanded_tag_items.append((normalized_alias, value))
+        for key, value in expanded_tag_items:
             command.extend(["-metadata", f"{key}={value}"])
         command.append(str(temporary_path))
         try:
@@ -330,18 +469,12 @@ class MainWindowHandlersMixin:
             return
         ffprobe_payload = self._ffprobe_metadata(local_file_path)
         initial_file_tags = self._editable_local_file_tags_from_ffprobe(ffprobe_payload)
-        previous_title = media.title
 
         def _submit_local_metadata(
-            normalized_title: str,
             updated_file_tags: dict[str, str],
         ) -> tuple[bool, str | None]:
-            if not normalized_title:
-                return False, "Title cannot be empty."
-
-            title_changed = normalized_title != media.title
             file_metadata_changed = updated_file_tags != initial_file_tags
-            if not title_changed and not file_metadata_changed:
+            if not file_metadata_changed:
                 return True, None
 
             if file_metadata_changed:
@@ -351,33 +484,14 @@ class MainWindowHandlersMixin:
                 if not succeeded:
                     return False, error_message or "Could not update embedded file metadata."
 
-            if title_changed:
-                media.title = normalized_title
-
             self._refresh_urls_list()
             self._refresh_cron_table()
             self._refresh_schedule_table()
-            self._save_state()
-            if title_changed and file_metadata_changed:
-                self._append_log(
-                    (
-                        f"Updated local metadata for {local_file_path} "
-                        f"(library title '{previous_title}' -> '{normalized_title}' + embedded tags)"
-                    )
-                )
-            elif title_changed:
-                self._append_log(
-                    (
-                        f"Updated local metadata title '{previous_title}' -> '{normalized_title}' "
-                        f"for {local_file_path}"
-                    )
-                )
-            else:
-                self._append_log(f"Updated embedded local file metadata for {local_file_path}")
+            self._export_schedule_days_for_media(media.id)
+            self._append_log(f"Updated embedded local file metadata for {local_file_path}")
             return True, None
 
         self._show_local_file_metadata_editor(
-            initial_library_title=media.title,
             initial_file_tags=initial_file_tags,
             on_submit=_submit_local_metadata,
         )

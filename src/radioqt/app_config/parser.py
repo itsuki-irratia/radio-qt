@@ -381,6 +381,42 @@ def parse_settings_yaml(raw_text: str) -> dict[str, Any]:
             if stream_relay_data:
                 data["stream_relay"] = stream_relay_data
             continue
+        if line.startswith("export:"):
+            export_data: dict[str, Any] = {}
+            while index < len(lines):
+                detail_line = lines[index].rstrip()
+                if not detail_line.startswith("  "):
+                    break
+                detail = detail_line[2:]
+                if not detail.startswith("path_mappings:"):
+                    index += 1
+                    continue
+                index += 1
+                path_mappings: list[dict[str, str]] = []
+                while index < len(lines):
+                    item_line = lines[index].rstrip()
+                    if not item_line.startswith("    - "):
+                        break
+                    first = item_line[6:]
+                    mapping: dict[str, str] = {}
+                    if ":" in first:
+                        key, value = first.split(":", 1)
+                        mapping[key.strip()] = parse_scalar(value)
+                    index += 1
+                    while index < len(lines):
+                        sub_line = lines[index].rstrip()
+                        if not sub_line.startswith("      "):
+                            break
+                        sub_detail = sub_line[6:]
+                        if ":" in sub_detail:
+                            key, value = sub_detail.split(":", 1)
+                            mapping[key.strip()] = parse_scalar(value)
+                        index += 1
+                    path_mappings.append(mapping)
+                export_data["path_mappings"] = path_mappings
+            if export_data:
+                data["export"] = export_data
+            continue
         if line.startswith("custom_paths:"):
             custom_paths_data: dict[str, Any] = {}
             while index < len(lines):

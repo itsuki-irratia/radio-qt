@@ -30,6 +30,9 @@ class MainWindowInteractionRuntimeMixin:
         self._player.playback_error.connect(self._on_player_error)
         self._player.audio_levels_changed.connect(self._on_audio_levels_changed)
         self._duration_probe_dispatcher.probe_finished.connect(self._on_media_duration_probed)
+        self._schedule_export_dispatcher.export_finished.connect(
+            self._on_schedule_export_days_finished
+        )
 
         self._scheduler.schedule_triggered.connect(self._on_schedule_triggered)
         self._scheduler.log.connect(self._append_log)

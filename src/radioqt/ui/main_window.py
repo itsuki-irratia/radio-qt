@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..app_config import ExportPathMapping
 from ..library import (
     is_stream_source,
     local_media_path_from_source,
@@ -71,6 +72,10 @@ class _DurationProbeDispatcher(QObject):
     probe_finished = Signal(str, str, object, object)
 
 
+class _ScheduleExportDispatcher(QObject):
+    export_finished = Signal(object, int, int, str)
+
+
 class MainWindow(
     MainWindowLayoutBuildersMixin,
     MainWindowInteractionRuntimeMixin,
@@ -112,6 +117,7 @@ class MainWindow(
         self._cron_entries: list[CronEntry] = []
         self._play_queue: deque[QueueItem] = deque()
         self._library_tab_configs: list[LibraryTab] = []
+        self._export_path_mappings: list[ExportPathMapping] = []
         self._supported_extensions: list[str] = list(DEFAULT_SUPPORTED_EXTENSIONS)
         self._library_tab_sources: dict[QWidget, tuple[str, QTreeView | None, QFileSystemModel | None]] = {}
         self._custom_library_tab_widgets: list[QWidget] = []
@@ -161,7 +167,12 @@ class MainWindow(
             max_workers=1,
             thread_name_prefix="radioqt-duration",
         )
+        self._schedule_export_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="radioqt-schedule-export",
+        )
         self._duration_probe_dispatcher = _DurationProbeDispatcher(self)
+        self._schedule_export_dispatcher = _ScheduleExportDispatcher(self)
         self._cron_refresh_timer = QTimer(self)
         self._cron_refresh_timer.setInterval(30000)
         self._schedule_focus_timer = QTimer(self)
@@ -358,6 +369,7 @@ class MainWindow(
         self._greenwich_time_signal_player.stop()
         self._volume_fade_timer.stop()
         self._duration_probe_executor.shutdown(wait=False, cancel_futures=True)
+        self._schedule_export_executor.shutdown(wait=False, cancel_futures=True)
         try:
             delete_runtime_lock(self._config_dir)
         except OSError:

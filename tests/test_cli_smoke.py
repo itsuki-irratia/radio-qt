@@ -50,6 +50,7 @@ def test_settings_get_json_defaults(tmp_path, capsys) -> None:
     assert payload["settings"]["icecast_content_type"] == "audio/mpeg"
     assert payload["settings"]["icecast_output_format"] == "mp3"
     assert payload["settings"]["icecast_url"].startswith("icecast://")
+    assert payload["settings"]["export_path_mappings"] == []
 
 
 def test_settings_set_persists_fade_and_volume(tmp_path, capsys) -> None:
@@ -140,6 +141,75 @@ def test_settings_set_supported_extensions_and_library_tabs(tmp_path) -> None:
     assert app_config.supported_extensions == ["mp3", "ogg", "webm"]
     assert [tab.title for tab in app_config.library_tabs] == ["Studio", "Ads"]
     assert [tab.path for tab in app_config.library_tabs] == ["/tmp/studio", "/tmp/ads"]
+
+
+def test_settings_set_export_path_mappings(tmp_path, capsys) -> None:
+    set_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "export_path_mappings",
+            '[{"from":"/home/zital","to":"/media"},{"from":"/mnt/radio","to":"https://example.com/media"}]',
+        ]
+    )
+    assert set_exit == 0
+    capsys.readouterr()
+
+    get_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "settings",
+            "get",
+            "export_path_mappings",
+        ]
+    )
+    assert get_exit == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["value"] == [
+        {"from": "/home/zital", "to": "/media"},
+        {"from": "/mnt/radio", "to": "https://example.com/media"},
+    ]
+
+    app_config = load_app_config(tmp_path / "settings.yaml")
+    assert [mapping.from_prefix for mapping in app_config.export_path_mappings] == [
+        "/home/zital",
+        "/mnt/radio",
+    ]
+    assert [mapping.to_prefix for mapping in app_config.export_path_mappings] == [
+        "/media",
+        "https://example.com/media",
+    ]
+
+    clear_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "settings",
+            "set",
+            "export_path_mappings",
+            "[]",
+        ]
+    )
+    assert clear_exit == 0
+    capsys.readouterr()
+
+    get_cleared_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "settings",
+            "get",
+            "export_path_mappings",
+        ]
+    )
+    assert get_cleared_exit == 0
+    cleared_payload = json.loads(capsys.readouterr().out)
+    assert cleared_payload["value"] == []
 
 
 def test_settings_set_icecast_command_and_status(tmp_path, capsys) -> None:

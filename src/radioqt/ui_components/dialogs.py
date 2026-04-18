@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..cron import CronExpression, CronParseError
+from ..app_config import ExportPathMapping
 from ..models import LibraryTab
 from ..stream_relay import (
     DEFAULT_ICECAST_AUDIO_BITRATE,
@@ -316,6 +317,7 @@ class ConfigurationDialog(QDialog):
         icecast_output_format: str,
         icecast_url: str,
         library_tabs: list[LibraryTab],
+        export_path_mappings: list[ExportPathMapping],
         supported_extensions: list[str],
     ) -> None:
         super().__init__(parent)
@@ -485,10 +487,14 @@ class ConfigurationDialog(QDialog):
         )
         self._icecast_url_edit.setText(icecast_url.strip() or DEFAULT_ICECAST_URL)
         self._configured_library_tabs: list[LibraryTab] = list(library_tabs)
+        self._configured_export_path_mappings: list[ExportPathMapping] = list(
+            export_path_mappings
+        )
         self._configured_supported_extensions: list[str] = list(supported_extensions)
 
         self._settings_sections_list = QListWidget(self)
         self._settings_sections_list.addItem("Custom Paths")
+        self._settings_sections_list.addItem("Export Paths")
         self._settings_sections_list.addItem("Extensions")
         self._settings_sections_list.addItem("Fade")
         self._settings_sections_list.addItem("Greenwich Time Signal")
@@ -610,6 +616,38 @@ class ConfigurationDialog(QDialog):
         custom_paths_layout.addWidget(self._library_tabs_table, 1)
         custom_paths_layout.addLayout(library_tabs_buttons)
 
+        export_paths_page = QWidget(self)
+        export_paths_layout = QVBoxLayout(export_paths_page)
+        export_paths_layout.setContentsMargins(0, 0, 0, 0)
+        self._export_path_mappings_table = QTableWidget(export_paths_page)
+        self._export_path_mappings_table.setColumnCount(2)
+        self._export_path_mappings_table.setHorizontalHeaderLabels(["From Prefix", "To Prefix"])
+        self._export_path_mappings_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._export_path_mappings_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._export_path_mappings_table.setAlternatingRowColors(True)
+        self._export_path_mappings_table.verticalHeader().setVisible(False)
+        self._export_path_mappings_table.horizontalHeader().setStretchLastSection(True)
+        self._export_path_mappings_table.setRowCount(0)
+        for mapping in self._configured_export_path_mappings:
+            self._append_export_path_mapping_row(mapping.from_prefix, mapping.to_prefix)
+
+        export_paths_buttons = QHBoxLayout()
+        self._add_export_path_mapping_button = QPushButton("+", export_paths_page)
+        self._add_export_path_mapping_button.setToolTip("Add export path mapping")
+        self._add_export_path_mapping_button.setFixedSize(square_button_size, square_button_size)
+        self._remove_export_path_mapping_button = QPushButton("-", export_paths_page)
+        self._remove_export_path_mapping_button.setToolTip("Remove selected export path mapping")
+        self._remove_export_path_mapping_button.setFixedSize(square_button_size, square_button_size)
+        self._add_export_path_mapping_button.clicked.connect(self._add_export_path_mapping_row)
+        self._remove_export_path_mapping_button.clicked.connect(
+            self._remove_selected_export_path_mapping_row
+        )
+        export_paths_buttons.addWidget(self._add_export_path_mapping_button)
+        export_paths_buttons.addWidget(self._remove_export_path_mapping_button)
+        export_paths_buttons.addStretch()
+        export_paths_layout.addWidget(self._export_path_mappings_table, 1)
+        export_paths_layout.addLayout(export_paths_buttons)
+
         extensions_page = QWidget(self)
         extensions_layout = QVBoxLayout(extensions_page)
         extensions_layout.setContentsMargins(0, 0, 0, 0)
@@ -641,6 +679,7 @@ class ConfigurationDialog(QDialog):
         extensions_layout.addLayout(extensions_buttons)
 
         self._settings_pages.addWidget(custom_paths_page)
+        self._settings_pages.addWidget(export_paths_page)
         self._settings_pages.addWidget(extensions_page)
         self._settings_pages.addWidget(fade_page)
         self._settings_pages.addWidget(greenwich_page)
@@ -759,14 +798,21 @@ class ConfigurationDialog(QDialog):
         collected_settings = self._collect_settings_values(show_warning=False)
         if collected_settings is None:
             return list(self._configured_library_tabs)
-        configured_tabs, _ = collected_settings
+        configured_tabs, _, _ = collected_settings
         return configured_tabs
+
+    def export_path_mappings(self) -> list[ExportPathMapping]:
+        collected_settings = self._collect_settings_values(show_warning=False)
+        if collected_settings is None:
+            return list(self._configured_export_path_mappings)
+        _, configured_export_path_mappings, _ = collected_settings
+        return configured_export_path_mappings
 
     def supported_extensions(self) -> list[str]:
         collected_settings = self._collect_settings_values(show_warning=False)
         if collected_settings is None:
             return list(self._configured_supported_extensions)
-        _, configured_supported_extensions = collected_settings
+        _, _, configured_supported_extensions = collected_settings
         return configured_supported_extensions
 
     @staticmethod
@@ -776,6 +822,26 @@ class ConfigurationDialog(QDialog):
             return str(expanded.resolve())
         except OSError:
             return str(expanded)
+
+    @staticmethod
+    def _normalize_export_mapping_from_prefix(raw_path: str) -> str:
+        trimmed = raw_path.strip()
+        if not trimmed:
+            return ""
+        expanded = Path(trimmed).expanduser()
+        expanded_text = str(expanded)
+        if expanded_text in {"/", "\\"}:
+            return "/"
+        return expanded_text.rstrip("/\\")
+
+    @staticmethod
+    def _normalize_export_mapping_to_prefix(raw_path: str) -> str:
+        trimmed = raw_path.strip()
+        if not trimmed:
+            return ""
+        if trimmed == "/":
+            return trimmed
+        return trimmed.rstrip("/\\")
 
     def _append_library_tab_row(self, title: str = "", path: str = "") -> None:
         row = self._library_tabs_table.rowCount()
@@ -839,6 +905,13 @@ class ConfigurationDialog(QDialog):
         self._supported_extensions_table.insertRow(row)
         self._supported_extensions_table.setItem(row, 0, QTableWidgetItem(extension))
 
+    def _append_export_path_mapping_row(self, from_prefix: str = "", to_prefix: str = "") -> None:
+        row = self._export_path_mappings_table.rowCount()
+        self._export_path_mappings_table.insertRow(row)
+        self._export_path_mappings_table.setItem(row, 0, QTableWidgetItem(from_prefix))
+        self._export_path_mappings_table.setItem(row, 1, QTableWidgetItem(to_prefix))
+        self._export_path_mappings_table.resizeColumnsToContents()
+
     def _add_library_tab_row(self) -> None:
         self._append_library_tab_row()
         new_row = self._library_tabs_table.rowCount() - 1
@@ -850,6 +923,14 @@ class ConfigurationDialog(QDialog):
         new_row = self._supported_extensions_table.rowCount() - 1
         self._supported_extensions_table.setCurrentCell(new_row, 0)
         self._supported_extensions_table.editItem(self._supported_extensions_table.item(new_row, 0))
+
+    def _add_export_path_mapping_row(self) -> None:
+        self._append_export_path_mapping_row()
+        new_row = self._export_path_mappings_table.rowCount() - 1
+        self._export_path_mappings_table.setCurrentCell(new_row, 0)
+        self._export_path_mappings_table.editItem(
+            self._export_path_mappings_table.item(new_row, 0)
+        )
 
     def _remove_selected_library_tab_row(self) -> None:
         current_row = self._library_tabs_table.currentRow()
@@ -887,6 +968,26 @@ class ConfigurationDialog(QDialog):
         if result != QMessageBox.Yes:
             return
         self._supported_extensions_table.removeRow(current_row)
+
+    def _remove_selected_export_path_mapping_row(self) -> None:
+        current_row = self._export_path_mappings_table.currentRow()
+        if current_row < 0:
+            return
+        from_item = self._export_path_mappings_table.item(current_row, 0)
+        to_item = self._export_path_mappings_table.item(current_row, 1)
+        from_prefix = from_item.text().strip() if from_item is not None else ""
+        to_prefix = to_item.text().strip() if to_item is not None else ""
+        details = f"{from_prefix or '?'} -> {to_prefix or '?'}"
+        result = QMessageBox.question(
+            self,
+            "Confirm Removal",
+            f"Remove export mapping '{details}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if result != QMessageBox.Yes:
+            return
+        self._export_path_mappings_table.removeRow(current_row)
 
     def _browse_greenwich_time_signal_path(self) -> None:
         current_path = self._greenwich_time_signal_path_edit.text().strip()
@@ -963,14 +1064,59 @@ class ConfigurationDialog(QDialog):
             return None
         return configured_supported_extensions
 
-    def _collect_settings_values(self, *, show_warning: bool) -> tuple[list[LibraryTab], list[str]] | None:
+    def _collect_export_path_mappings(
+        self,
+        *,
+        show_warning: bool,
+    ) -> list[ExportPathMapping] | None:
+        configured_mappings: list[ExportPathMapping] = []
+        seen_mappings: set[tuple[str, str]] = set()
+        for row in range(self._export_path_mappings_table.rowCount()):
+            from_item = self._export_path_mappings_table.item(row, 0)
+            to_item = self._export_path_mappings_table.item(row, 1)
+            raw_from = from_item.text() if from_item is not None else ""
+            raw_to = to_item.text() if to_item is not None else ""
+            from_prefix = self._normalize_export_mapping_from_prefix(raw_from)
+            to_prefix = self._normalize_export_mapping_to_prefix(raw_to)
+            if not raw_from.strip() and not raw_to.strip():
+                continue
+            if not from_prefix or not to_prefix:
+                if show_warning:
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Export Path Mapping",
+                        f"Row {row + 1}: both 'From Prefix' and 'To Prefix' are required.",
+                    )
+                return None
+            mapping_key = (from_prefix, to_prefix)
+            if mapping_key in seen_mappings:
+                continue
+            seen_mappings.add(mapping_key)
+            configured_mappings.append(
+                ExportPathMapping(
+                    from_prefix=from_prefix,
+                    to_prefix=to_prefix,
+                )
+            )
+        return configured_mappings
+
+    def _collect_settings_values(
+        self,
+        *,
+        show_warning: bool,
+    ) -> tuple[list[LibraryTab], list[ExportPathMapping], list[str]] | None:
         configured_tabs = self._collect_library_tabs(show_warning=show_warning)
         if configured_tabs is None:
+            return None
+        configured_export_path_mappings = self._collect_export_path_mappings(
+            show_warning=show_warning
+        )
+        if configured_export_path_mappings is None:
             return None
         configured_supported_extensions = self._collect_supported_extensions(show_warning=show_warning)
         if configured_supported_extensions is None:
             return None
-        return configured_tabs, configured_supported_extensions
+        return configured_tabs, configured_export_path_mappings, configured_supported_extensions
 
     def _validate_greenwich_time_signal_path(self, *, show_warning: bool) -> bool:
         enabled = self.greenwich_time_signal_enabled()
@@ -1031,8 +1177,11 @@ class ConfigurationDialog(QDialog):
         collected_settings = self._collect_settings_values(show_warning=True)
         if collected_settings is None:
             return
-        configured_tabs, configured_supported_extensions = collected_settings
+        configured_tabs, configured_export_path_mappings, configured_supported_extensions = (
+            collected_settings
+        )
         self._configured_library_tabs = configured_tabs
+        self._configured_export_path_mappings = configured_export_path_mappings
         self._configured_supported_extensions = configured_supported_extensions
         super().accept()
 
@@ -1044,8 +1193,11 @@ class ConfigurationDialog(QDialog):
         if collected_settings is None:
             event.ignore()
             return
-        configured_tabs, configured_supported_extensions = collected_settings
+        configured_tabs, configured_export_path_mappings, configured_supported_extensions = (
+            collected_settings
+        )
         self._configured_library_tabs = configured_tabs
+        self._configured_export_path_mappings = configured_export_path_mappings
         self._configured_supported_extensions = configured_supported_extensions
         self.setResult(QDialog.Accepted)
         event.accept()

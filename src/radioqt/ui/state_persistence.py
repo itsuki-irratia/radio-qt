@@ -230,6 +230,7 @@ class MainWindowStatePersistenceMixin:
         self._play_queue = deque(state.queue)
         hard_sync_normalized = self._enforce_hard_sync_always()
         self._library_tab_configs = list(app_config.library_tabs)
+        self._export_path_mappings = list(app_config.export_path_mappings)
         self._supported_extensions = self._normalize_supported_extensions(app_config.supported_extensions)
         self._schedule_auto_focus_enabled = state.schedule_auto_focus
         self._logs_visible = state.logs_visible
@@ -467,6 +468,7 @@ class MainWindowStatePersistenceMixin:
             schedule_width_percent=self._schedule_width_percent,
             font_size=self._font_size_points,
             library_tabs=list(self._library_tab_configs),
+            export_path_mappings=list(self._export_path_mappings),
             supported_extensions=list(self._supported_extensions),
             greenwich_time_signal_enabled=self._greenwich_time_signal_enabled,
             greenwich_time_signal_path=self._greenwich_time_signal_path,
@@ -506,6 +508,7 @@ class MainWindowStatePersistenceMixin:
             schedule_width_percent=65,
             font_size=self._font_size_points,
             library_tabs=list(state.library_tabs),
+            export_path_mappings=[],
             supported_extensions=self._normalize_supported_extensions(state.supported_extensions),
             greenwich_time_signal_enabled=False,
             greenwich_time_signal_path="",

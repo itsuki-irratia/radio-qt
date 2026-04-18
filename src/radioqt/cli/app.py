@@ -128,6 +128,7 @@ SUPPORTED_SETTINGS_KEYS = (
     "icecast_content_type",
     "icecast_output_format",
     "icecast_url",
+    "export_path_mappings",
     "supported_extensions",
     "library_tabs",
 )
@@ -318,6 +319,22 @@ def _settings_to_dict(app_config: object) -> dict[str, object]:
         }
         for tab in list(app_config.library_tabs)
     ]
+    export_path_mappings: list[dict[str, str]] = []
+    for raw_mapping in list(getattr(app_config, "export_path_mappings", [])):
+        if isinstance(raw_mapping, dict):
+            from_prefix = str(raw_mapping.get("from", "")).strip()
+            to_prefix = str(raw_mapping.get("to", "")).strip()
+        else:
+            from_prefix = str(getattr(raw_mapping, "from_prefix", "")).strip()
+            to_prefix = str(getattr(raw_mapping, "to_prefix", "")).strip()
+        if not from_prefix or not to_prefix:
+            continue
+        export_path_mappings.append(
+            {
+                "from": from_prefix,
+                "to": to_prefix,
+            }
+        )
     configured_icecast_command = _normalize_icecast_command(str(app_config.icecast_command))
     if not configured_icecast_command:
         configured_icecast_command = _icecast_ffmpeg_command_from_settings(app_config)
@@ -354,6 +371,7 @@ def _settings_to_dict(app_config: object) -> dict[str, object]:
         "icecast_output_format": str(app_config.icecast_output_format).strip()
         or DEFAULT_ICECAST_OUTPUT_FORMAT,
         "icecast_url": str(app_config.icecast_url).strip() or DEFAULT_ICECAST_URL,
+        "export_path_mappings": export_path_mappings,
         "supported_extensions": supported_extensions,
         "library_tabs": library_tabs,
     }
@@ -423,6 +441,10 @@ def _normalize_settings_key(raw_key: str) -> str:
         "icecast_url": "icecast_url",
         "stream_relay_url": "icecast_url",
         "url": "icecast_url",
+        "export_path_mappings": "export_path_mappings",
+        "path_mappings": "export_path_mappings",
+        "export_path_map": "export_path_mappings",
+        "export_paths": "export_path_mappings",
         "supported_extensions": "supported_extensions",
         "extensions_supported": "supported_extensions",
         "library_tabs": "library_tabs",
@@ -547,6 +569,42 @@ def _parse_settings_library_tabs(raw_value: str, key: str) -> list[LibraryTab]:
     return normalized_tabs
 
 
+def _parse_settings_export_path_mappings(raw_value: str, key: str) -> list[dict[str, str]]:
+    raw = raw_value.strip()
+    if not raw:
+        raise CliError(f"{key} cannot be empty.")
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            f"Invalid JSON for {key}. Expected an array of objects with from/to."
+        ) from exc
+    if not isinstance(decoded, list):
+        raise CliError(f"{key} JSON value must be an array.")
+    normalized_mappings: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in decoded:
+        if not isinstance(item, dict):
+            raise CliError(f"{key} entries must be objects with from/to.")
+        from_prefix = str(item.get("from", "")).strip()
+        to_prefix = str(item.get("to", "")).strip()
+        if not from_prefix or not to_prefix:
+            raise CliError(
+                f"{key} entries require non-empty from/to. Invalid entry: {item}"
+            )
+        dedupe_key = (from_prefix, to_prefix)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        normalized_mappings.append(
+            {
+                "from": from_prefix,
+                "to": to_prefix,
+            }
+        )
+    return normalized_mappings
+
+
 def _apply_setting_value(app_config: object, *, key: str, raw_value: str) -> None:
     if key == "fade_seconds":
         fade_seconds = _parse_settings_positive_int(raw_value, key)
@@ -629,6 +687,9 @@ def _apply_setting_value(app_config: object, *, key: str, raw_value: str) -> Non
         return
     if key == "icecast_url":
         app_config.icecast_url = _parse_settings_non_empty_text(raw_value, key)
+        return
+    if key == "export_path_mappings":
+        app_config.export_path_mappings = _parse_settings_export_path_mappings(raw_value, key)
         return
     if key == "supported_extensions":
         app_config.supported_extensions = _parse_settings_supported_extensions(raw_value, key)

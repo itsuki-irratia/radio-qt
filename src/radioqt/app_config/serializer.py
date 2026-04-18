@@ -23,6 +23,7 @@ def dump_settings_yaml(config: AppConfig) -> str:
     greenwich_payload = payload.get("greenwich_time_signal", {})
     audio_payload = payload.get("audio", {})
     icecast_payload = payload.get("icecast", {})
+    export_payload = payload.get("export", {})
     custom_paths_payload = payload.get("custom_paths", {})
     extensions_payload = payload.get("extensions", {})
 
@@ -120,6 +121,14 @@ def dump_settings_yaml(config: AppConfig) -> str:
         "  url: "
         f"{string_as_yaml(str(icecast_payload.get('url', '')))}"
     )
+
+    lines.append("export:")
+    lines.append("  path_mappings:")
+    for mapping in export_payload.get("path_mappings", []):
+        source_prefix = string_as_yaml(str(mapping.get("from", "")))
+        target_prefix = string_as_yaml(str(mapping.get("to", "")))
+        lines.append(f"    - from: {source_prefix}")
+        lines.append(f"      to: {target_prefix}")
 
     lines.append("custom_paths:")
     lines.append("  tabs:")

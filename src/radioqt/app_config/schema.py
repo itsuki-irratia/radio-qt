@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ..models import DEFAULT_SUPPORTED_EXTENSIONS, LibraryTab
@@ -25,6 +26,73 @@ def _safe_volume_percent(value: Any, default: int = 100) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(0, min(100, parsed))
+
+
+def _normalize_local_prefix(value: object) -> str:
+    token = str(value).strip()
+    if not token:
+        return ""
+    expanded = str(Path(token).expanduser())
+    if expanded in {"/", "\\"}:
+        return "/"
+    return expanded.rstrip("/\\")
+
+
+def _normalize_public_prefix(value: object) -> str:
+    token = str(value).strip()
+    if not token:
+        return ""
+    if token == "/":
+        return token
+    return token.rstrip("/\\")
+
+
+@dataclass(slots=True)
+class ExportPathMapping:
+    from_prefix: str
+    to_prefix: str
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ExportPathMapping":
+        return cls(
+            from_prefix=str(data.get("from", "")).strip(),
+            to_prefix=str(data.get("to", "")).strip(),
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "from": str(self.from_prefix).strip(),
+            "to": str(self.to_prefix).strip(),
+        }
+
+
+def _normalize_export_path_mappings(raw_values: object) -> list[ExportPathMapping]:
+    if not isinstance(raw_values, list):
+        return []
+    normalized: list[ExportPathMapping] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw_values:
+        if isinstance(item, ExportPathMapping):
+            mapping = item
+        elif isinstance(item, dict):
+            mapping = ExportPathMapping.from_dict(item)
+        else:
+            continue
+        from_prefix = _normalize_local_prefix(mapping.from_prefix)
+        to_prefix = _normalize_public_prefix(mapping.to_prefix)
+        if not from_prefix or not to_prefix:
+            continue
+        key = (from_prefix, to_prefix)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(
+            ExportPathMapping(
+                from_prefix=from_prefix,
+                to_prefix=to_prefix,
+            )
+        )
+    return normalized
 
 
 @dataclass(slots=True)
@@ -56,6 +124,7 @@ class AppConfig:
     icecast_content_type: str = DEFAULT_ICECAST_CONTENT_TYPE
     icecast_output_format: str = DEFAULT_ICECAST_OUTPUT_FORMAT
     icecast_url: str = DEFAULT_ICECAST_URL
+    export_path_mappings: list[ExportPathMapping] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
@@ -261,6 +330,12 @@ class AppConfig:
             icecast_command = str(
                 stream_relay_payload.get("command", icecast_command) or ""
             ).strip()
+        export_payload = data.get("export")
+        export_path_mappings_raw = (
+            export_payload.get("path_mappings")
+            if isinstance(export_payload, dict)
+            else data.get("export_path_mappings", data.get("path_mappings", []))
+        )
 
         custom_paths_payload = data.get("custom_paths")
         tabs_raw = (
@@ -307,6 +382,7 @@ class AppConfig:
             icecast_content_type=icecast_content_type or DEFAULT_ICECAST_CONTENT_TYPE,
             icecast_output_format=icecast_output_format or DEFAULT_ICECAST_OUTPUT_FORMAT,
             icecast_url=icecast_url or DEFAULT_ICECAST_URL,
+            export_path_mappings=_normalize_export_path_mappings(export_path_mappings_raw),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -378,6 +454,12 @@ class AppConfig:
                 "output_format": str(self.icecast_output_format).strip()
                 or DEFAULT_ICECAST_OUTPUT_FORMAT,
                 "url": str(self.icecast_url).strip() or DEFAULT_ICECAST_URL,
+            },
+            "export": {
+                "path_mappings": [
+                    mapping.to_dict()
+                    for mapping in _normalize_export_path_mappings(self.export_path_mappings)
+                ],
             },
             "custom_paths": {
                 "tabs": [tab.to_dict() for tab in self.library_tabs],
