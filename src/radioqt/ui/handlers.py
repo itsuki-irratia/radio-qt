@@ -698,6 +698,7 @@ class MainWindowHandlersMixin:
         media = resolve_media_by_id(self._media_items, media_id)
         if media is None:
             return
+        self._set_pending_schedule_start_entry_id(None)
         self._player.play_media(media)
 
     @Slot()

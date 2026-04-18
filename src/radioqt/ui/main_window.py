@@ -149,6 +149,7 @@ class MainWindow(
         self._fullscreen_active = False
         self._schedule_filter_date = datetime.now().astimezone().date()
         self._current_playback_position_ms = 0
+        self._pending_schedule_start_entry_id: str | None = None
         self._shutting_down = False
         self._font_size_points = self._default_font_size_points()
         self._media_library_width_percent = 35

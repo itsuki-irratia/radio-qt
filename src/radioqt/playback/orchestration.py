@@ -67,9 +67,6 @@ def process_schedule_trigger(
             entry.status = SCHEDULE_STATUS_MISSED
         return ScheduleTriggerOutcome(kind="missing_media")
 
-    if entry.one_shot:
-        entry.status = SCHEDULE_STATUS_FIRED
-
     if entry.hard_sync or not player_is_playing:
         interrupted_media_name = current_media_name if entry.hard_sync and player_is_playing else None
         return ScheduleTriggerOutcome(
@@ -108,9 +105,6 @@ def resolve_active_schedule_play(
             entry=entry,
             start_at=start_at,
         )
-
-    if entry.one_shot and entry.status in {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_MISSED}:
-        entry.status = SCHEDULE_STATUS_FIRED
 
     _, end_at, end_reason = schedule_entry_window_details(schedule_entries, entry.id)
     return ActiveSchedulePlayOutcome(

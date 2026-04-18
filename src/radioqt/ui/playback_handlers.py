@@ -8,7 +8,13 @@ from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QStyle
 
 from ..library import is_stream_source, local_media_path_from_source
-from ..models import MediaItem, ScheduleEntry
+from ..models import (
+    MediaItem,
+    ScheduleEntry,
+    SCHEDULE_STATUS_FIRED,
+    SCHEDULE_STATUS_MISSED,
+    SCHEDULE_STATUS_PENDING,
+)
 from ..playback import dequeue_next_playable_media, process_schedule_trigger, resolve_play_request
 from ..runtime_status import mark_runtime_offline, mark_runtime_online
 from ..scheduling import prepare_schedule_entries_for_play
@@ -44,6 +50,14 @@ def resolve_fade_in_start_and_target(
 
 
 class MainWindowPlaybackHandlersMixin:
+    def _set_pending_schedule_start_entry_id(self, entry_id: str | None) -> None:
+        self._pending_schedule_start_entry_id = entry_id
+
+    def _consume_pending_schedule_start_entry(self) -> ScheduleEntry | None:
+        pending_entry_id = getattr(self, "_pending_schedule_start_entry_id", None)
+        self._pending_schedule_start_entry_id = None
+        return self._schedule_entry_by_id(pending_entry_id)
+
     @Slot()
     def _on_play_stop_clicked(self) -> None:
         if self._automation_playing:
@@ -90,6 +104,7 @@ class MainWindowPlaybackHandlersMixin:
                 and local_media_path_from_source(outcome.media.source) is None
             ):
                 offset_ms = 0
+            self._set_pending_schedule_start_entry_id(entry.id)
             self._player.play_media(
                 outcome.media,
                 start_position_ms=offset_ms,
@@ -107,6 +122,15 @@ class MainWindowPlaybackHandlersMixin:
 
     @Slot(object)
     def _on_media_started(self, media: MediaItem) -> None:
+        pending_schedule_entry = self._consume_pending_schedule_start_entry()
+        if (
+            pending_schedule_entry is not None
+            and pending_schedule_entry.one_shot
+            and pending_schedule_entry.status in {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_MISSED}
+        ):
+            pending_schedule_entry.status = SCHEDULE_STATUS_FIRED
+            self._refresh_schedule_table()
+            self._save_state()
         self._current_playback_position_ms = self._player.current_position_ms()
         self._update_now_playing_label()
         self._update_player_visual_state()
@@ -144,6 +168,9 @@ class MainWindowPlaybackHandlersMixin:
                 if result.queue_item.source == "schedule"
                 else None
             )
+            self._set_pending_schedule_start_entry_id(
+                queued_schedule_entry.id if queued_schedule_entry is not None else None
+            )
             self._player.play_media(
                 result.media,
                 fade_in=queued_schedule_entry.fade_in if queued_schedule_entry is not None else False,
@@ -153,6 +180,7 @@ class MainWindowPlaybackHandlersMixin:
                 fade_out_duration_ms=self._fade_out_duration_ms(),
             )
             return
+        self._set_pending_schedule_start_entry_id(None)
         self._player.clear_current_media()
         self._current_playback_position_ms = 0
         self._save_state()
@@ -357,6 +385,7 @@ class MainWindowPlaybackHandlersMixin:
                 f"end={end_label}, end_reason={active_play.end_reason}, "
                 f"offset_ms={active_play.offset_ms}"
             )
+            self._set_pending_schedule_start_entry_id(active_play.entry.id)
             self._player.play_media(
                 active_play.media,
                 start_position_ms=active_play.offset_ms,
@@ -390,6 +419,7 @@ class MainWindowPlaybackHandlersMixin:
             if self._player.current_media is not None
             else "nothing"
         )
+        self._set_pending_schedule_start_entry_id(None)
         self._set_automation_status(False)
         if self._automation_playing:
             self._automation_playing = False
@@ -414,6 +444,18 @@ class MainWindowPlaybackHandlersMixin:
             else "unknown"
         )
         self._append_log(f"Player error on '{current_media_name}': {message}")
+        if getattr(self, "_shutting_down", False):
+            return
+        self._set_pending_schedule_start_entry_id(None)
+        self._player.clear_current_media()
+        self._current_playback_position_ms = 0
+        self._update_now_playing_label()
+        self._update_player_visual_state()
+        if self._play_queue:
+            self._append_log("Playback recovery: trying next queued media item")
+            self._play_next_from_queue()
+            return
+        self._save_state()
 
     @Slot(object)
     def _on_audio_levels_changed(self, levels: object) -> None:
