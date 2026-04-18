@@ -1,14 +1,30 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime
+from pathlib import Path
+import subprocess
+import tempfile
 
-from PySide6.QtCore import QDate, QModelIndex, Slot
+from PySide6.QtCore import QDate, QModelIndex, Qt, Slot
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QDialog, QInputDialog, QMenu, QMessageBox
+from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QInputDialog,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QPlainTextEdit,
+    QVBoxLayout,
+)
 
 from ..library import (
     add_stream_media_item,
     is_stream_source,
+    local_media_path_from_source,
     remove_media_from_library,
     selected_url_media_id,
     update_stream_greenwich_time_signal,
@@ -34,6 +50,313 @@ from ..ui_components import CronDialog, ScheduleDialog
 
 
 class MainWindowHandlersMixin:
+    _LOCAL_FILE_METADATA_FIELDS: tuple[tuple[str, str], ...] = (
+        ("title", "Title"),
+        ("artist", "Artist"),
+        ("album", "Album"),
+        ("genre", "Genre"),
+        ("date", "Date/Year"),
+        ("track", "Track"),
+        ("comment", "Comment"),
+    )
+
+    @staticmethod
+    def _local_media_path_if_file(source: str) -> Path | None:
+        path = local_media_path_from_source(source)
+        if path is None:
+            return None
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError:
+            resolved = path.expanduser()
+        return resolved if resolved.is_file() else None
+
+    @staticmethod
+    def _ffprobe_metadata(path: Path) -> dict[str, object] | None:
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "quiet",
+                    "-print_format",
+                    "json",
+                    "-show_format",
+                    "-show_streams",
+                    str(path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3.0,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        try:
+            payload = json.loads(result.stdout or "")
+        except json.JSONDecodeError:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _schedule_entry_metadata_payload(self, entry_id: str) -> dict[str, object] | None:
+        entry = self._schedule_entry_by_id(entry_id)
+        if entry is None:
+            return None
+        media = self._media_items.get(entry.media_id)
+        payload: dict[str, object] = {
+            "schedule_entry": {
+                "id": entry.id,
+                "start_at": entry.start_at.astimezone().isoformat(),
+                "status": entry.status,
+                "cron_id": entry.cron_id,
+                "fade_in": bool(entry.fade_in),
+                "fade_out": bool(entry.fade_out),
+                "one_shot": bool(entry.one_shot),
+                "duration_seconds": entry.duration,
+            },
+        }
+        if media is None:
+            payload["media"] = {"missing": True, "media_id": entry.media_id}
+            return payload
+
+        payload["media"] = {
+            "id": media.id,
+            "title": media.title,
+            "source": media.source,
+            "greenwich_time_signal_enabled": bool(media.greenwich_time_signal_enabled),
+            "created_at": media.created_at.astimezone().isoformat(),
+            "is_stream_source": bool(is_stream_source(media.source)),
+        }
+
+        local_file_path = self._local_media_path_if_file(media.source)
+        if local_file_path is None:
+            payload["local_file"] = {"available": False}
+            return payload
+
+        try:
+            stat = local_file_path.stat()
+            file_size = int(stat.st_size)
+            modified_at = datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat()
+        except OSError:
+            file_size = None
+            modified_at = None
+        payload["local_file"] = {
+            "available": True,
+            "path": str(local_file_path),
+            "size_bytes": file_size,
+            "modified_at": modified_at,
+        }
+        ffprobe_payload = self._ffprobe_metadata(local_file_path)
+        if ffprobe_payload is not None:
+            payload["ffprobe"] = ffprobe_payload
+        return payload
+
+    def _show_metadata_viewer(self, title: str, metadata: dict[str, object]) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.resize(860, 560)
+        viewer = QPlainTextEdit(dialog)
+        viewer.setReadOnly(True)
+        viewer.setPlainText(json.dumps(metadata, indent=2, ensure_ascii=False, default=str))
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=dialog)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(viewer, 1)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def _show_selected_schedule_metadata(self) -> None:
+        entry_id = self._selected_schedule_entry_id()
+        if entry_id is None:
+            QMessageBox.information(self, "No Selection", "Select a schedule row first.")
+            return
+        payload = self._schedule_entry_metadata_payload(entry_id)
+        if payload is None:
+            QMessageBox.warning(self, "Missing Entry", "Could not load metadata for this entry.")
+            return
+        self._show_metadata_viewer("Schedule Entry Metadata", payload)
+
+    @classmethod
+    def _editable_local_file_tags_from_ffprobe(
+        cls, ffprobe_payload: dict[str, object] | None
+    ) -> dict[str, str]:
+        tags_lower: dict[str, str] = {}
+        if ffprobe_payload is not None:
+            format_payload = ffprobe_payload.get("format")
+            if isinstance(format_payload, dict):
+                raw_tags = format_payload.get("tags")
+                if isinstance(raw_tags, dict):
+                    for raw_key, raw_value in raw_tags.items():
+                        key = str(raw_key).strip().lower()
+                        if not key:
+                            continue
+                        tags_lower[key] = "" if raw_value is None else str(raw_value)
+        return {key: tags_lower.get(key, "") for key, _ in cls._LOCAL_FILE_METADATA_FIELDS}
+
+    def _show_local_file_metadata_editor(
+        self,
+        *,
+        initial_library_title: str,
+        initial_file_tags: dict[str, str],
+    ) -> tuple[str, dict[str, str]] | None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Local Metadata")
+        dialog.resize(560, 360)
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+
+        library_title_input = QLineEdit(dialog)
+        library_title_input.setText(initial_library_title)
+        form.addRow("Library title:", library_title_input)
+
+        tag_inputs: dict[str, QLineEdit] = {}
+        for key, label in self._LOCAL_FILE_METADATA_FIELDS:
+            line_edit = QLineEdit(dialog)
+            line_edit.setText(initial_file_tags.get(key, ""))
+            form.addRow(f"{label}:", line_edit)
+            tag_inputs[key] = line_edit
+
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return None
+
+        updated_library_title = library_title_input.text().strip()
+        updated_file_tags = {key: input_box.text().strip() for key, input_box in tag_inputs.items()}
+        return updated_library_title, updated_file_tags
+
+    @staticmethod
+    def _write_local_file_metadata(path: Path, tags: dict[str, str]) -> tuple[bool, str | None]:
+        descriptor, temporary_path_raw = tempfile.mkstemp(
+            prefix=f".{path.stem}.radioqt-meta-",
+            suffix=path.suffix,
+            dir=str(path.parent),
+        )
+        os.close(descriptor)
+        temporary_path = Path(temporary_path_raw)
+        command = [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0",
+            "-c",
+            "copy",
+            "-map_metadata",
+            "0",
+        ]
+        for key, value in tags.items():
+            command.extend(["-metadata", f"{key}={value}"])
+        command.append(str(temporary_path))
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30.0,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            temporary_path.unlink(missing_ok=True)
+            return False, str(exc)
+        if result.returncode != 0:
+            temporary_path.unlink(missing_ok=True)
+            detail = (result.stderr or result.stdout or "ffmpeg metadata update failed").strip()
+            return False, detail.splitlines()[-1] if detail else "Unknown ffmpeg error"
+        try:
+            os.replace(temporary_path, path)
+        except OSError as exc:
+            temporary_path.unlink(missing_ok=True)
+            return False, str(exc)
+        return True, None
+
+    def _edit_selected_schedule_local_metadata(self) -> None:
+        entry_id = self._selected_schedule_entry_id()
+        if entry_id is None:
+            QMessageBox.information(self, "No Selection", "Select a schedule row first.")
+            return
+        entry = self._schedule_entry_by_id(entry_id)
+        if entry is None:
+            QMessageBox.warning(self, "Missing Entry", "Could not find schedule entry.")
+            return
+        media = self._media_items.get(entry.media_id)
+        if media is None:
+            QMessageBox.warning(self, "Missing Media", "Could not find media for this entry.")
+            return
+        local_file_path = self._local_media_path_if_file(media.source)
+        if local_file_path is None:
+            QMessageBox.information(
+                self,
+                "Read-only for Streams",
+                "Editing metadata from schedule is only available for local files.",
+            )
+            return
+        ffprobe_payload = self._ffprobe_metadata(local_file_path)
+        initial_file_tags = self._editable_local_file_tags_from_ffprobe(ffprobe_payload)
+        editor_result = self._show_local_file_metadata_editor(
+            initial_library_title=media.title,
+            initial_file_tags=initial_file_tags,
+        )
+        if editor_result is None:
+            return
+
+        normalized_title, updated_file_tags = editor_result
+        if not normalized_title:
+            QMessageBox.warning(self, "Invalid Title", "Title cannot be empty.")
+            return
+
+        title_changed = normalized_title != media.title
+        file_metadata_changed = updated_file_tags != initial_file_tags
+        if not title_changed and not file_metadata_changed:
+            return
+
+        if file_metadata_changed:
+            succeeded, error_message = self._write_local_file_metadata(local_file_path, updated_file_tags)
+            if not succeeded:
+                QMessageBox.warning(
+                    self,
+                    "Metadata Update Failed",
+                    f"Could not update embedded file metadata.\n{error_message or ''}".strip(),
+                )
+                return
+
+        if title_changed:
+            previous_title = media.title
+            media.title = normalized_title
+        else:
+            previous_title = media.title
+        self._refresh_urls_list()
+        self._refresh_cron_table()
+        self._refresh_schedule_table()
+        self._save_state()
+        if title_changed and file_metadata_changed:
+            self._append_log(
+                (
+                    f"Updated local metadata for {local_file_path} "
+                    f"(library title '{previous_title}' -> '{normalized_title}' + embedded tags)"
+                )
+            )
+            return
+        if title_changed:
+            self._append_log(
+                (
+                    f"Updated local metadata title '{previous_title}' -> '{normalized_title}' "
+                    f"for {local_file_path}"
+                )
+            )
+            return
+        self._append_log(f"Updated embedded local file metadata for {local_file_path}")
+
     def _disable_schedule_auto_focus(self, *, reason: str) -> None:
         if not self._schedule_auto_focus_enabled:
             return
@@ -353,6 +676,15 @@ class MainWindowHandlersMixin:
         item = self._schedule_table.itemAt(position)
         if item is None:
             return
+        self._schedule_table.setCurrentCell(item.row(), 0)
+        entry_id = item.data(Qt.UserRole)
+        entry = self._schedule_entry_by_id(entry_id) if isinstance(entry_id, str) else None
+        entry_media = self._media_items.get(entry.media_id) if entry is not None else None
+        can_edit_local_metadata = (
+            entry is not None
+            and entry_media is not None
+            and self._local_media_path_if_file(entry_media.source) is not None
+        )
         selected_count = len(self._selected_schedule_entry_ids())
         selected_ids = set(self._selected_schedule_entry_ids())
         has_cron_generated = any(
@@ -360,6 +692,14 @@ class MainWindowHandlersMixin:
             for entry in self._schedule_entries
         )
         menu = QMenu(self._schedule_table)
+        metadata_action = QAction("View Entry Metadata", menu)
+        metadata_action.triggered.connect(self._show_selected_schedule_metadata)
+        menu.addAction(metadata_action)
+        edit_metadata_action = QAction("Edit Local Metadata", menu)
+        edit_metadata_action.setEnabled(can_edit_local_metadata)
+        edit_metadata_action.triggered.connect(self._edit_selected_schedule_local_metadata)
+        menu.addAction(edit_metadata_action)
+        menu.addSeparator()
         label = (
             "CRON-managed Entries Cannot Be Removed"
             if has_cron_generated
