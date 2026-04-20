@@ -19,8 +19,8 @@
 7. Bump version/changelog (if used in your flow):
    - Update release notes with notable fixes and migrations.
 8. Tag and publish:
-   - Create release tag.
-   - Attach artifacts/builds as needed.
+   - Create and push a tag like `v0.2.0`.
+   - GitHub Actions workflow `Release` builds distributions and uploads `dist/*` assets to the GitHub Release automatically.
 9. Post-release sanity:
    - Launch the released build.
    - Verify schedule playback, metadata editing, and export endpoint JSON.
