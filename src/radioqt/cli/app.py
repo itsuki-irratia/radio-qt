@@ -1131,17 +1131,47 @@ def _cmd_streams_remove(args: argparse.Namespace) -> int:
 def _cmd_schedule_list(args: argparse.Namespace) -> int:
     context = _load_state_context(args.config)
     now = datetime.now().astimezone()
+    if args.all and (args.date or args.from_date or args.to_date):
+        raise CliError("Cannot combine --all with --date/--from/--to.")
+    if args.date and (args.from_date or args.to_date):
+        raise CliError("Cannot combine --date with --from/--to.")
+    if bool(args.from_date) != bool(args.to_date):
+        raise CliError("Provide both --from and --to for range filtering.")
+
+    range_start: date | None = None
+    range_end: date | None = None
+    target_date: date | None = None
+
+    if args.from_date and args.to_date:
+        range_start = _parse_date(args.from_date)
+        range_end = _parse_date(args.to_date)
+        if range_end < range_start:
+            raise CliError("Invalid range: --to cannot be before --from")
+        target_dates = {
+            date.fromordinal(current_day)
+            for current_day in range(range_start.toordinal(), range_end.toordinal() + 1)
+        }
+    else:
+        target_date = _parse_date(args.date) if args.date else now.date()
+        target_dates = runtime_cron_dates(now) if args.all or not args.date else {target_date}
+
     runtime_entries = sync_cron_runtime_window(
         context.state.schedule_entries,
         context.state.cron_entries,
-        target_dates=runtime_cron_dates(now),
+        target_dates=target_dates,
         now=now,
     )
     media_by_id = {item.id: item for item in context.state.media_items}
     if args.all:
         entries = sort_schedule_entries(runtime_entries, now)
+    elif range_start is not None and range_end is not None:
+        entries = [
+            entry
+            for entry in sort_schedule_entries(runtime_entries, now)
+            if range_start <= normalized_start(entry.start_at, now).date() <= range_end
+        ]
     else:
-        target_date = _parse_date(args.date) if args.date else now.date()
+        assert target_date is not None
         entries = visible_schedule_entries(runtime_entries, target_date, now)
     if not entries:
         _print_success(
@@ -2518,6 +2548,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     schedule_list_parser = schedule_subparsers.add_parser("list", help="List schedule entries")
     schedule_list_parser.add_argument("--date", help="Filter by date (YYYY-MM-DD)")
+    schedule_list_parser.add_argument(
+        "--from",
+        dest="from_date",
+        help="Range start date (YYYY-MM-DD). Requires --to.",
+    )
+    schedule_list_parser.add_argument(
+        "--to",
+        dest="to_date",
+        help="Range end date (YYYY-MM-DD). Requires --from.",
+    )
     schedule_list_parser.add_argument("--all", action="store_true", help="List all dates")
     schedule_list_parser.set_defaults(handler=_cmd_schedule_list)
 

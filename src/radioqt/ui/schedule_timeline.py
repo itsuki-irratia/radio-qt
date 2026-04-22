@@ -125,6 +125,11 @@ class MainWindowScheduleTimelineMixin:
     def _runtime_cron_dates() -> set[date]:
         return runtime_cron_dates(datetime.now().astimezone())
 
+    def _schedule_view_cron_dates(self) -> set[date]:
+        target_dates = set(self._runtime_cron_dates())
+        target_dates.add(self._schedule_filter_date)
+        return target_dates
+
     def _refresh_cron_schedule_entries(self, target_dates: set[date] | None = None) -> None:
         self._schedule_entries = sync_cron_runtime_window(
             self._schedule_entries,
@@ -136,8 +141,15 @@ class MainWindowScheduleTimelineMixin:
             max_recent_occurrences=self._CRON_RUNTIME_MAX_RECENT_OCCURRENCES,
         )
 
-    def _resync_schedule_runtime(self, *, refresh_table: bool = False, save_state: bool = False) -> None:
-        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+    def _resync_schedule_runtime(
+        self,
+        *,
+        refresh_table: bool = False,
+        save_state: bool = False,
+        target_dates: set[date] | None = None,
+    ) -> None:
+        effective_target_dates = target_dates if target_dates is not None else self._schedule_view_cron_dates()
+        self._refresh_cron_schedule_entries(effective_target_dates)
         self._recalculate_and_apply_schedule_entries()
         if refresh_table:
             self._refresh_schedule_table()
@@ -149,12 +161,12 @@ class MainWindowScheduleTimelineMixin:
         self._scheduler.set_entries(self._schedule_entries)
 
     def _sync_after_cron_rule_change(self, *, focus_entry: CronEntry | None = None) -> None:
-        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+        self._refresh_cron_schedule_entries(self._schedule_view_cron_dates())
         if focus_entry is not None:
             next_occurrence = next_cron_occurrence(focus_entry, datetime.now().astimezone())
             if next_occurrence is not None:
                 self._set_schedule_filter_date(next_occurrence.date())
-                self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+                self._refresh_cron_schedule_entries(self._schedule_view_cron_dates())
         self._recalculate_and_apply_schedule_entries()
         self._refresh_cron_table()
         self._refresh_schedule_table()

@@ -400,7 +400,7 @@ class MainWindowStatePersistenceMixin:
         self._set_logs_visible(self._logs_visible)
         self._apply_supported_extensions_to_filesystem_models()
         self._rebuild_custom_library_tabs()
-        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+        self._refresh_cron_schedule_entries(self._schedule_view_cron_dates())
         self._recalculate_schedule_durations()
         runtime_pruned_count = max(0, loaded_schedule_count - len(self._schedule_entries))
 
@@ -413,7 +413,7 @@ class MainWindowStatePersistenceMixin:
         self._update_player_visual_state()
         if runtime_pruned_count:
             self._append_log(
-                f"Pruned {runtime_pruned_count} CRON occurrence(s) outside runtime window (today/tomorrow)"
+                f"Pruned {runtime_pruned_count} CRON occurrence(s) outside active runtime/view window"
             )
         if startup_preparation.normalized_entries:
             self._append_log(
@@ -562,7 +562,7 @@ class MainWindowStatePersistenceMixin:
         self._toggle_logs_action.setChecked(self._logs_visible)
         self._toggle_logs_action.blockSignals(False)
         self._set_logs_visible(self._logs_visible)
-        self._refresh_cron_schedule_entries(self._runtime_cron_dates())
+        self._refresh_cron_schedule_entries(self._schedule_view_cron_dates())
         self._recalculate_schedule_durations()
         self._refresh_urls_list()
         self._refresh_cron_table()

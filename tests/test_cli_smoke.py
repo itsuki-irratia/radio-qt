@@ -741,6 +741,79 @@ def test_schedule_bulk_status_updates_entries_by_date(tmp_path) -> None:
     assert {entry.status for entry in loaded.schedule_entries} == {"disabled"}
 
 
+def test_schedule_list_range_filters_and_materializes_cron(tmp_path, capsys) -> None:
+    state_path = tmp_path / "db.sqlite"
+    media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
+    in_range = ScheduleEntry.create(
+        media_id=media.id,
+        start_at=datetime.fromisoformat("2099-01-01T10:00:00+00:00"),
+    )
+    out_of_range = ScheduleEntry.create(
+        media_id=media.id,
+        start_at=datetime.fromisoformat("2099-01-03T10:00:00+00:00"),
+    )
+    save_state(
+        state_path,
+        AppState(
+            media_items=[media],
+            schedule_entries=[in_range, out_of_range],
+        ),
+    )
+
+    cron_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "cron",
+            "add",
+            "--media-id",
+            media.id,
+            "--expression",
+            "0 0 13 * * *",
+        ]
+    )
+    assert cron_exit == 0
+    capsys.readouterr()
+
+    list_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "list",
+            "--from",
+            "2099-01-01",
+            "--to",
+            "2099-01-02",
+        ]
+    )
+    assert list_exit == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["count"] >= 3
+    assert all(
+        "2099-01-01" <= entry["start_at"][:10] <= "2099-01-02"
+        for entry in payload["entries"]
+    )
+    assert any(entry["cron_id"] is not None for entry in payload["entries"])
+
+
+def test_schedule_list_range_requires_from_and_to(tmp_path, capsys) -> None:
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "list",
+            "--from",
+            "2099-01-01",
+        ]
+    )
+    assert exit_code == 2
+    assert "Provide both --from and --to for range filtering." in capsys.readouterr().err
+
+
 def test_schedule_export_range_json_updates_and_removes_files(tmp_path, capsys) -> None:
     state_path = tmp_path / "db.sqlite"
     local_tz = datetime.now().astimezone().tzinfo
@@ -848,6 +921,53 @@ def test_cron_add_persists_entry(tmp_path) -> None:
     cron_entry = loaded.cron_entries[0]
     assert cron_entry.media_id == media.id
     assert cron_entry.enabled is False
+
+
+def test_schedule_list_date_materializes_cron_for_requested_day(tmp_path, capsys) -> None:
+    state_path = tmp_path / "db.sqlite"
+    media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
+    save_state(
+        state_path,
+        AppState(
+            media_items=[media],
+        ),
+    )
+
+    add_exit = run(
+        [
+            "--config",
+            str(tmp_path),
+            "cron",
+            "add",
+            "--media-id",
+            media.id,
+            "--expression",
+            "0 0 13 * * *",
+        ]
+    )
+    assert add_exit == 0
+    capsys.readouterr()
+
+    target_date = (datetime.now().astimezone().date() + timedelta(days=7)).isoformat()
+    list_exit = run(
+        [
+            "--json",
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "list",
+            "--date",
+            target_date,
+        ]
+    )
+    assert list_exit == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["count"] >= 1
+    assert any(
+        entry["cron_id"] is not None and entry["start_at"].startswith(target_date)
+        for entry in payload["entries"]
+    )
 
 
 def test_runtime_status_json_defaults_offline(tmp_path, capsys) -> None:

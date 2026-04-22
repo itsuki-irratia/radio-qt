@@ -313,6 +313,12 @@ Lists by date:
 radioqt-cli schedule list --date "2026-04-16"
 ```
 
+Lists by date range (inclusive):
+
+```bash
+radioqt-cli schedule list --from "2026-04-16" --to "2026-04-20"
+```
+
 Lists all runtime-visible dates:
 
 ```bash
