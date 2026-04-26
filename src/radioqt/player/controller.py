@@ -3,10 +3,18 @@ from __future__ import annotations
 from array import array
 import os
 from pathlib import Path
+import shutil
 import time
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
-from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat, QAudioOutput, QMediaPlayer
+from PySide6.QtCore import QProcess, QObject, QTimer, QUrl, Signal, Slot
+from PySide6.QtMultimedia import (
+    QAudioBuffer,
+    QAudioBufferOutput,
+    QAudioFormat,
+    QAudioOutput,
+    QMediaDevices,
+    QMediaPlayer,
+)
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from ..models import MediaItem
@@ -25,9 +33,17 @@ class MediaPlayerController(QObject):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._audio_output = QAudioOutput(self)
+        self._media_devices = QMediaDevices(self)
+        self._audio_output = self._new_audio_output()
         self._audio_buffer_output = QAudioBufferOutput(self)
         self._media_player = QMediaPlayer(self)
+        self._external_audio_process: QProcess | None = None
+        self._external_audio_position_timer = QTimer(self)
+        self._external_audio_position_timer.setInterval(250)
+        self._external_audio_position_timer.timeout.connect(self._on_external_audio_position_tick)
+        self._external_audio_started_at_monotonic: float | None = None
+        self._external_audio_start_position_ms = 0
+        self._external_audio_stop_requested = False
         self._media_player.setAudioOutput(self._audio_output)
         self._media_player.setAudioBufferOutput(self._audio_buffer_output)
         self._media_player.playbackStateChanged.connect(self._on_playback_state_changed)
@@ -50,6 +66,7 @@ class MediaPlayerController(QObject):
         self._fade_out_duration_ms = self._DEFAULT_FADE_DURATION_MS
         self._fade_timeline_position_ms = 0
         self._fade_timeline_last_tick_monotonic: float | None = None
+        self._media_devices.audioOutputsChanged.connect(self._on_audio_outputs_changed)
         self._apply_effective_volume()
 
     def set_video_output(self, widget: QVideoWidget) -> None:
@@ -76,11 +93,12 @@ class MediaPlayerController(QObject):
         normalized_start_position_ms = self._normalize_start_position_ms(start_position_ms)
         seek_start_position_ms = normalized_start_position_ms if source_url.isLocalFile() else 0
         current_source = self._media_player.source()
-        if current_source.isValid():
+        if current_source.isValid() or self._external_audio_process is not None:
             # Always force a fresh pipeline when changing scheduled media.
             # This avoids backend reuse edge cases (especially with streams).
             self._media_player.stop()
             self._media_player.setSource(QUrl())
+            self._stop_external_audio()
         self._configure_fade_for_new_media(
             start_position_ms=seek_start_position_ms,
             fade_in=fade_in,
@@ -89,26 +107,38 @@ class MediaPlayerController(QObject):
             fade_in_duration_ms=fade_in_duration_ms,
             fade_out_duration_ms=fade_out_duration_ms,
         )
-        pending_seek_ms = seek_start_position_ms
-        self._pending_seek_ms = pending_seek_ms
+        if self._should_use_external_audio_backend():
+            if self._start_external_audio(
+                source_url,
+                start_position_ms=seek_start_position_ms,
+                expected_duration_ms=expected_duration_ms,
+            ):
+                self._start_qt_media_pipeline(
+                    source_url,
+                    pending_seek_ms=seek_start_position_ms,
+                    video_only=True,
+                )
+                self.current_media = media
+                self.media_started.emit(media)
+            return
         self.current_media = media
-        self._media_player.setSource(source_url)
-        if pending_seek_ms > 0:
-            # Try immediately; some backends need an additional seek after load.
-            self._media_player.setPosition(pending_seek_ms)
-        self._media_player.play()
+        self._start_qt_media_pipeline(source_url, pending_seek_ms=seek_start_position_ms)
         self.media_started.emit(media)
 
     def play(self) -> None:
+        if self._external_audio_process is not None:
+            return
         self._media_player.play()
 
     def stop(self) -> None:
         self._media_player.stop()
+        self._stop_external_audio()
         self._reset_fade_state()
 
     def clear_current_media(self) -> None:
         self._media_player.stop()
         self._media_player.setSource(QUrl())
+        self._stop_external_audio()
         self.current_media = None
         self._pending_seek_ms = None
         self._reset_fade_state()
@@ -119,12 +149,17 @@ class MediaPlayerController(QObject):
         self._apply_effective_volume()
 
     def is_playing(self) -> bool:
+        if self._external_audio_process is not None:
+            return self._external_audio_process.state() == QProcess.Running
         return self._media_player.playbackState() == QMediaPlayer.PlayingState
 
     def has_active_media(self) -> bool:
         return self.current_media is not None
 
     def current_position_ms(self) -> int:
+        external_position_ms = self._external_audio_current_position_ms()
+        if external_position_ms is not None:
+            return external_position_ms
         return max(0, self._media_player.position())
 
     def _configure_fade_for_new_media(
@@ -198,6 +233,147 @@ class MediaPlayerController(QObject):
         effective = (self._base_volume_percent / 100.0) * self._fade_multiplier
         self._audio_output.setVolume(max(0.0, min(1.0, effective)))
 
+    def _start_qt_media_pipeline(
+        self,
+        source_url: QUrl,
+        *,
+        pending_seek_ms: int,
+        video_only: bool = False,
+    ) -> None:
+        self._pending_seek_ms = pending_seek_ms
+        self._media_player.setSource(source_url)
+        if video_only:
+            self._audio_output.setVolume(0.0)
+        if pending_seek_ms > 0:
+            # Try immediately; some backends need an additional seek after load.
+            self._media_player.setPosition(pending_seek_ms)
+        self._media_player.play()
+
+    def _new_audio_output(self) -> QAudioOutput:
+        default_device = QMediaDevices.defaultAudioOutput()
+        if default_device.isNull():
+            return QAudioOutput(self)
+        return QAudioOutput(default_device, self)
+
+    @staticmethod
+    def _qt_audio_output_count() -> int:
+        return len(QMediaDevices.audioOutputs())
+
+    @classmethod
+    def _should_use_external_audio_backend(cls) -> bool:
+        return cls._qt_audio_output_count() <= 0 and shutil.which("mpv") is not None
+
+    @Slot()
+    def _on_audio_outputs_changed(self) -> None:
+        previous_audio_output = self._audio_output
+        self._audio_output = self._new_audio_output()
+        self._media_player.setAudioOutput(self._audio_output)
+        self._apply_effective_volume()
+        previous_audio_output.deleteLater()
+
+    def _start_external_audio(
+        self,
+        source_url: QUrl,
+        *,
+        start_position_ms: int,
+        expected_duration_ms: int | None,
+    ) -> bool:
+        self._stop_external_audio()
+        source = source_url.toLocalFile() if source_url.isLocalFile() else source_url.toString()
+        if not source:
+            self.playback_error.emit(f"{self._PLAY_REQUEST_REJECTED_PREFIX}Cannot resolve media source")
+            return False
+
+        args = [
+            "--no-video",
+            "--force-window=no",
+            "--input-terminal=no",
+            "--audio-client-name=RadioQt",
+            f"--volume={max(0, min(100, int(round(self._base_volume_percent))))}",
+        ]
+        if start_position_ms > 0:
+            args.append(f"--start={start_position_ms / 1000:.3f}")
+        if expected_duration_ms is not None and expected_duration_ms > 0:
+            args.append(f"--length={expected_duration_ms / 1000:.3f}")
+        args.append(source)
+
+        process = QProcess(self)
+        process.setProgram("mpv")
+        process.setArguments(args)
+        process.setProcessChannelMode(QProcess.MergedChannels)
+        process.finished.connect(self._on_external_audio_finished)
+        process.errorOccurred.connect(self._on_external_audio_error)
+        self._external_audio_process = process
+        self._external_audio_start_position_ms = max(0, start_position_ms)
+        self._external_audio_started_at_monotonic = time.monotonic()
+        self._external_audio_stop_requested = False
+        process.start()
+        if not process.waitForStarted(1000):
+            self._external_audio_process = None
+            self._external_audio_started_at_monotonic = None
+            self.playback_error.emit(
+                f"{self._PLAY_REQUEST_REJECTED_PREFIX}Could not start external audio backend"
+            )
+            return False
+        self._external_audio_position_timer.start()
+        self.playback_state_changed.emit(QMediaPlayer.PlayingState)
+        return True
+
+    def _stop_external_audio(self) -> None:
+        process = self._external_audio_process
+        if process is None:
+            return
+        self._external_audio_stop_requested = True
+        self._external_audio_position_timer.stop()
+        if process.state() != QProcess.NotRunning:
+            process.terminate()
+            if not process.waitForFinished(700):
+                process.kill()
+                process.waitForFinished(700)
+        process.deleteLater()
+        self._external_audio_process = None
+        self._external_audio_started_at_monotonic = None
+        self.playback_state_changed.emit(QMediaPlayer.StoppedState)
+
+    def _external_audio_current_position_ms(self) -> int | None:
+        if self._external_audio_process is None or self._external_audio_started_at_monotonic is None:
+            return None
+        elapsed_ms = int((time.monotonic() - self._external_audio_started_at_monotonic) * 1000)
+        return max(0, self._external_audio_start_position_ms + elapsed_ms)
+
+    @Slot()
+    def _on_external_audio_position_tick(self) -> None:
+        position_ms = self._external_audio_current_position_ms()
+        if position_ms is not None:
+            self.playback_position_changed.emit(position_ms)
+
+    @Slot(int, QProcess.ExitStatus)
+    def _on_external_audio_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
+        process = self._external_audio_process
+        output = ""
+        if process is not None:
+            output = bytes(process.readAll()).decode(errors="replace").strip()
+            process.deleteLater()
+        self._external_audio_process = None
+        self._external_audio_position_timer.stop()
+        self._external_audio_started_at_monotonic = None
+        stop_requested = self._external_audio_stop_requested
+        self._external_audio_stop_requested = False
+        self.playback_state_changed.emit(QMediaPlayer.StoppedState)
+        if not stop_requested and exit_code != 0:
+            detail = output.splitlines()[-1] if output else f"exit code {exit_code}"
+            self.playback_error.emit(f"External audio backend stopped unexpectedly: {detail}")
+            return
+        if not stop_requested:
+            self.media_finished.emit()
+
+    @Slot(QProcess.ProcessError)
+    def _on_external_audio_error(self, error: QProcess.ProcessError) -> None:
+        if error == QProcess.FailedToStart:
+            self.playback_error.emit(
+                f"{self._PLAY_REQUEST_REJECTED_PREFIX}Could not start external audio backend"
+            )
+
     @staticmethod
     def _normalize_start_position_ms(start_position_ms: int | None) -> int:
         try:
@@ -252,7 +428,7 @@ class MediaPlayerController(QObject):
             if pending_seek_ms is not None and pending_seek_ms > 0:
                 self._media_player.setPosition(pending_seek_ms)
             self._pending_seek_ms = None
-        if status == QMediaPlayer.EndOfMedia:
+        if status == QMediaPlayer.EndOfMedia and self._external_audio_process is None:
             self.media_finished.emit()
 
     @Slot(QMediaPlayer.PlaybackState)
