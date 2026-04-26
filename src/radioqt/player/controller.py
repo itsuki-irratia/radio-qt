@@ -241,9 +241,8 @@ class MediaPlayerController(QObject):
         video_only: bool = False,
     ) -> None:
         self._pending_seek_ms = pending_seek_ms
+        self._media_player.setAudioOutput(None if video_only else self._audio_output)
         self._media_player.setSource(source_url)
-        if video_only:
-            self._audio_output.setVolume(0.0)
         if pending_seek_ms > 0:
             # Try immediately; some backends need an additional seek after load.
             self._media_player.setPosition(pending_seek_ms)
@@ -261,7 +260,7 @@ class MediaPlayerController(QObject):
 
     @classmethod
     def _should_use_external_audio_backend(cls) -> bool:
-        return cls._qt_audio_output_count() <= 0 and shutil.which("mpv") is not None
+        return shutil.which("mpv") is not None
 
     @Slot()
     def _on_audio_outputs_changed(self) -> None:
@@ -300,7 +299,8 @@ class MediaPlayerController(QObject):
         process = QProcess(self)
         process.setProgram("mpv")
         process.setArguments(args)
-        process.setProcessChannelMode(QProcess.MergedChannels)
+        process.setStandardOutputFile(QProcess.nullDevice())
+        process.setStandardErrorFile(QProcess.nullDevice())
         process.finished.connect(self._on_external_audio_finished)
         process.errorOccurred.connect(self._on_external_audio_error)
         self._external_audio_process = process
@@ -350,9 +350,7 @@ class MediaPlayerController(QObject):
     @Slot(int, QProcess.ExitStatus)
     def _on_external_audio_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
         process = self._external_audio_process
-        output = ""
         if process is not None:
-            output = bytes(process.readAll()).decode(errors="replace").strip()
             process.deleteLater()
         self._external_audio_process = None
         self._external_audio_position_timer.stop()
@@ -361,8 +359,9 @@ class MediaPlayerController(QObject):
         self._external_audio_stop_requested = False
         self.playback_state_changed.emit(QMediaPlayer.StoppedState)
         if not stop_requested and exit_code != 0:
-            detail = output.splitlines()[-1] if output else f"exit code {exit_code}"
-            self.playback_error.emit(f"External audio backend stopped unexpectedly: {detail}")
+            self.playback_error.emit(
+                f"External audio backend stopped unexpectedly: exit code {exit_code}"
+            )
             return
         if not stop_requested:
             self.media_finished.emit()
