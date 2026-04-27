@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "radioqt"
-version = "0.1.0"
+version = "0.1.1"
 description = "Scheduled multimedia player for radio automation workflows."
 readme = "README.md"
 requires-python = ">=3.10"
