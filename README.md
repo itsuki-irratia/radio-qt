@@ -14,6 +14,39 @@ RadioQt is a Python + Qt multimedia player for radio automation workflows:
 - Qt multimedia backend available on your system
 - System multimedia packages (see `requirements-system.txt`)
 
+### Debian / Ubuntu system packages
+
+Install the Qt 6 multimedia runtime libraries, common GStreamer codecs, and
+FFmpeg tools before installing the Python package:
+
+```bash
+sudo apt update
+sudo apt install \
+  libqt6multimedia6 \
+  libqt6multimediawidgets6 \
+  qml6-module-qtmultimedia \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav \
+  ffmpeg
+```
+
+On minimal Debian installs, you may also need PulseAudio/PipeWire audio support
+from your desktop environment packages.
+
+### Arch / Manjaro system packages
+
+```bash
+sudo pacman -S --needed \
+  qt6-multimedia \
+  qt6-multimedia-ffmpeg \
+  qt6-multimedia-gstreamer \
+  gstreamer \
+  ffmpeg
+```
+
 ## Setup
 
 ```bash
@@ -87,13 +120,7 @@ python -m pytest
 
 ## Linux troubleshooting
 
-- If you want to use the GStreamer backend on Arch/Manjaro, install:
-
-```bash
-sudo pacman -S --needed qt6-multimedia qt6-multimedia-ffmpeg qt6-multimedia-gstreamer gstreamer
-```
-
-- Then run:
+- If you want to use the GStreamer backend on Arch/Manjaro, install the packages above, then run:
 
 ```bash
 RADIOQT_MEDIA_BACKEND=gstreamer radioqt
