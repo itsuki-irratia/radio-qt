@@ -701,6 +701,35 @@ def test_schedule_add_rejects_exact_start_duplicate(tmp_path, capsys) -> None:
     assert len(loaded.schedule_entries) == 1
 
 
+def test_schedule_add_rejects_past_start(tmp_path, capsys) -> None:
+    state_path = tmp_path / "db.sqlite"
+    media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
+    save_state(
+        state_path,
+        AppState(
+            media_items=[media],
+        ),
+    )
+
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "add",
+            "--media-id",
+            media.id,
+            "--start",
+            (datetime.now().astimezone() - timedelta(minutes=1)).isoformat(),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "past" in capsys.readouterr().err
+    loaded = load_state(state_path)
+    assert loaded.schedule_entries == []
+
+
 def test_schedule_bulk_add_persists_entries(tmp_path) -> None:
     state_path = tmp_path / "db.sqlite"
     media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
@@ -801,6 +830,72 @@ def test_schedule_edit_rejects_exact_start_duplicate(tmp_path, capsys) -> None:
         first_entry.start_at,
         second_entry.start_at,
     }
+
+
+def test_schedule_edit_rejects_past_entry_changes(tmp_path, capsys) -> None:
+    state_path = tmp_path / "db.sqlite"
+    media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
+    entry = ScheduleEntry.create(
+        media_id=media.id,
+        start_at=datetime.now().astimezone() - timedelta(minutes=1),
+    )
+    save_state(
+        state_path,
+        AppState(
+            media_items=[media],
+            schedule_entries=[entry],
+        ),
+    )
+
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "edit",
+            entry.id,
+            "--fade-out",
+            "true",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "start time is in the past" in capsys.readouterr().err
+    loaded = load_state(state_path)
+    assert loaded.schedule_entries[0].fade_out is False
+
+
+def test_schedule_edit_rejects_moving_to_past(tmp_path, capsys) -> None:
+    state_path = tmp_path / "db.sqlite"
+    media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
+    entry = ScheduleEntry.create(
+        media_id=media.id,
+        start_at=datetime.now().astimezone() + timedelta(hours=1),
+    )
+    save_state(
+        state_path,
+        AppState(
+            media_items=[media],
+            schedule_entries=[entry],
+        ),
+    )
+
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "edit",
+            entry.id,
+            "--start",
+            (datetime.now().astimezone() - timedelta(minutes=1)).isoformat(),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "past" in capsys.readouterr().err
+    loaded = load_state(state_path)
+    assert loaded.schedule_entries[0].start_at == entry.start_at
 
 
 def test_schedule_bulk_status_updates_entries_by_date(tmp_path) -> None:

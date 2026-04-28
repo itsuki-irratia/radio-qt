@@ -162,6 +162,25 @@ class MediaPlayerController(QObject):
             return external_position_ms
         return max(0, self._media_player.position())
 
+    def set_live_fade_out(
+        self,
+        fade_out: bool,
+        *,
+        fade_out_duration_ms: int = _DEFAULT_FADE_DURATION_MS,
+    ) -> None:
+        self._fade_out_enabled = bool(fade_out) and self._expected_duration_ms is not None
+        self._fade_out_duration_ms = max(1, int(fade_out_duration_ms))
+        if self._fade_in_enabled or self._fade_out_enabled:
+            self._fade_timeline_last_tick_monotonic = time.monotonic()
+            self._fade_tick_timer.start()
+        else:
+            self._fade_tick_timer.stop()
+            self._fade_timeline_last_tick_monotonic = None
+        self._update_fade_multiplier_for_position(
+            self.current_position_ms(),
+            force_apply=True,
+        )
+
     def _configure_fade_for_new_media(
         self,
         *,

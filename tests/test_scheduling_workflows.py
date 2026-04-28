@@ -3,6 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from radioqt.models import CronEntry, ScheduleEntry
+from radioqt.scheduling.mutations import (
+    ScheduleMutationError,
+    create_schedule_entry,
+    update_schedule_fade_in,
+    update_schedule_fade_out,
+    update_schedule_status,
+)
 from radioqt.scheduling.workflows import (
     enforce_hard_sync_always,
     is_schedule_entry_protected_from_removal,
@@ -80,3 +87,75 @@ def test_sync_cron_runtime_window_keeps_regular_schedule_entries() -> None:
 
     assert len(synced_entries) == 1
     assert synced_entries[0].id == schedule_entry.id
+
+
+def test_create_schedule_entry_rejects_past_start() -> None:
+    now = datetime.now(timezone.utc)
+
+    try:
+        create_schedule_entry(
+            media_id="media-1",
+            start_at=now - timedelta(minutes=1),
+            reference_time=now,
+        )
+    except ScheduleMutationError as exc:
+        assert "past" in str(exc)
+    else:
+        raise AssertionError("Expected past schedule creation to be rejected")
+
+
+def test_past_schedule_entry_cannot_be_changed_except_allowed_fade_out() -> None:
+    now = datetime.now(timezone.utc)
+    entry = ScheduleEntry.create(
+        media_id="media-1",
+        start_at=now - timedelta(minutes=1),
+    )
+
+    assert (
+        update_schedule_fade_in(
+            [entry],
+            entry.id,
+            fade_in_enabled=True,
+            reference_time=now,
+            cron_entry_by_id=lambda _cron_id: None,
+        )
+        is None
+    )
+    assert entry.fade_in is False
+
+    assert (
+        update_schedule_status(
+            [entry],
+            entry.id,
+            value="Disabled",
+            reference_time=now,
+            cron_entry_by_id=lambda _cron_id: None,
+        ).updated_entry
+        is None
+    )
+    assert entry.status == "pending"
+
+    assert (
+        update_schedule_fade_out(
+            [entry],
+            entry.id,
+            fade_out_enabled=True,
+            reference_time=now,
+            cron_entry_by_id=lambda _cron_id: None,
+        )
+        is None
+    )
+    assert entry.fade_out is False
+
+    assert (
+        update_schedule_fade_out(
+            [entry],
+            entry.id,
+            fade_out_enabled=True,
+            reference_time=now,
+            allow_past_entry=True,
+            cron_entry_by_id=lambda _cron_id: None,
+        )
+        is entry
+    )
+    assert entry.fade_out is True

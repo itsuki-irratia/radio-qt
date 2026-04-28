@@ -138,6 +138,9 @@ def refresh_schedule_table(
     schedule_entry_palette: Callable[[ScheduleEntry, datetime], tuple | None],
     apply_item_palette: Callable[[QTableWidgetItem, tuple | None], None],
     apply_widget_palette: Callable[[QWidget, tuple | None], None],
+    schedule_entry_can_edit_fade_in: Callable[[ScheduleEntry, datetime], bool],
+    schedule_entry_can_edit_fade_out: Callable[[ScheduleEntry, datetime], bool],
+    schedule_entry_can_edit_status: Callable[[ScheduleEntry, datetime], bool],
     on_fade_in_changed: Callable[[str, str], None],
     on_fade_out_changed: Callable[[str, str], None],
     on_status_changed: Callable[[str, str], None],
@@ -178,11 +181,18 @@ def refresh_schedule_table(
 
         cron_globally_disabled = cron_entry is not None and not cron_entry.enabled
         is_locked = entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}
+        can_edit_fade_in = not is_locked and schedule_entry_can_edit_fade_in(entry, reference_time)
+        can_edit_fade_out = not is_locked and schedule_entry_can_edit_fade_out(entry, reference_time)
+        can_edit_status = (
+            not is_locked
+            and not cron_globally_disabled
+            and schedule_entry_can_edit_status(entry, reference_time)
+        )
 
         fade_in_selector = NoScrollComboBox(schedule_table)
         fade_in_selector.addItems(["True", "False"])
         fade_in_selector.setCurrentText("True" if entry.fade_in else "False")
-        fade_in_selector.setEnabled(not is_locked)
+        fade_in_selector.setEnabled(can_edit_fade_in)
         fade_in_selector.setToolTip(tooltip)
         _configure_boolean_selector(fade_in_selector)
         fade_in_selector.currentTextChanged.connect(
@@ -193,7 +203,7 @@ def refresh_schedule_table(
         fade_out_selector = NoScrollComboBox(schedule_table)
         fade_out_selector.addItems(["True", "False"])
         fade_out_selector.setCurrentText("True" if entry.fade_out else "False")
-        fade_out_selector.setEnabled(not is_locked)
+        fade_out_selector.setEnabled(can_edit_fade_out)
         fade_out_selector.setToolTip(tooltip)
         _configure_boolean_selector(fade_out_selector)
         fade_out_selector.currentTextChanged.connect(
@@ -211,7 +221,7 @@ def refresh_schedule_table(
         if entry.status == SCHEDULE_STATUS_MISSED:
             status_selector.addItem("Missed")
         status_selector.setCurrentText(status)
-        status_selector.setEnabled(not is_locked and not cron_globally_disabled)
+        status_selector.setEnabled(can_edit_status)
         status_selector.setToolTip(tooltip)
         status_selector.currentTextChanged.connect(
             lambda value, entry_id=entry.id: on_status_changed(entry_id, value)

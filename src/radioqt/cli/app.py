@@ -29,6 +29,7 @@ from ..scheduling.cron_runtime import next_cron_occurrence
 from ..scheduling.logic import (
     normalized_start,
     schedule_entry_at_exact_start,
+    schedule_entry_started_in_past,
     sort_schedule_entries,
 )
 from ..scheduling.mutations import (
@@ -1255,11 +1256,20 @@ def _raise_schedule_start_conflict(entry: ScheduleEntry, reference_time: datetim
     )
 
 
+def _raise_schedule_past_start(start_at: datetime, reference_time: datetime) -> None:
+    raise CliError(
+        "Cannot create or move a schedule entry into the past: "
+        f"{_format_datetime(start_at, reference_time)}"
+    )
+
+
 def _cmd_schedule_add(args: argparse.Namespace) -> int:
     context = _load_state_context(args.config)
     _ensure_media_exists(context.state, args.media_id)
     now = datetime.now().astimezone()
     start_at = _parse_datetime(args.start)
+    if normalized_start(start_at, now) < now:
+        _raise_schedule_past_start(start_at, now)
     conflicting_entry = schedule_entry_at_exact_start(
         context.state.schedule_entries,
         start_at,
@@ -1301,6 +1311,8 @@ def _cmd_schedule_bulk_add(args: argparse.Namespace) -> int:
     now = datetime.now().astimezone()
     created_entries: list[ScheduleEntry] = []
     for start_at in starts:
+        if normalized_start(start_at, now) < now:
+            _raise_schedule_past_start(start_at, now)
         conflicting_entry = schedule_entry_at_exact_start(
             context.state.schedule_entries,
             start_at,
@@ -1414,12 +1426,19 @@ def _cmd_schedule_edit(args: argparse.Namespace) -> int:
     entry = _find_schedule_entry(context.state, args.entry_id)
     has_changes = False
     now = datetime.now().astimezone()
+    if schedule_entry_started_in_past(entry, now):
+        raise CliError(
+            "Cannot edit a schedule entry whose start time is in the past: "
+            f"{_format_datetime(entry.start_at, now)} ({entry.id})"
+        )
 
     if args.start is not None:
         if entry.cron_id is not None:
             raise CliError("Cannot change start time on a CRON-generated schedule entry")
         next_start = _parse_datetime(args.start)
         if entry.start_at != next_start:
+            if normalized_start(next_start, now) < now:
+                _raise_schedule_past_start(next_start, now)
             conflicting_entry = schedule_entry_at_exact_start(
                 context.state.schedule_entries,
                 next_start,
@@ -1445,6 +1464,7 @@ def _cmd_schedule_edit(args: argparse.Namespace) -> int:
             context.state.schedule_entries,
             entry.id,
             fade_in_enabled=_bool_from_token(args.fade_in),
+            reference_time=now,
             cron_entry_by_id=lambda cron_id: cron_entries_by_id.get(cron_id or ""),
         ):
             has_changes = True
@@ -1453,6 +1473,7 @@ def _cmd_schedule_edit(args: argparse.Namespace) -> int:
             context.state.schedule_entries,
             entry.id,
             fade_out_enabled=_bool_from_token(args.fade_out),
+            reference_time=now,
             cron_entry_by_id=lambda cron_id: cron_entries_by_id.get(cron_id or ""),
         ):
             has_changes = True

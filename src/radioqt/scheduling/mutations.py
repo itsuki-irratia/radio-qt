@@ -15,6 +15,10 @@ from ..models import (
 from .logic import normalized_start
 
 
+class ScheduleMutationError(ValueError):
+    pass
+
+
 @dataclass(slots=True)
 class ScheduleStatusMutationResult:
     updated_entry: ScheduleEntry | None = None
@@ -36,6 +40,8 @@ def create_schedule_entry(
     fade_in: bool = False,
     fade_out: bool = False,
 ) -> ScheduleEntry:
+    if normalized_start(start_at, reference_time) < reference_time:
+        raise ScheduleMutationError("Cannot create a schedule entry in the past")
     entry = ScheduleEntry.create(
         media_id=media_id,
         start_at=start_at,
@@ -43,9 +49,11 @@ def create_schedule_entry(
         fade_in=fade_in,
         fade_out=fade_out,
     )
-    if entry.one_shot and normalized_start(entry.start_at, reference_time) <= reference_time:
-        entry.status = SCHEDULE_STATUS_MISSED
     return entry
+
+
+def schedule_entry_is_in_past(entry: ScheduleEntry, reference_time: datetime) -> bool:
+    return normalized_start(entry.start_at, reference_time) < reference_time
 
 
 def select_schedule_entries_for_removal(
@@ -110,11 +118,14 @@ def update_schedule_fade_in(
     entry_id: str,
     *,
     fade_in_enabled: bool,
+    reference_time: datetime,
     cron_entry_by_id: Callable[[str | None], CronEntry | None],
 ) -> ScheduleEntry | None:
     for entry in entries:
         if entry.id != entry_id:
             continue
+        if schedule_entry_is_in_past(entry, reference_time):
+            return None
         if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
             return None
         cron_entry = cron_entry_by_id(entry.cron_id)
@@ -137,11 +148,15 @@ def update_schedule_fade_out(
     entry_id: str,
     *,
     fade_out_enabled: bool,
+    reference_time: datetime,
+    allow_past_entry: bool = False,
     cron_entry_by_id: Callable[[str | None], CronEntry | None],
 ) -> ScheduleEntry | None:
     for entry in entries:
         if entry.id != entry_id:
             continue
+        if schedule_entry_is_in_past(entry, reference_time) and not allow_past_entry:
+            return None
         if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
             return None
         cron_entry = cron_entry_by_id(entry.cron_id)
@@ -171,6 +186,8 @@ def update_schedule_status(
     for entry in entries:
         if entry.id != entry_id:
             continue
+        if schedule_entry_is_in_past(entry, reference_time):
+            return ScheduleStatusMutationResult()
         if entry.status in {SCHEDULE_STATUS_FIRED, SCHEDULE_STATUS_MISSED}:
             return ScheduleStatusMutationResult()
         cron_entry = cron_entry_by_id(entry.cron_id)

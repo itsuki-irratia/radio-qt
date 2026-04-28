@@ -27,6 +27,7 @@ from ..scheduling import (
     runtime_cron_dates,
     schedule_entry_end_at,
     schedule_entry_palette_tokens,
+    schedule_entry_started_in_past,
     schedule_entry_window_details,
     sync_cron_runtime_window,
     visible_schedule_entries,
@@ -243,10 +244,34 @@ class MainWindowScheduleTimelineMixin:
             schedule_entry_palette=self._schedule_entry_palette,
             apply_item_palette=self._apply_item_palette,
             apply_widget_palette=self._apply_widget_palette,
+            schedule_entry_can_edit_fade_in=self._can_edit_schedule_fade_in,
+            schedule_entry_can_edit_fade_out=self._can_edit_schedule_fade_out,
+            schedule_entry_can_edit_status=self._can_edit_schedule_status,
             on_fade_in_changed=self._on_schedule_fade_in_changed,
             on_fade_out_changed=self._on_schedule_fade_out_changed,
             on_status_changed=self._on_schedule_status_changed,
         )
+
+    def _current_playing_schedule_entry(self, reference_time: datetime) -> ScheduleEntry | None:
+        current_media_id = self._player.current_media.id if self._player.current_media is not None else None
+        return current_schedule_entry_for_playback(
+            self._schedule_entries,
+            reference_time,
+            player_is_playing=self._player.is_playing(),
+            current_media_id=current_media_id,
+        )
+
+    def _can_edit_schedule_fade_in(self, entry: ScheduleEntry, reference_time: datetime) -> bool:
+        return not schedule_entry_started_in_past(entry, reference_time)
+
+    def _can_edit_schedule_fade_out(self, entry: ScheduleEntry, reference_time: datetime) -> bool:
+        if not schedule_entry_started_in_past(entry, reference_time):
+            return True
+        current_entry = self._current_playing_schedule_entry(reference_time)
+        return current_entry is not None and current_entry.id == entry.id
+
+    def _can_edit_schedule_status(self, entry: ScheduleEntry, reference_time: datetime) -> bool:
+        return not schedule_entry_started_in_past(entry, reference_time)
 
     def _set_schedule_filter_date(self, target_date: date) -> None:
         self._schedule_filter_date = target_date

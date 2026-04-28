@@ -33,7 +33,6 @@ from ..library import (
     update_stream_greenwich_time_signal,
     update_stream_media_item,
 )
-from ..models import SCHEDULE_STATUS_MISSED
 from ..playback import enqueue_manual_media, resolve_media_by_id
 from ..scheduling import (
     create_cron_entry,
@@ -733,6 +732,13 @@ class MainWindowHandlersMixin:
 
         selected_start_at = dialog.selected_datetime()
         reference_time = datetime.now().astimezone()
+        if self._normalized_start(selected_start_at) < reference_time:
+            QMessageBox.warning(
+                self,
+                "Schedule In Past",
+                "Schedule entries cannot be created in the past.",
+            )
+            return
         conflicting_entry = schedule_entry_at_exact_start(
             self._schedule_entries,
             selected_start_at,
@@ -763,10 +769,6 @@ class MainWindowHandlersMixin:
         self._refresh_schedule_table()
         self._save_state()
         media_name = self._media_log_name(entry.media_id)
-        if entry.status == SCHEDULE_STATUS_MISSED:
-            self._append_log(
-                f"Scheduled media '{media_name}' in the past; entry was marked as missed"
-            )
         self._append_log(
             f"Scheduled media '{media_name}' for {entry.start_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}"
         )
@@ -998,10 +1000,12 @@ class MainWindowHandlersMixin:
         menu.exec(self._urls_table.viewport().mapToGlobal(position))
 
     def _on_schedule_fade_in_changed(self, entry_id: str, value: str) -> None:
+        reference_time = datetime.now().astimezone()
         updated_entry = update_schedule_fade_in(
             self._schedule_entries,
             entry_id,
             fade_in_enabled=value == "True",
+            reference_time=reference_time,
             cron_entry_by_id=self._cron_entry_by_id,
         )
         if updated_entry is None:
@@ -1016,16 +1020,26 @@ class MainWindowHandlersMixin:
         )
 
     def _on_schedule_fade_out_changed(self, entry_id: str, value: str) -> None:
+        reference_time = datetime.now().astimezone()
+        active_entry = self._current_playing_schedule_entry(reference_time)
+        allow_past_entry = active_entry is not None and active_entry.id == entry_id
         updated_entry = update_schedule_fade_out(
             self._schedule_entries,
             entry_id,
             fade_out_enabled=value == "True",
+            reference_time=reference_time,
+            allow_past_entry=allow_past_entry,
             cron_entry_by_id=self._cron_entry_by_id,
         )
         if updated_entry is None:
             return
 
         self._scheduler.set_entries(self._schedule_entries)
+        if allow_past_entry:
+            self._player.set_live_fade_out(
+                updated_entry.fade_out,
+                fade_out_duration_ms=self._fade_out_duration_ms(),
+            )
         self._refresh_schedule_table()
         self._save_state()
         state = "enabled" if updated_entry.fade_out else "disabled"
@@ -1034,11 +1048,12 @@ class MainWindowHandlersMixin:
         )
 
     def _on_schedule_status_changed(self, entry_id: str, value: str) -> None:
+        reference_time = datetime.now().astimezone()
         result = update_schedule_status(
             self._schedule_entries,
             entry_id,
             value=value,
-            reference_time=datetime.now().astimezone(),
+            reference_time=reference_time,
             cron_entry_by_id=self._cron_entry_by_id,
         )
         if result.refresh_only:

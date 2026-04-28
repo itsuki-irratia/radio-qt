@@ -44,6 +44,13 @@ def schedule_entry_at_exact_start(
     return None
 
 
+def schedule_entry_started_in_past(
+    entry: ScheduleEntry,
+    reference_time: datetime,
+) -> bool:
+    return normalized_start(entry.start_at, reference_time) < reference_time
+
+
 def schedule_entry_end_at(
     entries: list[ScheduleEntry],
     index: int,
