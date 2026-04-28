@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, Qt
@@ -190,8 +190,7 @@ class ScheduleDialog(QDialog):
     @staticmethod
     def _default_start_datetime() -> datetime:
         now = datetime.now().astimezone()
-        minutes_to_add = 2 if now.second > 30 else 1
-        return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+        return now.replace(microsecond=0)
 
     def selected_datetime(self) -> datetime:
         dt = self._datetime_edit.dateTime().toPython()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from PySide6.QtCore import QDate, Qt, Slot
 from PySide6.QtGui import QBrush, QColor
@@ -287,18 +287,7 @@ class MainWindowScheduleTimelineMixin:
             entry.duration = self._media_duration_seconds(entry.media_id)
 
     def _default_next_schedule_start(self) -> datetime:
-        if not self._schedule_entries:
-            return ScheduleDialog._default_start_datetime()
-
-        entries = sorted(self._schedule_entries, key=lambda entry: self._normalized_start(entry.start_at))
-        previous = entries[-1]
-        previous_start = self._normalized_start(previous.start_at)
-        now = datetime.now().astimezone()
-        if previous_start <= now:
-            return ScheduleDialog._default_start_datetime()
-        if previous.duration is None:
-            return previous_start
-        return previous_start + timedelta(seconds=max(0, previous.duration))
+        return ScheduleDialog._default_start_datetime()
 
     def _media_duration_seconds(self, media_id: str) -> int | None:
         if media_id in self._media_duration_cache:
