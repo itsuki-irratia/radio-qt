@@ -26,7 +26,11 @@ from ..library import (
 )
 from ..models import AppState, CronEntry, LibraryTab, MediaItem, ScheduleEntry
 from ..scheduling.cron_runtime import next_cron_occurrence
-from ..scheduling.logic import normalized_start, sort_schedule_entries
+from ..scheduling.logic import (
+    normalized_start,
+    schedule_entry_at_exact_start,
+    sort_schedule_entries,
+)
 from ..scheduling.mutations import (
     create_cron_entry,
     create_schedule_entry,
@@ -1244,13 +1248,28 @@ def _cmd_schedule_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _raise_schedule_start_conflict(entry: ScheduleEntry, reference_time: datetime) -> None:
+    raise CliError(
+        "A schedule entry already exists at that exact start time: "
+        f"{_format_datetime(entry.start_at, reference_time)} ({entry.id})"
+    )
+
+
 def _cmd_schedule_add(args: argparse.Namespace) -> int:
     context = _load_state_context(args.config)
     _ensure_media_exists(context.state, args.media_id)
     now = datetime.now().astimezone()
+    start_at = _parse_datetime(args.start)
+    conflicting_entry = schedule_entry_at_exact_start(
+        context.state.schedule_entries,
+        start_at,
+        now,
+    )
+    if conflicting_entry is not None:
+        _raise_schedule_start_conflict(conflicting_entry, now)
     entry = create_schedule_entry(
         media_id=args.media_id,
-        start_at=_parse_datetime(args.start),
+        start_at=start_at,
         reference_time=now,
         fade_in=args.fade_in,
         fade_out=args.fade_out,
@@ -1282,6 +1301,13 @@ def _cmd_schedule_bulk_add(args: argparse.Namespace) -> int:
     now = datetime.now().astimezone()
     created_entries: list[ScheduleEntry] = []
     for start_at in starts:
+        conflicting_entry = schedule_entry_at_exact_start(
+            context.state.schedule_entries,
+            start_at,
+            now,
+        )
+        if conflicting_entry is not None:
+            _raise_schedule_start_conflict(conflicting_entry, now)
         entry = create_schedule_entry(
             media_id=args.media_id,
             start_at=start_at,
@@ -1394,6 +1420,14 @@ def _cmd_schedule_edit(args: argparse.Namespace) -> int:
             raise CliError("Cannot change start time on a CRON-generated schedule entry")
         next_start = _parse_datetime(args.start)
         if entry.start_at != next_start:
+            conflicting_entry = schedule_entry_at_exact_start(
+                context.state.schedule_entries,
+                next_start,
+                now,
+                exclude_entry_id=entry.id,
+            )
+            if conflicting_entry is not None:
+                _raise_schedule_start_conflict(conflicting_entry, now)
             entry.start_at = next_start
             has_changes = True
 

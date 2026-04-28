@@ -40,6 +40,7 @@ from ..scheduling import (
     create_schedule_entry,
     remove_cron_and_generated_schedule_entries,
     remove_schedule_entries_by_ids,
+    schedule_entry_at_exact_start,
     select_schedule_entries_for_removal,
     update_cron_enabled,
     update_cron_expression,
@@ -730,10 +731,28 @@ class MainWindowHandlersMixin:
         if dialog.exec() != QDialog.Accepted:
             return
 
+        selected_start_at = dialog.selected_datetime()
+        reference_time = datetime.now().astimezone()
+        conflicting_entry = schedule_entry_at_exact_start(
+            self._schedule_entries,
+            selected_start_at,
+            reference_time,
+        )
+        if conflicting_entry is not None:
+            QMessageBox.warning(
+                self,
+                "Schedule Conflict",
+                (
+                    "There is already a schedule entry at "
+                    f"{conflicting_entry.start_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}."
+                ),
+            )
+            return
+
         entry = create_schedule_entry(
             media_id=media_id,
-            start_at=dialog.selected_datetime(),
-            reference_time=datetime.now().astimezone(),
+            start_at=selected_start_at,
+            reference_time=reference_time,
             fade_in=default_fade_in,
             fade_out=default_fade_out,
         )

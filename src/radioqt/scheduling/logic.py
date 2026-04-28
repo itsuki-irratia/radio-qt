@@ -28,6 +28,22 @@ def sort_schedule_entries(
     )
 
 
+def schedule_entry_at_exact_start(
+    entries: list[ScheduleEntry],
+    start_at: datetime,
+    reference_time: datetime | None = None,
+    *,
+    exclude_entry_id: str | None = None,
+) -> ScheduleEntry | None:
+    normalized_target = normalized_start(start_at, reference_time)
+    for entry in entries:
+        if exclude_entry_id is not None and entry.id == exclude_entry_id:
+            continue
+        if normalized_start(entry.start_at, reference_time) == normalized_target:
+            return entry
+    return None
+
+
 def schedule_entry_end_at(
     entries: list[ScheduleEntry],
     index: int,

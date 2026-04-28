@@ -667,6 +667,40 @@ def test_schedule_add_persists_entry(tmp_path) -> None:
     assert entry.fade_in is True
 
 
+def test_schedule_add_rejects_exact_start_duplicate(tmp_path, capsys) -> None:
+    state_path = tmp_path / "db.sqlite"
+    media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
+    existing_entry = ScheduleEntry.create(
+        media_id=media.id,
+        start_at=datetime.fromisoformat("2099-01-01T10:00:00+00:00"),
+    )
+    save_state(
+        state_path,
+        AppState(
+            media_items=[media],
+            schedule_entries=[existing_entry],
+        ),
+    )
+
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "add",
+            "--media-id",
+            media.id,
+            "--start",
+            "2099-01-01T10:00:00+00:00",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "already exists at that exact start time" in capsys.readouterr().err
+    loaded = load_state(state_path)
+    assert len(loaded.schedule_entries) == 1
+
+
 def test_schedule_bulk_add_persists_entries(tmp_path) -> None:
     state_path = tmp_path / "db.sqlite"
     media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
@@ -696,6 +730,77 @@ def test_schedule_bulk_add_persists_entries(tmp_path) -> None:
     loaded = load_state(state_path)
     assert len(loaded.schedule_entries) == 2
     assert {entry.media_id for entry in loaded.schedule_entries} == {media.id}
+
+
+def test_schedule_bulk_add_rejects_duplicate_within_request(tmp_path, capsys) -> None:
+    state_path = tmp_path / "db.sqlite"
+    media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
+    save_state(
+        state_path,
+        AppState(
+            media_items=[media],
+        ),
+    )
+
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "bulk-add",
+            "--media-id",
+            media.id,
+            "--start",
+            "2099-01-01T10:00:00+00:00",
+            "--start",
+            "2099-01-01T10:00:00+00:00",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "already exists at that exact start time" in capsys.readouterr().err
+    loaded = load_state(state_path)
+    assert loaded.schedule_entries == []
+
+
+def test_schedule_edit_rejects_exact_start_duplicate(tmp_path, capsys) -> None:
+    state_path = tmp_path / "db.sqlite"
+    media = MediaItem.create(title="Test Media", source="file:///tmp/test.mp3")
+    first_entry = ScheduleEntry.create(
+        media_id=media.id,
+        start_at=datetime.fromisoformat("2099-01-01T10:00:00+00:00"),
+    )
+    second_entry = ScheduleEntry.create(
+        media_id=media.id,
+        start_at=datetime.fromisoformat("2099-01-01T10:05:00+00:00"),
+    )
+    save_state(
+        state_path,
+        AppState(
+            media_items=[media],
+            schedule_entries=[first_entry, second_entry],
+        ),
+    )
+
+    exit_code = run(
+        [
+            "--config",
+            str(tmp_path),
+            "schedule",
+            "edit",
+            second_entry.id,
+            "--start",
+            "2099-01-01T10:00:00+00:00",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "already exists at that exact start time" in capsys.readouterr().err
+    loaded = load_state(state_path)
+    assert {entry.start_at for entry in loaded.schedule_entries} == {
+        first_entry.start_at,
+        second_entry.start_at,
+    }
 
 
 def test_schedule_bulk_status_updates_entries_by_date(tmp_path) -> None:
