@@ -181,6 +181,30 @@ class MediaPlayerController(QObject):
             force_apply=True,
         )
 
+    def set_live_schedule_fade_window(
+        self,
+        *,
+        expected_duration_ms: int | None,
+        fade_out: bool,
+        fade_out_duration_ms: int = _DEFAULT_FADE_DURATION_MS,
+    ) -> None:
+        normalized_duration_ms = (
+            int(expected_duration_ms) if expected_duration_ms is not None and expected_duration_ms > 0 else None
+        )
+        self._expected_duration_ms = normalized_duration_ms
+        self._fade_out_enabled = bool(fade_out) and normalized_duration_ms is not None
+        self._fade_out_duration_ms = max(1, int(fade_out_duration_ms))
+        if self._fade_in_enabled or self._fade_out_enabled:
+            self._fade_timeline_last_tick_monotonic = time.monotonic()
+            self._fade_tick_timer.start()
+        else:
+            self._fade_tick_timer.stop()
+            self._fade_timeline_last_tick_monotonic = None
+        self._update_fade_multiplier_for_position(
+            self.current_position_ms(),
+            force_apply=True,
+        )
+
     def _configure_fade_for_new_media(
         self,
         *,
@@ -279,7 +303,9 @@ class MediaPlayerController(QObject):
 
     @classmethod
     def _should_use_external_audio_backend(cls) -> bool:
-        return shutil.which("mpv") is not None
+        # Keep playback in Qt so runtime fade multipliers always affect
+        # the active audio pipeline.
+        return False
 
     @Slot()
     def _on_audio_outputs_changed(self) -> None:

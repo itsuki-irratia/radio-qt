@@ -595,7 +595,7 @@ class MainWindowHandlersMixin:
         self._media_duration_pending.discard(media_id)
         if self._player.current_media is not None and self._player.current_media.id == media_id:
             self._player.clear_current_media()
-            self._now_playing_label.setText("None")
+            self._update_now_playing_label()
             self._update_player_visual_state()
 
         self._resync_schedule_runtime()
@@ -1012,6 +1012,7 @@ class MainWindowHandlersMixin:
             return
 
         self._scheduler.set_entries(self._schedule_entries)
+        self._sync_live_fade_window_for_active_schedule_entry(reference_time)
         self._refresh_schedule_table()
         self._save_state()
         state = "enabled" if updated_entry.fade_in else "disabled"
@@ -1036,10 +1037,7 @@ class MainWindowHandlersMixin:
 
         self._scheduler.set_entries(self._schedule_entries)
         if allow_past_entry:
-            self._player.set_live_fade_out(
-                updated_entry.fade_out,
-                fade_out_duration_ms=self._fade_out_duration_ms(),
-            )
+            self._sync_live_fade_window_for_active_schedule_entry(reference_time)
         self._refresh_schedule_table()
         self._save_state()
         state = "enabled" if updated_entry.fade_out else "disabled"
@@ -1064,6 +1062,7 @@ class MainWindowHandlersMixin:
         applied_value = result.applied_value or value
 
         self._scheduler.set_entries(self._schedule_entries)
+        self._sync_live_fade_window_for_active_schedule_entry(reference_time)
         self._refresh_schedule_table()
         self._save_state()
         self._append_log(

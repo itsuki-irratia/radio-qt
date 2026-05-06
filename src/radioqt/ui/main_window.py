@@ -32,6 +32,7 @@ from ..models import (
     SCHEDULE_STATUS_DISABLED,
     SCHEDULE_STATUS_FIRED,
     SCHEDULE_STATUS_MISSED,
+    SCHEDULE_STATUS_PENDING,
     ScheduleEntry,
 )
 from ..player import MediaPlayerController
@@ -307,6 +308,38 @@ class MainWindow(
                 return str(expanded)
         return media.title
 
+    @staticmethod
+    def _media_filename_label(media: MediaItem) -> str:
+        local_path = local_media_path_from_source(media.source)
+        if local_path is not None:
+            name = local_path.expanduser().name.strip()
+            if name:
+                return name
+        source_name = Path(media.source.strip()).name.strip()
+        if source_name:
+            return source_name
+        return media.title
+
+    def _next_scheduled_media_details(self) -> tuple[str, str] | None:
+        now = datetime.now().astimezone()
+        candidates = sorted(
+            (
+                entry
+                for entry in self._schedule_entries
+                if entry.status in {SCHEDULE_STATUS_PENDING, SCHEDULE_STATUS_FIRED}
+                and self._normalized_start(entry.start_at) >= now
+            ),
+            key=lambda entry: self._normalized_start(entry.start_at),
+        )
+        for entry in candidates:
+            media = self._media_items.get(entry.media_id)
+            if media is None:
+                continue
+            file_name = self._media_filename_label(media)
+            start_label = self._normalized_start(entry.start_at).strftime("%Y-%m-%d %H:%M:%S %Z")
+            return file_name, start_label
+        return None
+
     def _update_player_visual_state(self) -> None:
         media = self._player.current_media
         if self._media_looks_like_video(media):
@@ -361,10 +394,15 @@ class MainWindow(
     def _update_now_playing_label(self) -> None:
         media = self._player.current_media
         if media is None:
-            self._now_playing_label.setText("None")
+            next_details = self._next_scheduled_media_details()
+            if next_details is None:
+                self._now_playing_label.setText("COMING SOON: No file scheduled")
+                return
+            file_name, start_label = next_details
+            self._now_playing_label.setText(f"COMING SOON: {file_name} - {start_label}")
             return
         elapsed_seconds = max(0, self._current_playback_position_ms // 1000)
-        media_label = self._player_media_label(media)
+        media_label = self._media_filename_label(media)
         self._now_playing_label.setText(
             f"{media_label} - {self._format_duration(elapsed_seconds)}"
         )

@@ -152,6 +152,7 @@ class MainWindowScheduleTimelineMixin:
         effective_target_dates = target_dates if target_dates is not None else self._schedule_view_cron_dates()
         self._refresh_cron_schedule_entries(effective_target_dates)
         self._recalculate_and_apply_schedule_entries()
+        self._sync_live_fade_window_for_active_schedule_entry(datetime.now().astimezone())
         if refresh_table:
             self._refresh_schedule_table()
         if save_state:
@@ -160,6 +161,16 @@ class MainWindowScheduleTimelineMixin:
     def _recalculate_and_apply_schedule_entries(self) -> None:
         self._recalculate_schedule_durations()
         self._scheduler.set_entries(self._schedule_entries)
+
+    def _sync_live_fade_window_for_active_schedule_entry(self, reference_time: datetime) -> None:
+        current_entry = self._current_playing_schedule_entry(reference_time)
+        if current_entry is None:
+            return
+        self._player.set_live_schedule_fade_window(
+            expected_duration_ms=self._entry_duration_ms(current_entry),
+            fade_out=current_entry.fade_out,
+            fade_out_duration_ms=self._fade_out_duration_ms(),
+        )
 
     def _sync_after_cron_rule_change(self, *, focus_entry: CronEntry | None = None) -> None:
         self._refresh_cron_schedule_entries(self._schedule_view_cron_dates())
