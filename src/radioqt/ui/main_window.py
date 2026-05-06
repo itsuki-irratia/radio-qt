@@ -396,10 +396,10 @@ class MainWindow(
         if media is None:
             next_details = self._next_scheduled_media_details()
             if next_details is None:
-                self._now_playing_label.setText("COMING SOON: No file scheduled")
+                self._now_playing_label.setText("NEXT: No file scheduled")
                 return
             file_name, start_label = next_details
-            self._now_playing_label.setText(f"COMING SOON: {file_name} - {start_label}")
+            self._now_playing_label.setText(f"NEXT: {file_name} - {start_label}")
             return
         elapsed_seconds = max(0, self._current_playback_position_ms // 1000)
         media_label = self._media_filename_label(media)
