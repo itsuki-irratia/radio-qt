@@ -20,6 +20,9 @@ class _PlayerStub:
 
 
 class _Harness:
+    _media_filename_label = staticmethod(MainWindow._media_filename_label)
+    _next_scheduled_media_details = MainWindow._next_scheduled_media_details
+
     def __init__(self, *, current_media: MediaItem | None, schedule_entries: list[ScheduleEntry], media_items: dict[str, MediaItem]) -> None:
         self._player = _PlayerStub(current_media)
         self._schedule_entries = schedule_entries
@@ -52,7 +55,7 @@ def test_now_playing_label_shows_coming_soon_for_next_scheduled_file() -> None:
 
     MainWindow._update_now_playing_label(harness)
 
-    assert "COMING SOON: next-track.mp3 - " in harness._now_playing_label.text
+    assert "NEXT: next-track.mp3 - " in harness._now_playing_label.text
 
 
 def test_now_playing_label_handles_missing_upcoming_media() -> None:
@@ -65,4 +68,4 @@ def test_now_playing_label_handles_missing_upcoming_media() -> None:
 
     MainWindow._update_now_playing_label(harness)
 
-    assert harness._now_playing_label.text == "COMING SOON: No file scheduled"
+    assert harness._now_playing_label.text == "NEXT: No file scheduled"
