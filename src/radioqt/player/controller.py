@@ -156,6 +156,12 @@ class MediaPlayerController(QObject):
         self._media_player.setAudioBufferOutput(None)
         self._media_player.setAudioOutput(None)
 
+    def _reset_audio_output_for_new_pipeline(self) -> None:
+        previous_audio_output = self._audio_output
+        self._audio_output = self._new_audio_output()
+        self._apply_effective_volume()
+        previous_audio_output.deleteLater()
+
     def set_volume(self, volume: int) -> None:
         self._base_volume_percent = max(0, min(volume, 100))
         self._apply_effective_volume()
@@ -296,6 +302,8 @@ class MediaPlayerController(QObject):
         video_only: bool = False,
     ) -> None:
         self._pending_seek_ms = pending_seek_ms
+        if not video_only:
+            self._reset_audio_output_for_new_pipeline()
         self._media_player.setAudioOutput(None if video_only else self._audio_output)
         self._media_player.setSource(source_url)
         if pending_seek_ms > 0:
