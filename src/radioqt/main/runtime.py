@@ -18,13 +18,19 @@ def candidate_qt_plugin_roots() -> list[Path]:
         seen.add(resolved)
         roots.append(resolved)
 
-    _add(Path(QLibraryInfo.path(QLibraryInfo.PluginsPath)))
+    bundled_plugins_root = Path(QLibraryInfo.path(QLibraryInfo.PluginsPath))
+    _add(bundled_plugins_root)
 
     env_plugin_path = os.environ.get("QT_PLUGIN_PATH", "")
     for raw in env_plugin_path.split(os.pathsep):
         if not raw.strip():
             continue
         _add(Path(raw.strip()))
+
+    # PySide wheels bundle their own Qt build. Loading system Qt plugins into
+    # that build can leave QtMultimedia with no usable backend at all.
+    if "site-packages" in bundled_plugins_root.parts:
+        return roots
 
     for fallback in ("/usr/lib/qt6/plugins", "/usr/lib/qt/plugins"):
         path = Path(fallback)

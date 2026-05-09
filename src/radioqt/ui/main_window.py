@@ -9,6 +9,7 @@ from PySide6.QtCore import QDateTime, QObject, Qt, QTimer, Signal, Slot, QUrl
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
+    QApplication,
     QFileSystemModel,
     QHBoxLayout,
     QMainWindow,
@@ -414,6 +415,10 @@ class MainWindow(
         self._external_state_sync_timer.stop()
         self._runtime_control_timer.stop()
         self._greenwich_time_signal_player.stop()
+        self._greenwich_time_signal_player.setSource(QUrl())
+        self._greenwich_time_signal_player.setAudioOutput(None)
+        self._player.release_resources()
+        QApplication.processEvents()
         self._volume_fade_timer.stop()
         self._duration_probe_executor.shutdown(wait=False, cancel_futures=True)
         self._schedule_export_executor.shutdown(wait=False, cancel_futures=True)

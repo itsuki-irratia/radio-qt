@@ -12,7 +12,6 @@ from PySide6.QtMultimedia import (
     QAudioBufferOutput,
     QAudioFormat,
     QAudioOutput,
-    QMediaDevices,
     QMediaPlayer,
 )
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -33,7 +32,6 @@ class MediaPlayerController(QObject):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._media_devices = QMediaDevices(self)
         self._audio_output = self._new_audio_output()
         self._audio_buffer_output = QAudioBufferOutput(self)
         self._media_player = QMediaPlayer(self)
@@ -66,7 +64,6 @@ class MediaPlayerController(QObject):
         self._fade_out_duration_ms = self._DEFAULT_FADE_DURATION_MS
         self._fade_timeline_position_ms = 0
         self._fade_timeline_last_tick_monotonic: float | None = None
-        self._media_devices.audioOutputsChanged.connect(self._on_audio_outputs_changed)
         self._apply_effective_volume()
 
     def set_video_output(self, widget: QVideoWidget) -> None:
@@ -143,6 +140,21 @@ class MediaPlayerController(QObject):
         self._pending_seek_ms = None
         self._reset_fade_state()
         self.audio_levels_changed.emit(None)
+
+    def release_resources(self) -> None:
+        """Detach multimedia resources before the Qt backend is torn down."""
+        self._fade_tick_timer.stop()
+        self._external_audio_position_timer.stop()
+        self._media_player.stop()
+        self._media_player.setSource(QUrl())
+        self._stop_external_audio()
+        self.current_media = None
+        self._pending_seek_ms = None
+        self._reset_fade_state()
+        self.audio_levels_changed.emit(None)
+        self._media_player.setVideoOutput(None)
+        self._media_player.setAudioBufferOutput(None)
+        self._media_player.setAudioOutput(None)
 
     def set_volume(self, volume: int) -> None:
         self._base_volume_percent = max(0, min(volume, 100))
@@ -292,28 +304,13 @@ class MediaPlayerController(QObject):
         self._media_player.play()
 
     def _new_audio_output(self) -> QAudioOutput:
-        default_device = QMediaDevices.defaultAudioOutput()
-        if default_device.isNull():
-            return QAudioOutput(self)
-        return QAudioOutput(default_device, self)
-
-    @staticmethod
-    def _qt_audio_output_count() -> int:
-        return len(QMediaDevices.audioOutputs())
+        return QAudioOutput(self)
 
     @classmethod
     def _should_use_external_audio_backend(cls) -> bool:
         # Keep playback in Qt so runtime fade multipliers always affect
         # the active audio pipeline.
         return False
-
-    @Slot()
-    def _on_audio_outputs_changed(self) -> None:
-        previous_audio_output = self._audio_output
-        self._audio_output = self._new_audio_output()
-        self._media_player.setAudioOutput(self._audio_output)
-        self._apply_effective_volume()
-        previous_audio_output.deleteLater()
 
     def _start_external_audio(
         self,
