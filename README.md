@@ -25,11 +25,6 @@ sudo apt install \
   libqt6multimedia6 \
   libqt6multimediawidgets6 \
   qml6-module-qtmultimedia \
-  gstreamer1.0-plugins-base \
-  gstreamer1.0-plugins-good \
-  gstreamer1.0-plugins-bad \
-  gstreamer1.0-plugins-ugly \
-  gstreamer1.0-libav \
   ffmpeg
 ```
 
@@ -42,8 +37,6 @@ from your desktop environment packages.
 sudo pacman -S --needed \
   qt6-multimedia \
   qt6-multimedia-ffmpeg \
-  qt6-multimedia-gstreamer \
-  gstreamer \
   ffmpeg
 ```
 
@@ -125,30 +118,7 @@ python -m pytest
   mixer, for example `pavucontrol` -> `Playback`, to move the active `RadioQt`
   stream to Bluetooth, USB, HDMI, or another sink.
 
-- If you want to use the GStreamer backend on Arch/Manjaro, install the packages above, then run:
-
-```bash
-RADIOQT_MEDIA_BACKEND=gstreamer radioqt
-```
-
-- If GStreamer is installed but you see `No QtMultimedia backends found` from a
-  Python virtualenv, the venv likely contains a pip PySide6 Qt build that does
-  not match your distro Qt GStreamer plugin. Run with system PySide/Qt instead:
-
-```bash
-deactivate
-cd /path/to/radio-qt
-PYTHONPATH=src RADIOQT_MEDIA_BACKEND=gstreamer python -m radioqt
-```
-
-  Or create a venv that can see distro PySide6:
-
-```bash
-python -m venv --system-site-packages .venv-system
-source .venv-system/bin/activate
-pip install -e . --no-deps
-RADIOQT_MEDIA_BACKEND=gstreamer radioqt
-```
+- RadioQt uses the Qt FFmpeg backend.
 
 - If you see repeated VAAPI decode errors (`invalid VAContextID`, `hardware accelerator failed to decode picture`), run with software decoding:
 

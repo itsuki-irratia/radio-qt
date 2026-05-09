@@ -22,6 +22,7 @@ from ..models import MediaItem
 class MediaPlayerController(QObject):
     _DEFAULT_FADE_DURATION_MS = 5000
     _PLAY_REQUEST_REJECTED_PREFIX = "Play request rejected: "
+    _AUDIO_LEVEL_BAR_COUNT = 36
 
     media_started = Signal(object)
     media_finished = Signal()
@@ -49,6 +50,11 @@ class MediaPlayerController(QObject):
         self._media_player.errorOccurred.connect(self._on_error)
         self._media_player.mediaStatusChanged.connect(self._on_media_status_changed)
         self._audio_buffer_output.audioBufferReceived.connect(self._on_audio_buffer_received)
+        self._last_audio_buffer_received_monotonic: float | None = None
+        self._waveform_fallback_timer = QTimer(self)
+        self._waveform_fallback_timer.setInterval(120)
+        self._waveform_fallback_timer.timeout.connect(self._on_waveform_fallback_tick)
+        self._waveform_fallback_timer.start()
         self._fade_tick_timer = QTimer(self)
         self._fade_tick_timer.setInterval(100)
         self._fade_tick_timer.timeout.connect(self._on_fade_tick)
@@ -139,6 +145,7 @@ class MediaPlayerController(QObject):
         self.current_media = None
         self._pending_seek_ms = None
         self._reset_fade_state()
+        self._last_audio_buffer_received_monotonic = None
         self.audio_levels_changed.emit(None)
 
     def release_resources(self) -> None:
@@ -151,6 +158,7 @@ class MediaPlayerController(QObject):
         self.current_media = None
         self._pending_seek_ms = None
         self._reset_fade_state()
+        self._last_audio_buffer_received_monotonic = None
         self.audio_levels_changed.emit(None)
         self._media_player.setVideoOutput(None)
         self._media_player.setAudioBufferOutput(None)
@@ -537,7 +545,28 @@ class MediaPlayerController(QObject):
             return
         levels = self._audio_levels_from_buffer(audio_buffer)
         if levels is not None:
+            self._last_audio_buffer_received_monotonic = time.monotonic()
             self.audio_levels_changed.emit(levels)
+
+    @Slot()
+    def _on_waveform_fallback_tick(self) -> None:
+        # Some Qt multimedia backends can play audio without exposing PCM
+        # buffers through QAudioBufferOutput. Keep waveform UI responsive.
+        if self._external_audio_process is not None:
+            return
+        if self._media_player.playbackState() != QMediaPlayer.PlayingState:
+            return
+        if self.current_media is None:
+            return
+        if self._last_audio_buffer_received_monotonic is not None:
+            if (time.monotonic() - self._last_audio_buffer_received_monotonic) <= 0.8:
+                return
+        levels = self._synthetic_audio_levels(
+            phase_seconds=time.monotonic(),
+            amplitude=max(0.05, min(1.0, (self._base_volume_percent / 100.0) * self._fade_multiplier)),
+            bar_count=self._AUDIO_LEVEL_BAR_COUNT,
+        )
+        self.audio_levels_changed.emit(levels)
 
     @staticmethod
     def _audio_levels_from_buffer(audio_buffer: QAudioBuffer, bar_count: int = 36) -> list[float] | None:
@@ -576,6 +605,30 @@ class MediaPlayerController(QObject):
             chunk = samples[start:end]
             peak = max(abs(value) for value in chunk) if chunk else 0.0
             levels.append(max(0.0, min(1.0, peak)))
+        return levels
+
+    @staticmethod
+    def _synthetic_audio_levels(
+        *,
+        phase_seconds: float,
+        amplitude: float,
+        bar_count: int,
+    ) -> list[float]:
+        from math import sin, tau
+
+        levels: list[float] = []
+        envelope = 0.6 + 0.4 * sin(tau * (phase_seconds * 0.35))
+        for index in range(bar_count):
+            bar_ratio = index / max(1, bar_count - 1)
+            fast_motion = 0.5 + 0.5 * sin(tau * (phase_seconds * 1.7 + bar_ratio * 1.3))
+            slow_motion = 0.5 + 0.5 * sin(tau * (phase_seconds * 0.42 + bar_ratio * 0.21))
+            # Deterministic "noise" that keeps moving over time without randomness state.
+            texture = 0.5 + 0.5 * sin(
+                tau * ((index + 1) * 0.173 + phase_seconds * (1.05 + bar_ratio * 0.65))
+            )
+            motion = (fast_motion * 0.55) + (slow_motion * 0.25) + (texture * 0.20)
+            level = max(0.0, min(1.0, amplitude * envelope * max(0.04, motion)))
+            levels.append(level)
         return levels
 
     @staticmethod

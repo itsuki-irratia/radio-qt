@@ -73,8 +73,7 @@ DB migrations include:
 ## Runtime Backend Configuration (`src/radioqt/main/runtime.py`)
 
 Environment controls:
-- `RADIOQT_MEDIA_BACKEND=auto` (default): Qt auto selection
-- `RADIOQT_MEDIA_BACKEND=<backend>`: force backend (`ffmpeg`, `gstreamer`, ...)
+- Qt FFmpeg backend is enforced at runtime (`QT_MEDIA_BACKEND=ffmpeg`)
 - `RADIOQT_DISABLE_HW_DECODING` (Linux):
   - default disables FFmpeg HW decode (`QT_FFMPEG_DECODING_HW_DEVICE_TYPES=""`)
   - set `RADIOQT_DISABLE_HW_DECODING=0` to re-enable
@@ -84,7 +83,7 @@ Qt plugin roots considered:
 - `QT_PLUGIN_PATH`
 - Linux fallbacks: `/usr/lib/qt6/plugins`, `/usr/lib/qt/plugins`
 
-If requested backend is unavailable and FFmpeg plugin exists, fallback is FFmpeg.
+If FFmpeg plugin is unavailable, runtime emits a warning.
 
 ## Repository Map
 

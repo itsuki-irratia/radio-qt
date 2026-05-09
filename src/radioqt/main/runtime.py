@@ -50,8 +50,6 @@ def backend_plugin_roots() -> dict[str, Path]:
             plugin_name = plugin.name.lower()
             if "ffmpeg" in plugin_name and "ffmpeg" not in backend_roots:
                 backend_roots["ffmpeg"] = plugins_root
-            if "gstreamer" in plugin_name and "gstreamer" not in backend_roots:
-                backend_roots["gstreamer"] = plugins_root
     return backend_roots
 
 
@@ -67,31 +65,18 @@ def ensure_qt_plugin_root(plugins_root: Path) -> None:
 
 
 def configure_multimedia_runtime() -> None:
-    requested_backend = os.environ.get("RADIOQT_MEDIA_BACKEND", "auto").strip().lower()
     available_backends = backend_plugin_roots()
-    if requested_backend and requested_backend != "auto":
-        requested_root = available_backends.get(requested_backend)
-        if requested_root is not None:
-            ensure_qt_plugin_root(requested_root)
-            os.environ["QT_MEDIA_BACKEND"] = requested_backend
-        elif "ffmpeg" in available_backends:
-            ensure_qt_plugin_root(available_backends["ffmpeg"])
-            os.environ["QT_MEDIA_BACKEND"] = "ffmpeg"
-            print(
-                (
-                    f"Requested backend '{requested_backend}' is not available. "
-                    "Falling back to 'ffmpeg'."
-                ),
-                file=sys.stderr,
-            )
-        else:
-            print(
-                (
-                    f"Requested backend '{requested_backend}' is not available and no known fallback "
-                    "backend was detected in Qt multimedia plugins."
-                ),
-                file=sys.stderr,
-            )
+    if "ffmpeg" in available_backends:
+        ensure_qt_plugin_root(available_backends["ffmpeg"])
+        os.environ["QT_MEDIA_BACKEND"] = "ffmpeg"
+    else:
+        print(
+            (
+                "Qt FFmpeg backend was not detected in multimedia plugins. "
+                "RadioQt requires ffmpeg backend support."
+            ),
+            file=sys.stderr,
+        )
 
     if sys.platform.startswith("linux"):
         disable_hw = os.environ.get("RADIOQT_DISABLE_HW_DECODING", "1")
